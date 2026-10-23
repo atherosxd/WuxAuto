@@ -1,0 +1,13 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/WuxAuto/WuxAuto.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/WuxAuto.SelfTest/WuxAuto.SelfTest.csproj">
+      <Platform Project="x64" />
+    </Project>
+    <Project Path="tests/WuxAuto.UiShot/WuxAuto.UiShot.csproj">
+      <Platform Project="x64" />
+    </Project>
+  </Folder>
+</Solution>

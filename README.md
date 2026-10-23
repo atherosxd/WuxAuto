@@ -1,0 +1,305 @@
+# WuxAuto
+
+A small WPF pilot for the game window `Wuxen2.exe` (TwelveSky2 / Unity port). It captures the
+game with the Desktop Duplication API, finds UI elements with OpenCV template matching and the
+built-in Windows OCR engine, and then drives the **teleport-to-Labyrinth** sequence with input
+that is addressed to the bound window only.
+
+Everything the pilot does is visible in the app: detections are drawn on the live preview and
+every step is logged.
+
+```
+bind window  ->  Start (F9)
+   open inventory (I)
+   click teleportscroll.png
+   look for "Labyrinth" in the destination list (OCR); if it is not shown yet,
+   click the page chevron (rightchevron.png) and look again, until found
+   click "Labyrinth"           <- OCR text match, not a template
+   wait for the zone to load
+   turn with D until the searchlight beam points north
+   wait for the gate          <- fixed delay, template or OCR text
+   click mapicon.png (top right)
+```
+
+## Requirements
+
+* Windows 10 1903+ / Windows 11, x64.
+* .NET 10 SDK (build) or the .NET 10 desktop runtime (run).
+* The game must be **windowed or borderless windowed**. Desktop Duplication cannot see
+  exclusive-fullscreen windows or protected content, so capture would be black.
+* The English OCR language pack (`Settings ▸ Time & language ▸ Language`) is needed for the
+  `Labyrinth` text match. Typing the destination name by hand still works without it only if
+  `Detection ▸ Compass mode = Template` and `Gate mode = Delay`; the destination step always
+  needs OCR.
+* If the game runs elevated, run WuxAuto elevated too, otherwise Windows will not let it send
+  input to the game.
+
+## Build and run
+
+```powershell
+dotnet build .\WuxAuto.slnx
+.\src\WuxAuto\bin\Debug\net10.0-windows10.0.19041.0\WuxAuto.exe
+```
+
+## Running it on another PC
+
+Do not copy `bin\Debug`: that build needs the .NET 10 Desktop Runtime installed. Instead run
+
+```powershell
+.\publish.ps1
+```
+
+and hand over `dist\WuxAuto-win-x64.zip` (~93 MB, .NET included). The other PC unzips it
+(right-click the zip ▸ Properties ▸ *Unblock* first, or SmartScreen asks "Windows protected your
+PC" ▸ *More info* ▸ *Run anyway*) and starts `WuxAuto.exe`.
+
+On start the app checks what it needs from Windows and says plainly what is missing; the report is
+saved as `%LOCALAPPDATA%\WuxAuto\logs\startup_check_*.txt` (crashes: `crash_*.txt`):
+
+* **Media Foundation** (`mfplat.dll`, `mf.dll`, `mfreadwrite.dll`) - OpenCV cannot load without it.
+  Windows "N" editions: install the *Media Feature Pack* (Settings ▸ Apps ▸ Optional features).
+  Trimmed "lite" Windows builds (e.g. Ghost Spectre Superlite) often remove it; then the app
+  cannot run there.
+* **English OCR** - the app opens but cannot read the game's text.
+* Windows 10 older than version 2004 (build 19041) - warning only.
+
+If it dies with no message at all (Event Viewer: *"terminated due to an internal error in the .NET
+Runtime"*, exit code `0x80131506`), the .NET runtime itself failed before the app's own checks
+ran. Run **`Diagnose.cmd`** from the app folder: it records the runtime's error text (lost on a
+double-click), Windows build, CPU and the system DLLs, then retries with runtime features turned
+off one by one, and opens the result (`diagnose.txt`) in Notepad.
+
+## Updates (GitHub Releases)
+
+Source and releases: <https://github.com/atherosxd/WuxAuto>. Every copy of the app asks the GitHub
+API for the latest release when it starts (and on **Check for updates** at the top of the window).
+A newer version shows a green bar with **Install now** and, on start, a Yes/No question with the
+release notes. Installing downloads `WuxAuto-win-x64.zip` to `%TEMP%\WuxAuto-update`, closes the
+app, copies the files over the app folder (`robocopy /E`: files that are only in the app folder
+stay) and starts it again; the copy log is `%LOCALAPPDATA%\WuxAuto\logs\update_*.log`. Settings,
+templates, logs and snapshots are in `%LOCALAPPDATA%\WuxAuto` and are not touched. Installing is
+refused while the pilot runs, from a build folder (`bin\Debug`, no `coreclr.dll`) and from a folder
+the user cannot write to.
+
+To publish a version (from `main`, committed and pushed, `gh` logged in):
+
+```powershell
+.\release.ps1 0.3.0 "What changed, in one line"
+```
+
+It builds the zip with that version stamped in (`publish.ps1 -Version`) and creates the release
+`v0.3.0` on the current commit with the zip (GitHub makes the tag). The version lives in the tags; the
+`<Version>` in the project file is only what a local build shows.
+
+## Using it
+
+1. **Bind.** Pick the `wuxen2.exe` entry in the process list (use *Refresh list* if you started
+   the game after the app) and press **Bind / Unbind**. The preview fills with the captured game
+   area and the log reports the client size.
+2. **Check the detections.** Leave the game on the inventory screen and press **Test scan now**.
+   The preview draws a box around every template hit, the OCR region and the compass region, and
+   the log lists what was found with scores and timings. Anything misaligned means a built-in
+   region default needs to change in code (regions are no longer editable, see below).
+3. **Start.** Alt-tab out of the app so the game is in front, then press **F9** (or click Start
+   and let the pilot bring the game forward). **F10** is the panic key: it stops the pilot and
+   unbinds. **F11** saves the current frame (with the detections drawn on it) to
+   `%LOCALAPPDATA%\WuxAuto\debug\` - that is the quickest way to capture the gate banner, the map
+   window or a monster marker without alt-tabbing out of the game. "Dry run" runs the whole
+   sequence with detections but without sending any input, which is the safest way to check the
+   thresholds first — note that with dry run on the pilot *never touches the game*, so a
+   "nothing happens" run is usually dry run still being ticked.
+4. Tune, repeat. Settings are applied live and saved to
+   `%LOCALAPPDATA%\WuxAuto\settings.json` when the app closes. Every log line is also written to
+   `%LOCALAPPDATA%\WuxAuto\logs\wuxauto_<start time>.log`, and `WuxAuto.exe --autostart` binds
+   the game window and presses Start by itself.
+
+   **Screen positions are never saved.** The search regions and the click fractions (map wheel
+   point, row `>` column, boss-select click) are rebuilt from the built-in defaults at the start
+   of every run (Start and every looped run), and the learned template scales are dropped so they
+   are re-learned at the current window size. The log says so:
+   `Screen positions reset to the built-in defaults for the WxH client; ...`. This lets the game run
+   at any resolution without a stale saved position getting in the way. The file carries a
+   `Version`; an older file that still contains positions is rewritten without them on load.
+
+The Wuxen2 flow this drives:
+
+| Step | Interaction |
+| --- | --- |
+| Inventory | taps `Input ▸ Inventory key` (default `I`) |
+| Teleport scroll | **right click** the `teleportscroll.png` match - in this client a left click only picks the item up and a double click does nothing |
+| Destination list | OCR of `Sequence ▸ Regions ▸ Teleport list` for `Destination text` (default `Labyrinth`, which matches `[The Labyrinth (Adept)]` on page 2), paged with `rightchevron.png` when it is not on the visible page |
+| Destination | left click the matched text row |
+| Gate open | matches `dungeongateopen.png` (`Dungeon ▸ Gate template`), with an OCR pass over the same region for `DUNGEON GATE OPENED` every few polls as a fallback. `Dungeon ▸ Gate to map delay` (3 s) then lets the kill animation and the walk to the gate finish |
+| Map | left click the `mapicon.png` match (the button in the minimap header). If the window does not appear within `Map open delay` + one confirmation poll, the button is clicked again (up to `Dungeon ▸ Map reopen retries`, 3) |
+| Stage name | OCR of `Regions ▸ Map boss list` for `Dungeon ▸ Stages[n]`. If the name is not on the visible page the list is paged **down** (the map always opens at the top): the arrows above the "Spawns" column are located as the light glyphs in the band just above the OCR'd "Spawns" header, so no template or fixed pixel offset is involved; the rotated `downchevron` template is the fallback and the wheel over the list the last resort. `Regions ▸ Map scroll` is deliberately a tall band (0.09-0.37 of the height) because the map window is not laid out proportionally across resolutions |
+| Next stage | left click the **boss name** first (the game highlights that row), then click the `>` of the highlighted row using `rightchevronfoc.png` (`Dungeon ▸ Row chevron template`, threshold `Row chevron score` 0.55). The map closes by itself. If the chevron is not matched it retries 3 times, then falls back to colour / template-column / name-click; if the map is still open after the chevron click it repeats, and if the name never turns up the map is reopened and the search retried |
+| Boss spawn | after `Dungeon ▸ Boss spawn wait` (60 s), taps `Dungeon ▸ Autohunt key` (`J`) and `Dungeon ▸ Tab key`, then looks for `monstericon.png` in `Regions ▸ Monster icon` or the stage name anywhere in `Regions ▸ Boss name` |
+| Select boss | once the boss has been visible for `Boss select delay` (2 s) the pilot left clicks the middle of the window - the game's autohunt will not attack until the boss is selected. After each click it OCRs `Regions ▸ Attack message` (left side) for `Dungeon ▸ AttackConfirmText` (`Attack succeeded`, as in the combat log's `Attack succeeded!Normal damage(+N)`) for `AttackConfirmMs` (1.2 s); the log is usually full, so a hit is any change in the visible lines (text + damage number). If nothing changes it clicks the next point: centre, then 8 points one `BossSelectStep` (6 % of the client height) out, then 8 points two steps out, up to `BossSelectMaxTries` (17). Gives up with a warning and an `attack_s<N>` snapshot, then watches the boss anyway. Empty `AttackConfirmText` = one centre click, no check |
+| Boss dead | the "DUNGEON GATE OPENED!" banner appears (checked every `Gate poll`, 0.5 s, while the boss is up - only a *new* banner/line counts), or the boss name/marker has been missing for `BossGoneMs` (10 s) without a break (checked every `Boss poll`, 2 s; the name flickers away while the boss is off camera, so short gaps do not count). A banner seen here opens the map for the next stage straight away; after the last map stage it goes on to the searchlight and the run to the last boss. If the banner is missed between stages, the map is opened anyway after `GateFallbackMs` (15 s) - unless the previous boss is still on screen, then it goes back to watching it |
+| Searchlight | after the last stage: the labyrinth always loads at the same camera angle, so the pilot taps `Dungeon ▸ Rotate left key` (`A`) for `RotateStepMs` (120 ms), waits for the camera to settle and scores `flashlight3.png` (a straight-up beam; `Dungeon ▸ FlashlightTemplate`; a PNG with transparent areas is cropped to its beam automatically) after every tap. Once the score passes `Dungeon ▸ Flashlight score` (0.85) it keeps turning in half taps while the score still rises, and when it starts falling it undoes the extra taps with `D` - so it stops at the best heading, not at the first one above the threshold (which was north-north-east). The searchlight box is placed under the minimap's `x , y` line (found by OCR in `Regions ▸ Minimap`), because the minimap panel keeps its pixel size instead of scaling with the window. After 60 taps without a match it taps back with `D` to the best heading seen (if it scored at least 0.60) |
+| Run | read the `x , y` label under the minimap (`Regions ▸ Coordinates`), probe one click straight up and one click up-right to learn how screen clicks map to world coordinates, then steer with clicks in the **upper part** of the window (the camera faces north, so up is forward; only an overshoot clicks below the centre) through the `Dungeon ▸ Route` points first (default `3603,1973`, straight north after stage 4 - the diagonal hits a wall) and then to `Dungeon ▸ Target X/Y` (3325, 1932 - the last boss, which cannot be picked on the map) within `Target tolerance` (30). |
+| Disconnect | every 5 s the pilot looks for the `SERVERS` screen; if it shows, it logs back in by clicking **Online → CONNECT → LOG IN → OK → START GAME** (800 ms apart, `Sequence ▸ AutoReconnect` / `ReconnectStepDelayMs`), waits for Piercing City and starts the run again. It only clicks buttons - the game must remember the account |
+| On arrival | right after the labyrinth's loading screen the pilot zooms out (Ctrl + mouse wheel down, `Dungeon ▸ ZoomOutNotches` 15) and faces north straight away (`Dungeon ▸ NorthOnArrival`), so after stage 4 the camera already looks at the gate. Turning uses 180 ms taps (`RotateStepMs`) |
+| Gate aim | after facing north the pilot tilts the camera up (right-drag upwards, 150 px), looks for the next stage's red/orange background straight ahead and clicks the brown floor just below it, then lets the character walk before steering by coordinates. Saves a `gate_view` snapshot each time. Off by default (the coordinate run is used); `Dungeon ▸ AimGate` turns it on |
+| Stage 5 | at the target the pilot presses Tab, looks for `Dungeon ▸ FinalBoss` (`Sacred Sky Lord`), select-clicks until "Attack succeeded" and watches it like the map stages (autohunt is still on from stage 4, so `J` is not pressed). After the kill it presses `J` once (autohunt off) and uses the teleport scroll to go to `Dungeon ▸ ReturnDestination` (`Piercing City`); with `Loop` on, the next run starts from there |
+
+### Dungeon stages
+
+`Dungeon ▸ Stages` holds the boss name of each stage, in order: `Sanctified Unicorn`, `Spectral`,
+`Sundersword`, `Ragesoul Heathen`. The pilot logs which stage it believes it is on, warns when the
+map shows a different name, and after the last stage it does the searchlight/run-to-coordinate
+finish. Behind the gate text is a banner cropped by the user, so `dungeongateopen.png` is expected
+in `%LOCALAPPDATA%\WuxAuto\templates` (or `Assets`) - if it is missing the pilot falls back to OCR.
+
+### Zone guard and the Bohai Outpost dialog
+
+Everything Labyrinth-related (gate wait, map clicks, boss Tab/select, turning north, the final run)
+only runs while the minimap title says **The Labyrinth**; the title is read every 2 s. Not seen for
+6 s → the pilot holds all input; back in `Piercing City` → it starts the next run; another zone
+(e.g. Bohai Outpost) → snapshot `wrong_zone` and the next run. If the **Bohai Outpost** dialog shows
+(`Sequence ▸ CancelDialogText`, default `Bohai`), its `Cancel` button is clicked.
+
+### Input safety
+
+By default (`Input ▸ Mode = ForegroundSendInput`, `Only while game is focused`) the pilot sends
+input **only while the bound HWND is the foreground window**. If anything else takes focus, the
+action is suppressed, the reason is logged, and the pilot retries once the game is back in
+front — so keystrokes can never land in another app. `BackgroundMessages` posts window messages
+straight to the bound HWND instead; it works for some Unity builds and does nothing for others,
+but it also only ever talks to the bound window.
+
+## Settings that matter
+
+| Setting | Meaning |
+| --- | --- |
+| `Detection ▸ Icon score` | Minimum score (0–1) for `teleportscroll` / `rightchevron` / `mapicon`. Raise it if the pilot clicks the wrong thing, lower it if it cannot find the icon. |
+| `Detection ▸ Compass score` | Minimum score to trust the beam template. |
+| `Detection ▸ North tolerance°` | Stop turning when the compass is within this many degrees of north (default 8). |
+| `Detection ▸ Compass mode` | `Template` (rotated `flashlight.png` matching, recommended), `Brightness` (moment-based fallback, no template needed, ~±20°), `Auto`. |
+| `Sequence ▸ Rotation` | `Key` (holds `D`/`A`, auto-calibrates degrees per second) or `MouseDrag` (right-drag, auto-calibrates degrees per pixel). |
+| `Sequence ▸ Gate mode` | `Delay` (wait `Gate delay ms`), `Template` (needs `gateopen.png`), `Text` (OCR looks for `Gate text`, default "open"). |
+| `Regions` | Every region is `x, y, width, height` as fractions of the client area, so one profile works at any resolution. Not editable and not saved: rebuilt from the defaults at every run. |
+| `Sequence ▸ Dry run` / `Loop` | Detect without input; repeat the sequence. |
+
+### Regions
+
+* `Scroll` – where the teleport scroll icon can appear (default: whole screen).
+* `Teleport list` – the chevron buttons; the pilot clicks the one closest to the previous one so
+  a list with several arrows does not confuse it.
+* `OCR area` – searched for the destination text.
+* `Map button` – the top-right map icon.
+* `Gate area` – checked for the "gate open" template/text.
+* `Map boss list` – the scrollable "Monsters on this map" list (names + row `>`).
+* `Map scroll` – must cover the up/down arrows above the "Spawns" column. The arrows themselves
+  are located as the light glyphs in the band just above the OCR'd "Spawns" header, not by fixed
+  pixels, so the region only has to *contain* that header. The wheel over the list is the last
+  resort if neither the header nor the rotated chevron template can be found.
+* `System message` – only used to log game notices such as "no walkable path".
+* `Attack message` – left side, the combat log, searched for new "Attack succeeded!" lines after each boss select click.
+  Generous guess (0, 0.10, 0.40, 0.85) until a frame of the message is measured.
+* `Compass` – the box around the searchlight beam on the minimap.
+* `Coordinates` – the `x , y` label under the minimap.
+
+**Resolutions.** Every region is a fraction of the client and is reset to the built-in default at
+the start of every run (never loaded from `settings.json`), so it follows the window
+automatically. Tested sizes: 1024x768, 1366x768, 1440x900, 1600x900, 1920x1080, 1920x1200,
+2048x1152, 2560x1440. Templates are searched over a scale range around `client height / 1080`
+(×0.70 … ×1.55, step 0.05), and the map row `>` is found with `rightchevronfoc.png` inside the
+OCR'd row band (bright-blob fallback), so it needs no scale of its own. If the game's map window
+sits somewhere the defaults do not cover, the pilot
+tries a generous region, finds the name anyway and logs the coordinates that `Map boss list`
+should be widened to.
+
+## Templates
+
+`teleportscroll.png`, `rightchevron.png`, `rightchevronfoc.png`, `mapicon.png`, `flashlight.png`,
+`dungeongateopen.png` and `monstericon.png` ship inside `src\WuxAuto\Assets`. A file with the same
+name in `%LOCALAPPDATA%\WuxAuto\templates` wins, so templates can be re-cropped without a rebuild.
+
+Detection is resolution independent: the first search for a template runs over a **scale range
+around the `client height / 1080` guess (×0.70 … ×1.55, step 0.05)**, the winning scale is
+remembered per template **and per client height**, and later frames use the fast single-scale
+path. A template cropped at 900p, 1080p or 1440p therefore all work, and switching resolution
+re-learns automatically. `Detection ▸ Template score` defaults to a deliberately loose **0.70**;
+the scale search does the real work, the score only filters obvious non-matches. If a detection
+fails, the failure message reports the score of the closest look-alike so you can tell "raise the
+threshold is not the issue" from "re-crop this template".
+
+Drop your own crops with the same file names into
+
+```
+%LOCALAPPDATA%\WuxAuto\templates
+```
+
+and they take priority over the shipped ones — this is the intended way to re-crop
+`flashlight.png` for your resolution/graphics settings, or to add `gateopen.png`. The folder is
+created on first launch, and *Templates folder* button opens it. *Reload templates* picks up
+changes without restarting.
+
+`gateopen.png` is **not** shipped: with `Gate mode = Delay` the pilot simply waits
+`Gate delay ms` (1500 by default) instead of looking for the gate.
+
+## Troubleshooting
+
+| Symptom | Fix |
+| --- | --- |
+| `D3D11CreateDevice … 0x80070057` on bind | The GPU rejects an explicitly passed DXGI adapter (seen on Windows on ARM / Adreno with an x64 build). The app already falls back to the default adapter, WARP and per-adapter attempts; if binding still fails run `WuxAuto.SelfTest --dxgi` and read the listed attempts. |
+| Preview stays black | The game is exclusive fullscreen or protected. Switch it to windowed/borderless. |
+| "Input blocked …" messages | Something else is in front of the game. The pilot waits and retries; use *Focus game* or F9 from inside the game. |
+| Nothing happens on Start | Check the log: the pilot logs which step it is on. Use Dry run to see the detections without input. |
+| Icons are found but slightly off | The template scale does not match your resolution. Re-crop the PNGs at your client size, or set `Detection ▸ Template scale`. |
+| OCR keeps missing "Labyrinth" | Verify the English OCR pack is installed (the app logs the OCR engine state at bind time), then widen/realign the OCR region and check the Test scan log line `ocr saw: …`. |
+| Compass never settles | Check the beam is inside the blue compass box in Test scan, lower `Compass score`, or switch to `Brightness` mode. |
+| Turn direction/amount looks wrong | The pilot calibrates itself on the first nudge; if the game turns very slowly raise `Sequence ▸ Rotate tap ms` and `Rotate settle ms`. |
+
+Failures save a debug snapshot to `%LOCALAPPDATA%\WuxAuto\debug` with the detections that were on
+screen at the time — the *Debug snapshots* button opens that folder.
+
+## Repository layout
+
+```
+src/WuxAuto                  the app
+  Assets/                    shipped reference PNGs
+  Automation/                the teleport sequence state machine
+  Capture/                   Desktop Duplication capture + frame pool
+  Core/                      settings, geometry, logging, paths
+  Engine/                    capture + vision loop, bind/start/stop
+  Input/                     focus-guarded SendInput / PostMessage
+  Interop/                   Win32 bindings, window enumeration, hotkeys
+  Vision/                    template matcher, compass, OCR, overlays
+  ViewModels/, MainWindow.*  the UI
+tests/WuxAuto.SelfTest       offline vision checks (synthetic frame, no game needed)
+tests/WuxAuto.UiShot         renders MainWindow to a PNG (no desktop session needed)
+CLAUDE.md                    developer/handoff notes: architecture, measured UI facts,
+                             current state, open items and debugging workflow
+```
+
+## Development checks
+
+```powershell
+# template matching, OCR and compass against a synthetic frame
+dotnet run --project .\tests\WuxAuto.SelfTest            # add --verbose for per-angle scores
+
+# DXGI/D3D11 capabilities of this machine (which device configuration can duplicate which monitor)
+dotnet run --project .\tests\WuxAuto.SelfTest -- --dxgi
+
+# start the capture service against the game (or the largest window) and save real frames
+dotnet run --project .\tests\WuxAuto.SelfTest -- --capture
+
+# run the full Test scan over a saved frame and write frame.scan.png next to it
+dotnet run --project .\tests\WuxAuto.SelfTest -- --frame C:\path\frame.png
+#   add --crop x y w h [zoom] to also write a zoomed crop
+
+# focus the game, tap a key and report how much of the frame changed
+dotnet run --project .\tests\WuxAuto.SelfTest -- --input I
+
+# script real input and save a frame after each step (key:I, click:x,y, rclick:x,y, drag:x1,y1,x2,y2, wait:ms)
+dotnet run --project .\tests\WuxAuto.SelfTest -- --do key:I --do rclick:661,285 --do wait:900
+
+# render the UI to a PNG (useful when the desktop is locked)
+dotnet run --project .\tests\WuxAuto.UiShot -- "$env:TEMP\ui.png"
+```
+
+The self-test is the fast way to confirm a change did not break the vision stack; it asserts
+exact match positions, a 1.00 template score for the flashlight at 0/40/135/200/330 degrees and
+the OCR round-trip for the word "Labyrinth".
