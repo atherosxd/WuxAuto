@@ -7,9 +7,17 @@ Everything it does is drawn on its preview and written to its log.
 ## Before you start
 
 * Windows 10 (2004 or newer) or Windows 11, 64-bit. Nothing else to install.
-* Run the game **windowed** (not exclusive fullscreen), best at **1024 x 768** - that is the size
-  it was tested at. Other sizes may work but are not tested.
-* In the game: font size **110 %** (Settings > VISUAL; the pilot checks it on start), a
+* Recommended game settings:
+
+  | Setting | Value |
+  | --- | --- |
+  | Resolution | Any (tested best at **1024 x 768**) |
+  | Display mode | **Windowed** (optimized for it; not exclusive fullscreen) |
+  | Settings > VISUAL > Interface Scale | **Auto** |
+  | Settings > VISUAL > Font Size | **110 - 120 %** |
+  | Tab Target | **Default / Nearest Monster** |
+
+* In the game: a
   **teleport scroll** in the inventory with The Labyrinth (Adept) available, and **skill 1** on the
   key `1` (used to attack the last boss).
 * Tick **Remember me** on the login screen: after a disconnect the pilot logs back in by clicking

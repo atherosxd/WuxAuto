@@ -29,11 +29,8 @@
             <StackPanel>
 
                 <TextBlock Text="WuxAuto" FontSize="24" FontWeight="SemiBold" />
-                <TextBlock Style="{StaticResource Caption}" Margin="0,2,0,6"
-                           Text="Process-scoped pilot for Wuxen2.exe. Capture through the Desktop Duplication API, detection through OpenCV template matching and the Windows OCR engine." />
-
                 <!-- version + updates (GitHub Releases) -->
-                <DockPanel Margin="0,0,0,12" LastChildFill="True">
+                <DockPanel Margin="0,6,0,12" LastChildFill="True">
                     <TextBlock DockPanel.Dock="Left" Text="{Binding VersionText}" Style="{StaticResource Caption}" VerticalAlignment="Center" />
                     <Button DockPanel.Dock="Left" Content="Check for updates" Command="{Binding CheckForUpdatesCommand}" Margin="10,0,0,0" />
                     <TextBlock Text="{Binding UpdateStatus}" Style="{StaticResource Caption}" VerticalAlignment="Center"
@@ -48,6 +45,48 @@
                         <TextBlock VerticalAlignment="Center" TextWrapping="Wrap" Foreground="#8FE3B0"
                                    Text="{Binding AvailableUpdate.VersionText, StringFormat='Update v{0} is available. WuxAuto closes, updates and reopens itself.'}" />
                     </DockPanel>
+                </Border>
+
+                <!-- recommended in-game settings -->
+                <Border Style="{StaticResource CardStyle}">
+                    <StackPanel>
+                        <TextBlock Text="Recommended game settings" Style="{StaticResource SectionTitle}" />
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto" />
+                                <ColumnDefinition Width="*" />
+                            </Grid.ColumnDefinitions>
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
+                            </Grid.RowDefinitions>
+                            <Grid.Resources>
+                                <Style TargetType="TextBlock" BasedOn="{StaticResource {x:Type TextBlock}}">
+                                    <Setter Property="FontSize" Value="12" />
+                                    <Setter Property="TextWrapping" Value="Wrap" />
+                                    <Setter Property="Margin" Value="0,2,0,2" />
+                                </Style>
+                            </Grid.Resources>
+
+                            <TextBlock Grid.Row="0" Grid.Column="0" Text="Resolution" Style="{StaticResource FieldLabel}" Margin="0,2,12,2" />
+                            <TextBlock Grid.Row="0" Grid.Column="1" Text="Any (tested best at 1024 x 768)" />
+
+                            <TextBlock Grid.Row="1" Grid.Column="0" Text="Display mode" Style="{StaticResource FieldLabel}" Margin="0,2,12,2" />
+                            <TextBlock Grid.Row="1" Grid.Column="1" Text="Windowed (optimized for it)" />
+
+                            <TextBlock Grid.Row="2" Grid.Column="0" Text="Interface scale" Style="{StaticResource FieldLabel}" Margin="0,2,12,2" />
+                            <TextBlock Grid.Row="2" Grid.Column="1" Text="Auto  (Settings ▸ Visual)" />
+
+                            <TextBlock Grid.Row="3" Grid.Column="0" Text="Font size" Style="{StaticResource FieldLabel}" Margin="0,2,12,2" />
+                            <TextBlock Grid.Row="3" Grid.Column="1" Text="110 - 120 %  (Settings ▸ Visual)" />
+
+                            <TextBlock Grid.Row="4" Grid.Column="0" Text="Tab target" Style="{StaticResource FieldLabel}" Margin="0,2,12,2" />
+                            <TextBlock Grid.Row="4" Grid.Column="1" Text="Default / Nearest Monster" />
+                        </Grid>
+                    </StackPanel>
                 </Border>
 
                 <!-- bind -->
