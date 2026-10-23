@@ -15,7 +15,7 @@ Everything it does is drawn on its preview and written to its log.
   | Display mode | **Windowed** (optimized for it; not exclusive fullscreen) |
   | Settings > VISUAL > Interface Scale | **Auto** |
   | Settings > VISUAL > Font Size | **110 - 120 %** (the pilot checks it on start and fixes it if outside) |
-  | Tab Target | **Default / Nearest Monster** |
+  | Settings > VISUAL > TAB target | **Default** (the pilot checks it on start and sets it) |
 
 * In the game: a
   **teleport scroll** in the inventory with The Labyrinth (Adept) available, and **skill 1** on the

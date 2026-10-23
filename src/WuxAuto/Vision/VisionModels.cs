@@ -31,8 +31,11 @@ public sealed record CompassReading(double AngleFromNorth, double Score, PixelRe
 
 public sealed record OcrWord(string Text, PixelRect Bounds, string LineText, PixelRect LineBounds);
 
-/// <summary>A Settings window row: label, value box and number, and the chevrons beside the value.</summary>
-public sealed record SettingRow(PixelRect Label, PixelRect? Value, int? Percent, PixelRect? Left, PixelRect? Right);
+/// <summary>
+/// A Settings window row: label, value box, value text and number (numeric rows), and the chevrons
+/// beside the value.
+/// </summary>
+public sealed record SettingRow(PixelRect Label, PixelRect? Value, int? Percent, PixelRect? Left, PixelRect? Right, string? ValueText = null);
 
 public sealed class ScanReport
 {

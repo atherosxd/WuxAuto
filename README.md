@@ -125,6 +125,7 @@ The Wuxen2 flow this drives:
 
 | Step | Interaction |
 | --- | --- |
+| Game settings | once per Start, in town: `Escape` opens the game's SETTINGS → `VISUAL` tab → **Font size** is kept within `Sequence ▸ FontSizePercent` … `FontSizeMaxPercent` (110 … 120 %) → the list is scrolled down to **TAB target**, which is set to `Default` with its left arrow (`Sequence ▸ TabTargetDefault`, the "TAB target: Default" check box) → **SAVE** once if either changed → `Escape`. Only buttons read by OCR are clicked; anything unexpected closes the window and the run carries on (`fontsize_unread` / `tabtarget_unread` snapshots) |
 | Inventory | taps `Input ▸ Inventory key` (default `I`) |
 | Teleport scroll | **right click** the `teleportscroll.png` match - in this client a left click only picks the item up and a double click does nothing |
 | Destination list | OCR of `Sequence ▸ Regions ▸ Teleport list` for `Destination text` (default `Labyrinth`, which matches `[The Labyrinth (Adept)]` on page 2), paged with `rightchevron.png` when it is not on the visible page |
@@ -180,6 +181,7 @@ but it also only ever talks to the bound window.
 | `Sequence ▸ Gate mode` | `Delay` (wait `Gate delay ms`), `Template` (needs `gateopen.png`), `Text` (OCR looks for `Gate text`, default "open"). |
 | `Regions` | Every region is `x, y, width, height` as fractions of the client area, so one profile works at any resolution. Not editable and not saved: rebuilt from the defaults at every run. |
 | `Sequence ▸ Dry run` / `Loop` | Detect without input; repeat the sequence. |
+| `Sequence ▸ TabTargetDefault` | On (default): on Start in town the game's Settings ▸ VISUAL ▸ TAB target is set to `Default` and saved. Off = leave it alone. |
 
 ### Regions
 

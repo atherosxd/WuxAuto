@@ -11,7 +11,7 @@ namespace WuxAuto.SelfTest;
 /// <summary>
 /// Scripted input exploration: sends keys/clicks to the game and saves a frame after every step,
 /// so the UI flow can be mapped without the pilot. Steps are given as --do key:I, --do click:661,285,
-/// --do rclick:800,450, --do wait:500.
+/// --do rclick:800,450, --do wheel:960,600,-5 (negative = down), --do wait:500.
 /// </summary>
 internal static class ActionProbe
 {
@@ -76,6 +76,9 @@ internal static class ActionProbe
                         break;
                     case "drag":
                         input.Drag(int.Parse(parts[0]), int.Parse(parts[1]), int.Parse(parts[2]), int.Parse(parts[3]));
+                        break;
+                    case "wheel": // wheel:x,y,notches - positive scrolls up, negative down
+                        input.Wheel(int.Parse(parts[0]), int.Parse(parts[1]), int.Parse(parts[2]));
                         break;
                     case "move":
                         // mouse move only: reuse click with a zero-length hold is not possible, log instead
