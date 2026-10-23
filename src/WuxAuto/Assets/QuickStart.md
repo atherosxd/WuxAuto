@@ -14,7 +14,7 @@ Everything it does is drawn on its preview and written to its log.
   | Resolution | Any (tested best at **1024 x 768**) |
   | Display mode | **Windowed** (optimized for it; not exclusive fullscreen) |
   | Settings > VISUAL > Interface Scale | **Auto** |
-  | Settings > VISUAL > Font Size | **110 - 120 %** |
+  | Settings > VISUAL > Font Size | **110 - 120 %** (the pilot checks it on start and fixes it if outside) |
   | Tab Target | **Default / Nearest Monster** |
 
 * In the game: a

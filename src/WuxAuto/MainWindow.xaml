@@ -316,8 +316,19 @@
                                        ToolTip="Shows the boss name and marker (Tab)." />
                             <TextBox Grid.Row="1" Grid.Column="1" Style="{StaticResource WideField}" Text="{Binding Settings.Dungeon.TabKey, UpdateSourceTrigger=PropertyChanged}" />
                             <TextBlock Grid.Row="1" Grid.Column="2" Text="Font size %" Style="{StaticResource FieldLabel}"
-                                       ToolTip="Set in the game's Settings > VISUAL on Start in town. 0 = leave it alone." />
-                            <TextBox Grid.Row="1" Grid.Column="3" Style="{StaticResource WideField}" Text="{Binding Settings.Sequence.FontSizePercent}" />
+                                       ToolTip="Checked in the game's Settings > VISUAL on Start in town: inside min - max it is left alone, outside it is moved to the nearer end. Min 0 = leave it alone." />
+                            <Grid Grid.Row="1" Grid.Column="3">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                    <ColumnDefinition Width="*" />
+                                </Grid.ColumnDefinitions>
+                                <TextBox Grid.Column="0" Style="{StaticResource Field}" Margin="0,0,4,6" ToolTip="Min"
+                                         Text="{Binding Settings.Sequence.FontSizePercent}" />
+                                <TextBlock Grid.Column="1" Text="-" Style="{StaticResource FieldLabel}" Margin="0,0,4,6" />
+                                <TextBox Grid.Column="2" Style="{StaticResource WideField}" ToolTip="Max"
+                                         Text="{Binding Settings.Sequence.FontSizeMaxPercent}" />
+                            </Grid>
 
                             <TextBlock Grid.Row="2" Grid.Column="0" Text="Buff key (LOD)" Style="{StaticResource FieldLabel}"
                                        ToolTip="Auto LOD: auto-buff on arrival and every 4 min 50 s (most buffs last 5 min). Empty = off." />

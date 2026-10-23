@@ -201,6 +201,7 @@ public sealed partial class AutomationPilot
     private int _fontClicks;
     private int _fontTabClicks;
     private bool _fontChanged;
+    private int _fontGoal;
     private int _refineDir;
     private double _refineBest;
     private int _refineTaps;
@@ -813,14 +814,16 @@ public sealed partial class AutomationPilot
     }
 
     /// <summary>
-    /// Settings (Escape) -> VISUAL -> "Font size" set to <see cref="SequenceSettings.FontSizePercent"/>
-    /// with the chevrons beside the value -> SAVE if it changed -> Escape. Only buttons found by
+    /// Settings (Escape) -> VISUAL -> "Font size" kept within <see cref="SequenceSettings.FontSizePercent"/>
+    /// .. <see cref="SequenceSettings.FontSizeMaxPercent"/>: outside it, the chevrons beside the value
+    /// move it to the nearer end -> SAVE if it changed -> Escape. Only buttons found by
     /// their own text are clicked (the window also has CHARACTER SELECT and EXIT). Anything
     /// unexpected: close the window and carry on with the run - the font is not worth a failure.
     /// </summary>
     private async Task TickFontSizeAsync(Mat frame)
     {
-        int target = _settings.Sequence.FontSizePercent;
+        int low = _settings.Sequence.FontSizePercent;
+        int high = Math.Max(low, _settings.Sequence.FontSizeMaxPercent);
         var full = new PixelRect(0, 0, frame.Width, frame.Height);
         long now = Environment.TickCount64;
 
@@ -906,7 +909,7 @@ public sealed partial class AutomationPilot
                     return;
                 }
 
-                if (percent == target)
+                if (percent >= low && percent <= high)
                 {
                     if (_fontChanged)
                     {
@@ -914,21 +917,26 @@ public sealed partial class AutomationPilot
                         return;
                     }
 
-                    Close($"Font size is already {percent}%.", LogLevel.Info);
+                    Close(low == high
+                        ? $"Font size is already {percent}%."
+                        : $"Font size is {percent}% (within {low}-{high}%).", LogLevel.Info);
                     return;
                 }
 
-                var chevron = percent < target ? row.Right : row.Left;
+                // Outside the range: move to the nearer end (below -> low, above -> high).
+                if (!_fontChanged)
+                    _fontGoal = percent < low ? low : high;
+                var chevron = percent < _fontGoal ? row.Right : row.Left;
                 if (chevron == null || ++_fontClicks > 12)
                 {
-                    Close($"Font size is {percent}% and could not be set to {target}% - leaving it.", LogLevel.Warning);
+                    Close($"Font size is {percent}% and could not be set to {_fontGoal}% - leaving it.", LogLevel.Warning);
                     return;
                 }
 
                 if (!Click(chevron.Value))
                     return;
                 _fontChanged = true;
-                _detail = $"font size {percent}% -> {target}%";
+                _detail = $"font size {percent}% -> {_fontGoal}%";
                 _waitUntil = now + 500;
                 return;
             }
@@ -938,13 +946,13 @@ public sealed partial class AutomationPilot
                 var save = await Find("SAVE");
                 if (save == null || TextMatcher.Normalize(save.Text) != "save")
                 {
-                    Close($"Font size set to {target}%, but no SAVE button was read - it may not stick.", LogLevel.Warning);
+                    Close($"Font size set to {_fontGoal}%, but no SAVE button was read - it may not stick.", LogLevel.Warning);
                     return;
                 }
 
                 if (!Click(save.Bounds))
                     return;
-                Close($"Font size set to {target}% and saved.", LogLevel.Success);
+                Close($"Font size set to {_fontGoal}% and saved.", LogLevel.Success);
                 _waitUntil = now + 800;
                 return;
             }

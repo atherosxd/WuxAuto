@@ -367,10 +367,15 @@ public sealed class SequenceSettings
     public string CancelDialogText { get; set; } = "Bohai";
 
     /// <summary>
-    /// On Start in town: Settings (Escape) -> VISUAL -> "Font size" is set to this with the row's
-    /// chevrons, then SAVE (user: 110 % reads better). 0 = leave it alone.
+    /// On Start in town: Settings (Escape) -> VISUAL -> "Font size" is checked against
+    /// <see cref="FontSizePercent"/> .. <see cref="FontSizeMaxPercent"/> (user: 110 - 120 % read well).
+    /// Inside the range it is left alone; outside it is moved to the nearer end with the row's
+    /// chevrons, then SAVE. 0 = leave it alone.
     /// </summary>
     public int FontSizePercent { get; set; } = 110;
+
+    /// <summary>Upper end of the accepted font size range (see <see cref="FontSizePercent"/>).</summary>
+    public int FontSizeMaxPercent { get; set; } = 120;
 
     /// <summary>Text on the destination row to click (OCR, fuzzy matching).</summary>
     public string DestinationText { get; set; } = "Labyrinth";
