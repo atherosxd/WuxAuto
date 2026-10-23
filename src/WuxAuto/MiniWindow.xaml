@@ -1,0 +1,42 @@
+<Window x:Class="WuxAuto.MiniWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:vm="clr-namespace:WuxAuto.ViewModels"
+        Title="WuxAuto mini"
+        SizeToContent="WidthAndHeight"
+        ResizeMode="NoResize"
+        WindowStyle="ToolWindow"
+        ShowInTaskbar="True"
+        Background="{StaticResource Bg}"
+        TextOptions.TextFormattingMode="Display">
+    <!-- Mini mode (user): mode, Start / Stop, always on top, top right of the screen. -->
+    <Border Padding="10,8" MouseLeftButtonDown="OnDrag" Background="Transparent">
+        <StackPanel>
+            <StackPanel x:Name="ButtonRow" Orientation="Horizontal">
+                <StackPanel Orientation="Horizontal"
+                            IsEnabled="{Binding IsRunning, Converter={x:Static vm:BoolConverters.Inverse}}">
+                    <RadioButton GroupName="MiniRunMode" Content="Laby" Style="{StaticResource ModeButton}"
+                                 IsChecked="{Binding Settings.Sequence.Mode, Converter={x:Static vm:BoolConverters.EnumEquals}, ConverterParameter=AutoLaby}"
+                                 ToolTip="Auto Laby" />
+                    <RadioButton GroupName="MiniRunMode" Content="LOD" Style="{StaticResource ModeButton}"
+                                 IsChecked="{Binding Settings.Sequence.Mode, Converter={x:Static vm:BoolConverters.EnumEquals}, ConverterParameter=AutoLod}"
+                                 ToolTip="Auto LOD" />
+                </StackPanel>
+                <Button Content="▶ Start" Style="{StaticResource PrimaryButton}" Padding="12,7" Margin="4,0,6,0"
+                        Command="{Binding StartCommand}"
+                        IsEnabled="{Binding IsRunning, Converter={x:Static vm:BoolConverters.Inverse}}" />
+                <Button Content="■ Stop" Style="{StaticResource DangerButton}" Padding="12,7" Margin="0,0,6,0"
+                        Command="{Binding StopCommand}" />
+                <Button Content="⤢ Full" Padding="10,7" Margin="0" Click="OnFull" ToolTip="Back to the full window" />
+            </StackPanel>
+            <!-- Fixed size (user): the status wraps inside the button row's width, room for 3 lines,
+                 so the window never grows or jumps with a long message. -->
+            <TextBlock Text="{Binding StateText}" Foreground="{StaticResource Muted}" FontSize="11"
+                       Margin="0,8,0,0" TextWrapping="Wrap" TextTrimming="CharacterEllipsis"
+                       Width="{Binding ActualWidth, ElementName=ButtonRow}" Height="44"
+                       ToolTip="{Binding StateText}" />
+            <CheckBox Content="On top" HorizontalAlignment="Right" Margin="0,4,0,0"
+                      IsChecked="{Binding Topmost, RelativeSource={RelativeSource AncestorType=Window}}" />
+        </StackPanel>
+    </Border>
+</Window>

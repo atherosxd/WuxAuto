@@ -1,0 +1,401 @@
+﻿<Window x:Class="WuxAuto.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:vm="clr-namespace:WuxAuto.ViewModels"
+        xmlns:core="clr-namespace:WuxAuto.Core"
+        Title="WuxAuto - Wuxen2 pilot"
+        Height="880" Width="1380"
+        MinHeight="500" MinWidth="760"
+        Background="{StaticResource Bg}"
+        TextOptions.TextFormattingMode="Display"
+        WindowStartupLocation="CenterScreen">
+
+    <Window.Resources>
+        <BooleanToVisibilityConverter x:Key="BoolToVisibility" />
+    </Window.Resources>
+
+    <Window.DataContext>
+        <vm:MainViewModel />
+    </Window.DataContext>
+
+    <Grid Margin="14">
+        <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="440" />
+            <ColumnDefinition Width="*" />
+        </Grid.ColumnDefinitions>
+
+        <!-- ================= controls ================= -->
+        <ScrollViewer Grid.Column="0" VerticalScrollBarVisibility="Auto" Margin="0,0,14,0">
+            <StackPanel>
+
+                <TextBlock Text="WuxAuto" FontSize="24" FontWeight="SemiBold" />
+                <TextBlock Style="{StaticResource Caption}" Margin="0,2,0,6"
+                           Text="Process-scoped pilot for Wuxen2.exe. Capture through the Desktop Duplication API, detection through OpenCV template matching and the Windows OCR engine." />
+
+                <!-- version + updates (GitHub Releases) -->
+                <DockPanel Margin="0,0,0,12" LastChildFill="True">
+                    <TextBlock DockPanel.Dock="Left" Text="{Binding VersionText}" Style="{StaticResource Caption}" VerticalAlignment="Center" />
+                    <Button DockPanel.Dock="Left" Content="Check for updates" Command="{Binding CheckForUpdatesCommand}" Margin="10,0,0,0" />
+                    <TextBlock Text="{Binding UpdateStatus}" Style="{StaticResource Caption}" VerticalAlignment="Center"
+                               Margin="4,0,0,0" TextTrimming="CharacterEllipsis" />
+                </DockPanel>
+                <Border Background="#10301E" BorderBrush="#2E8A57" BorderThickness="1" CornerRadius="8"
+                        Padding="10,6" Margin="0,-4,0,12"
+                        Visibility="{Binding IsUpdateAvailable, Converter={StaticResource BoolToVisibility}}">
+                    <DockPanel>
+                        <Button DockPanel.Dock="Right" Content="Install now" Style="{StaticResource PrimaryButton}"
+                                Command="{Binding InstallUpdateCommand}" Margin="8,0,0,0" />
+                        <TextBlock VerticalAlignment="Center" TextWrapping="Wrap" Foreground="#8FE3B0"
+                                   Text="{Binding AvailableUpdate.VersionText, StringFormat='Update v{0} is available. WuxAuto closes, updates and reopens itself.'}" />
+                    </DockPanel>
+                </Border>
+
+                <!-- bind -->
+                <Border Style="{StaticResource CardStyle}">
+                    <StackPanel>
+                        <TextBlock Text="1. Bind the game window" Style="{StaticResource SectionTitle}" />
+                        <ComboBox ItemsSource="{Binding Windows}"
+                                  SelectedItem="{Binding SelectedWindow}"
+                                  MaxDropDownHeight="320">
+                            <ComboBox.ItemTemplate>
+                                <DataTemplate>
+                                    <TextBlock Text="{Binding Display}" TextTrimming="CharacterEllipsis" />
+                                </DataTemplate>
+                            </ComboBox.ItemTemplate>
+                        </ComboBox>
+                        <StackPanel Orientation="Horizontal" Margin="0,10,0,8">
+                            <Button Content="Refresh list" Command="{Binding RefreshWindowsCommand}" />
+                            <Button Content="Bind / Unbind" Command="{Binding BindCommand}" />
+                            <Button Content="Focus game" Command="{Binding FocusGameCommand}" />
+                        </StackPanel>
+                        <TextBlock Text="{Binding BindStatus}" Style="{StaticResource Caption}" />
+                    </StackPanel>
+                </Border>
+
+                <!-- run -->
+                <Border Style="{StaticResource CardStyle}">
+                    <StackPanel>
+                        <TextBlock Text="2. Run the teleport sequence" Style="{StaticResource SectionTitle}" />
+                        <StackPanel Orientation="Horizontal" Margin="0,0,0,8">
+                            <TextBlock Text="Mode" Style="{StaticResource FieldLabel}" VerticalAlignment="Center" />
+                            <StackPanel Orientation="Horizontal" Margin="8,0,0,0"
+                                        IsEnabled="{Binding IsRunning, Converter={x:Static vm:BoolConverters.Inverse}}">
+                                <RadioButton GroupName="RunMode" Content="Auto Laby" Style="{StaticResource ModeButton}"
+                                             IsChecked="{Binding Settings.Sequence.Mode, Converter={x:Static vm:BoolConverters.EnumEquals}, ConverterParameter=AutoLaby}"
+                                             ToolTip="The Labyrinth (Adept): 4 stages + Sacred Sky Lord, back to town, repeat." />
+                                <RadioButton GroupName="RunMode" Content="Auto LOD" Style="{StaticResource ModeButton}"
+                                             IsChecked="{Binding Settings.Sequence.Mode, Converter={x:Static vm:BoolConverters.EnumEquals}, ConverterParameter=AutoLod}"
+                                             ToolTip="Ultimate Den of Rebirth: Bai Gu Great, respawns - fights until the map timer runs out." />
+                            </StackPanel>
+                        </StackPanel>
+                        <StackPanel Orientation="Horizontal">
+                            <Button Content="▶  Start" Style="{StaticResource PrimaryButton}" Command="{Binding StartCommand}"
+                                    IsEnabled="{Binding IsRunning, Converter={x:Static vm:BoolConverters.Inverse}}" />
+                            <Button Content="■  Stop" Style="{StaticResource DangerButton}" Command="{Binding StopCommand}" />
+                            <Button Content="▭  Mini" Click="OnMiniMode"
+                                    ToolTip="Small always-on-top window with the mode, Start and Stop." />
+                        </StackPanel>
+                        <TextBlock Style="{StaticResource Caption}" Margin="0,8,0,4"
+                                   Text="F9 toggles start/stop from inside the game, F10 panics (stops and unbinds)." />
+                        <Border Background="#3A2A10" BorderBrush="#8A6212" BorderThickness="1" CornerRadius="8"
+                                Padding="10,6" Margin="0,0,0,8"
+                                Visibility="{Binding Settings.Sequence.DryRun, Converter={StaticResource BoolToVisibility}}">
+                            <TextBlock TextWrapping="Wrap" Foreground="#FFC46B"
+                                       Text="Dry run is ON - the pilot detects and logs, but sends no keys or clicks to the game." />
+                        </Border>
+                        <WrapPanel>
+                            <CheckBox Content="Dry run (no input)" IsChecked="{Binding Settings.Sequence.DryRun}" />
+                            <CheckBox Content="Loop" IsChecked="{Binding Settings.Sequence.Loop}" />
+                            <CheckBox Content="Restart on error" IsChecked="{Binding Settings.Sequence.RestartOnError}"
+                                      ToolTip="After an error start over from the top instead of stopping (at most 5 times in 30 minutes)." />
+                        </WrapPanel>
+                        <Border Background="#0E1118" BorderBrush="{StaticResource CardBorder}" BorderThickness="1" CornerRadius="8" Padding="10,8" Margin="0,8,0,0">
+                            <StackPanel>
+                                <TextBlock Text="{Binding StateText}" FontSize="13" TextWrapping="Wrap" />
+                                <TextBlock Text="{Binding StatText}" Style="{StaticResource Caption}" Margin="0,4,0,0" />
+                            </StackPanel>
+                        </Border>
+                    </StackPanel>
+                </Border>
+
+                <!-- vision debug -->
+                <Border Style="{StaticResource CardStyle}">
+                    <StackPanel>
+                        <TextBlock Text="3. Verify detection" Style="{StaticResource SectionTitle}" />
+                        <StackPanel Orientation="Horizontal" Margin="0,0,0,8">
+                            <Button Content="Test scan now" Command="{Binding TestScanCommand}" />
+                            <Button Content="Reload templates" Command="{Binding ReloadTemplatesCommand}" />
+                        </StackPanel>
+                        <TextBlock Text="{Binding ScanSummary}" Style="{StaticResource Caption}" />
+                        <TextBlock Text="{Binding OcrStatus}" Style="{StaticResource Caption}" Margin="0,4,0,0" />
+                        <StackPanel Orientation="Horizontal" Margin="0,8,0,0">
+                            <Button Content="Debug snapshots" Command="{Binding OpenDebugFolderCommand}" />
+                            <Button Content="Templates folder" Command="{Binding OpenTemplatesFolderCommand}" />
+                        </StackPanel>
+                    </StackPanel>
+                </Border>
+
+                <!-- settings -->
+                <Expander Header="Settings (applied live, saved on exit)">
+                    <StackPanel Margin="0,8,0,0">
+
+                        <TextBlock Text="Input" Style="{StaticResource SectionTitle}" />
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto" />
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                                <ColumnDefinition Width="*" />
+                            </Grid.ColumnDefinitions>
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
+                            </Grid.RowDefinitions>
+
+                            <TextBlock Grid.Row="0" Grid.Column="0" Text="Inventory key" Style="{StaticResource FieldLabel}" />
+                            <TextBox Grid.Row="0" Grid.Column="1" Style="{StaticResource WideField}" Text="{Binding Settings.Input.InventoryKey, UpdateSourceTrigger=PropertyChanged}" />
+                            <TextBlock Grid.Row="0" Grid.Column="2" Text="Rotate key" Style="{StaticResource FieldLabel}" />
+                            <TextBox Grid.Row="0" Grid.Column="3" Style="{StaticResource WideField}" Text="{Binding Settings.Input.RotateKey, UpdateSourceTrigger=PropertyChanged}" />
+
+                            <TextBlock Grid.Row="1" Grid.Column="0" Text="Reverse key" Style="{StaticResource FieldLabel}" />
+                            <TextBox Grid.Row="1" Grid.Column="1" Style="{StaticResource WideField}" Text="{Binding Settings.Input.RotateKeyReverse, UpdateSourceTrigger=PropertyChanged}" />
+                            <TextBlock Grid.Row="1" Grid.Column="2" Text="Mode" Style="{StaticResource FieldLabel}" />
+                            <ComboBox Grid.Row="1" Grid.Column="3" Margin="0,0,8,6"
+                                      ItemsSource="{Binding Source={x:Static vm:OptionLists.InputModes}}"
+                                      SelectedItem="{Binding Settings.Input.Mode}" />
+
+                            <TextBlock Grid.Row="2" Grid.Column="0" Text="Key hold ms" Style="{StaticResource FieldLabel}" />
+                            <TextBox Grid.Row="2" Grid.Column="1" Style="{StaticResource WideField}" Text="{Binding Settings.Input.KeyHoldMs}" />
+                            <TextBlock Grid.Row="2" Grid.Column="2" Text="Post-click ms" Style="{StaticResource FieldLabel}" />
+                            <TextBox Grid.Row="2" Grid.Column="3" Style="{StaticResource WideField}" Text="{Binding Settings.Input.AfterClickMs}" />
+
+                            <StackPanel Grid.Row="3" Grid.Column="0" Grid.ColumnSpan="4" Orientation="Horizontal">
+                                <CheckBox Content="Only while game is focused" IsChecked="{Binding Settings.Input.RequireForeground}" />
+                                <CheckBox Content="Focus on start" IsChecked="{Binding Settings.Input.FocusOnStart}" />
+                                <CheckBox Content="Restore cursor" IsChecked="{Binding Settings.Input.RestoreCursor}" />
+                            </StackPanel>
+                        </Grid>
+
+                        <TextBlock Text="Detection" Style="{StaticResource SectionTitle}" Margin="0,12,0,6" />
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto" />
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                                <ColumnDefinition Width="*" />
+                            </Grid.ColumnDefinitions>
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
+                            </Grid.RowDefinitions>
+
+                            <TextBlock Grid.Row="0" Grid.Column="0" Text="Icon score" Style="{StaticResource FieldLabel}" />
+                            <TextBox Grid.Row="0" Grid.Column="1" Style="{StaticResource WideField}" Text="{Binding Settings.Detection.TemplateThreshold}" />
+                            <TextBlock Grid.Row="0" Grid.Column="2" Text="Compass score" Style="{StaticResource FieldLabel}" />
+                            <TextBox Grid.Row="0" Grid.Column="3" Style="{StaticResource WideField}" Text="{Binding Settings.Detection.CompassThreshold}" />
+
+                            <TextBlock Grid.Row="1" Grid.Column="0" Text="North tolerance°" Style="{StaticResource FieldLabel}" />
+                            <TextBox Grid.Row="1" Grid.Column="1" Style="{StaticResource WideField}" Text="{Binding Settings.Detection.CompassToleranceDeg}" />
+                            <TextBlock Grid.Row="1" Grid.Column="2" Text="OCR scale" Style="{StaticResource FieldLabel}" />
+                            <TextBox Grid.Row="1" Grid.Column="3" Style="{StaticResource WideField}" Text="{Binding Settings.Detection.OcrScale}" />
+
+                            <TextBlock Grid.Row="2" Grid.Column="0" Text="Compass mode" Style="{StaticResource FieldLabel}" />
+                            <ComboBox Grid.Row="2" Grid.Column="1" Margin="0,0,8,6"
+                                      ItemsSource="{Binding Source={x:Static vm:OptionLists.CompassModes}}"
+                                      SelectedItem="{Binding Settings.Detection.CompassMode}" />
+                            <TextBlock Grid.Row="2" Grid.Column="2" Text="Rotation" Style="{StaticResource FieldLabel}" />
+                            <ComboBox Grid.Row="2" Grid.Column="3" Margin="0,0,8,6"
+                                      ItemsSource="{Binding Source={x:Static vm:OptionLists.RotationModes}}"
+                                      SelectedItem="{Binding Settings.Sequence.RotationMode}" />
+                        </Grid>
+
+                        <TextBlock Text="Sequence" Style="{StaticResource SectionTitle}" Margin="0,12,0,6" />
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto" />
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                                <ColumnDefinition Width="*" />
+                            </Grid.ColumnDefinitions>
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
+                            </Grid.RowDefinitions>
+
+                            <TextBlock Grid.Row="0" Grid.Column="0" Text="Destination" Style="{StaticResource FieldLabel}" />
+                            <TextBox Grid.Row="0" Grid.Column="1" Style="{StaticResource WideField}" Text="{Binding Settings.Sequence.DestinationText, UpdateSourceTrigger=PropertyChanged}" />
+                            <TextBlock Grid.Row="0" Grid.Column="2" Text="Retries" Style="{StaticResource FieldLabel}" />
+                            <TextBox Grid.Row="0" Grid.Column="3" Style="{StaticResource WideField}" Text="{Binding Settings.Sequence.MaxRetries}" />
+
+                            <TextBlock Grid.Row="1" Grid.Column="0" Text="Load min ms" Style="{StaticResource FieldLabel}" />
+                            <TextBox Grid.Row="1" Grid.Column="1" Style="{StaticResource WideField}" Text="{Binding Settings.Sequence.LoadingMinMs}" />
+                            <TextBlock Grid.Row="1" Grid.Column="2" Text="Settle ms" Style="{StaticResource FieldLabel}" />
+                            <TextBox Grid.Row="1" Grid.Column="3" Style="{StaticResource WideField}" Text="{Binding Settings.Sequence.LoadingSettleMs}" />
+
+                            <TextBlock Grid.Row="2" Grid.Column="0" Text="Gate mode" Style="{StaticResource FieldLabel}" />
+                            <ComboBox Grid.Row="2" Grid.Column="1" Margin="0,0,8,6"
+                                      ItemsSource="{Binding Source={x:Static vm:OptionLists.GateModes}}"
+                                      SelectedItem="{Binding Settings.Sequence.GateMode}" />
+                            <TextBlock Grid.Row="2" Grid.Column="2" Text="Gate delay ms" Style="{StaticResource FieldLabel}" />
+                            <TextBox Grid.Row="2" Grid.Column="3" Style="{StaticResource WideField}" Text="{Binding Settings.Sequence.GateDelayMs}" />
+
+                            <TextBlock Grid.Row="3" Grid.Column="0" Text="Gate text" Style="{StaticResource FieldLabel}" />
+                            <TextBox Grid.Row="3" Grid.Column="1" Style="{StaticResource WideField}" Text="{Binding Settings.Sequence.GateText, UpdateSourceTrigger=PropertyChanged}" />
+                            <TextBlock Grid.Row="3" Grid.Column="2" Text="Loop delay ms" Style="{StaticResource FieldLabel}" />
+                            <TextBox Grid.Row="3" Grid.Column="3" Style="{StaticResource WideField}" Text="{Binding Settings.Sequence.LoopDelayMs}" />
+                        </Grid>
+
+                        <TextBlock Text="Dungeon" Style="{StaticResource SectionTitle}" Margin="0,12,0,6" />
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto" />
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                                <ColumnDefinition Width="*" />
+                            </Grid.ColumnDefinitions>
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
+                            </Grid.RowDefinitions>
+
+                            <TextBlock Grid.Row="0" Grid.Column="0" Text="Skill key" Style="{StaticResource FieldLabel}"
+                                       ToolTip="Pressed on the targeted last boss: the character walks there and attacks (1 = the top-row 1 key)." />
+                            <TextBox Grid.Row="0" Grid.Column="1" Style="{StaticResource WideField}" Text="{Binding Settings.Dungeon.SkillKey, UpdateSourceTrigger=PropertyChanged}" />
+                            <TextBlock Grid.Row="0" Grid.Column="2" Text="Autohunt key" Style="{StaticResource FieldLabel}" />
+                            <TextBox Grid.Row="0" Grid.Column="3" Style="{StaticResource WideField}" Text="{Binding Settings.Dungeon.AutohuntKey, UpdateSourceTrigger=PropertyChanged}" />
+
+                            <TextBlock Grid.Row="1" Grid.Column="0" Text="Target key" Style="{StaticResource FieldLabel}"
+                                       ToolTip="Shows the boss name and marker (Tab)." />
+                            <TextBox Grid.Row="1" Grid.Column="1" Style="{StaticResource WideField}" Text="{Binding Settings.Dungeon.TabKey, UpdateSourceTrigger=PropertyChanged}" />
+                            <TextBlock Grid.Row="1" Grid.Column="2" Text="Font size %" Style="{StaticResource FieldLabel}"
+                                       ToolTip="Set in the game's Settings > VISUAL on Start in town. 0 = leave it alone." />
+                            <TextBox Grid.Row="1" Grid.Column="3" Style="{StaticResource WideField}" Text="{Binding Settings.Sequence.FontSizePercent}" />
+
+                            <TextBlock Grid.Row="2" Grid.Column="0" Text="Buff key (LOD)" Style="{StaticResource FieldLabel}"
+                                       ToolTip="Auto LOD: auto-buff on arrival and every 4 min 50 s (most buffs last 5 min). Empty = off." />
+                            <TextBox Grid.Row="2" Grid.Column="1" Style="{StaticResource WideField}" Text="{Binding Settings.Lod.BuffKey, UpdateSourceTrigger=PropertyChanged}" />
+                            <TextBlock Grid.Row="2" Grid.Column="2" Text="Laby key wait (s)" Style="{StaticResource FieldLabel}"
+                                       ToolTip="Labyrinth teleport clicked but still in town: wait this many seconds after it, then count it as out of Temple of Fiends Keys and switch to Auto LOD." />
+                            <TextBox Grid.Row="2" Grid.Column="3" Style="{StaticResource WideField}" Text="{Binding Settings.Sequence.LabyKeyWaitSeconds}" />
+
+                            <TextBlock Grid.Row="3" Grid.Column="0" Text="Manual attacks" Style="{StaticResource FieldLabel}"
+                                       ToolTip="Laby: once the boss is selected (magenta ring + name), press the skill key this many times before turning the autohunt on. 0 = autohunt straight away." />
+                            <TextBox Grid.Row="3" Grid.Column="1" Style="{StaticResource WideField}" Text="{Binding Settings.Dungeon.ManualAttacks}" />
+
+                            <WrapPanel Grid.Row="4" Grid.Column="0" Grid.ColumnSpan="4">
+                                <CheckBox Content="Tab + skill at the last waypoint" IsChecked="{Binding Settings.Dungeon.TabAtWaypoint}"
+                                          ToolTip="At 3603,1973: Tab until the last boss shows, then spam the skill key. Off = walk to the boss coordinates." />
+                                <CheckBox Content="Autohunt off for the run" IsChecked="{Binding Settings.Dungeon.FinalBossPressAutohunt}"
+                                          ToolTip="Autohunt off after stage 4, on again at the last boss." />
+                            </WrapPanel>
+                            <WrapPanel Grid.Row="5" Grid.Column="0" Grid.ColumnSpan="4">
+                                <CheckBox Content="Click the stage 5 gate" IsChecked="{Binding Settings.Dungeon.AimGate}"
+                                          ToolTip="Tilt the camera if needed and click the red/orange gate after stage 4." />
+                                <CheckBox Content="Auto reconnect" IsChecked="{Binding Settings.Sequence.AutoReconnect}"
+                                          ToolTip="Log back in after a disconnect (the game must remember the account)." />
+                                <CheckBox Content="Hold skill (LOD)" IsChecked="{Binding Settings.Lod.HoldSkill}"
+                                          ToolTip="Auto LOD: hold the skill key down while attacking instead of spamming it." />
+                            </WrapPanel>
+                        </Grid>
+
+                        <TextBlock Text="Mini mode" Style="{StaticResource SectionTitle}" Margin="0,12,0,6" />
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock Text="Position" Style="{StaticResource FieldLabel}" VerticalAlignment="Center" Margin="0,0,10,0" />
+                            <ComboBox Width="160" HorizontalAlignment="Left" VerticalAlignment="Center" SelectedValuePath="Tag"
+                                      SelectedValue="{Binding Settings.Ui.MiniPosition}"
+                                      ToolTip="Where the mini window opens on the screen.">
+                                <ComboBoxItem Content="Top Left" Tag="{x:Static core:MiniPosition.TopLeft}" />
+                                <ComboBoxItem Content="Top Center" Tag="{x:Static core:MiniPosition.TopCenter}" />
+                                <ComboBoxItem Content="Top Right" Tag="{x:Static core:MiniPosition.TopRight}" />
+                                <ComboBoxItem Content="Middle Left" Tag="{x:Static core:MiniPosition.MiddleLeft}" />
+                                <ComboBoxItem Content="Middle" Tag="{x:Static core:MiniPosition.Middle}" />
+                                <ComboBoxItem Content="Middle Right" Tag="{x:Static core:MiniPosition.MiddleRight}" />
+                                <ComboBoxItem Content="Bottom Left" Tag="{x:Static core:MiniPosition.BottomLeft}" />
+                                <ComboBoxItem Content="Bottom Center" Tag="{x:Static core:MiniPosition.BottomCenter}" />
+                                <ComboBoxItem Content="Bottom Right" Tag="{x:Static core:MiniPosition.BottomRight}" />
+                            </ComboBox>
+                        </StackPanel>
+
+                        <TextBlock Text="Screen positions" Style="{StaticResource SectionTitle}" Margin="0,12,0,6" />
+                        <TextBlock Style="{StaticResource Caption}"
+                                   Text="Search regions and click positions are not saved. Every run rebuilds them from the built-in defaults for the current window size and re-learns the template scales, so the game can run at any resolution." />
+
+                        <StackPanel Orientation="Horizontal" Margin="0,14,0,0">
+                            <Button Content="Save settings" Command="{Binding SaveSettingsCommand}" />
+                        </StackPanel>
+                        <TextBlock Text="{Binding SaveSettingsState}" Style="{StaticResource Caption}" Margin="0,6,0,0" />
+                    </StackPanel>
+                </Expander>
+
+            </StackPanel>
+        </ScrollViewer>
+
+        <!-- ================= preview + log ================= -->
+        <Grid Grid.Column="1">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="*" />
+                <RowDefinition Height="240" />
+            </Grid.RowDefinitions>
+
+            <Border Grid.Row="0" Background="#05070B" BorderBrush="{StaticResource CardBorder}" BorderThickness="1" CornerRadius="10">
+                <Grid>
+                    <Image Source="{Binding PreviewImage}" Stretch="Uniform" StretchDirection="DownOnly"
+                           RenderOptions.BitmapScalingMode="HighQuality" Margin="6" />
+                    <TextBlock Text="No capture yet" Foreground="#3C4658" FontSize="20" HorizontalAlignment="Center" VerticalAlignment="Center">
+                        <TextBlock.Style>
+                            <Style TargetType="TextBlock">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding PreviewImage}" Value="{x:Null}">
+                                        <Setter Property="Visibility" Value="Visible" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </TextBlock.Style>
+                    </TextBlock>
+                    <Border VerticalAlignment="Bottom" Background="#CC05070B" Padding="10,6" CornerRadius="0,0,10,10">
+                        <StackPanel>
+                            <TextBlock Text="{Binding PreviewCaption}" Foreground="#B9C4D6" FontSize="11.5" />
+                            <TextBlock Style="{StaticResource Caption}" Text="Keep this window away from the game area: capture always works, input only fires while the game is in front." />
+                        </StackPanel>
+                    </Border>
+                </Grid>
+            </Border>
+
+            <Border Grid.Row="1" Style="{StaticResource CardStyle}" Margin="0,12,0,0">
+                <Grid>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="*" />
+                    </Grid.RowDefinitions>
+                    <StackPanel Grid.Row="0" Orientation="Horizontal" Margin="0,0,0,8">
+                        <TextBlock Text="Log" Style="{StaticResource SectionTitle}" Margin="0,0,12,0" />
+                        <Button Content="Clear" Command="{Binding ClearLogCommand}" Padding="8,3" />
+                    </StackPanel>
+                    <ListBox x:Name="LogList" Grid.Row="1" ItemsSource="{Binding LogEntries}"
+                             ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                             VirtualizingPanel.IsVirtualizing="True">
+                        <ListBox.ItemTemplate>
+                            <DataTemplate DataType="{x:Type core:LogEntry}">
+                                <TextBlock TextWrapping="Wrap" FontFamily="Cascadia Mono, Consolas" FontSize="11.5" Foreground="{Binding Brush}">
+                                    <Run Text="{Binding TimeText, Mode=OneWay}" Foreground="#6C7A90" />
+                                    <Run Text="  " />
+                                    <Run Text="{Binding Message, Mode=OneWay}" />
+                                </TextBlock>
+                            </DataTemplate>
+                        </ListBox.ItemTemplate>
+                    </ListBox>
+                </Grid>
+            </Border>
+        </Grid>
+    </Grid>
+</Window>
