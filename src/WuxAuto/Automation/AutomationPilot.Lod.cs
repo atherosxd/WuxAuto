@@ -270,7 +270,11 @@ public sealed partial class AutomationPilot
         return true;
     }
 
-    /// <summary>After the kill (death text): spam the loot key for LootMs, then look for the respawn.</summary>
+    /// <summary>
+    /// After the kill (death text or the target gone LootAfterMissingMs): spam the loot key for LootMs
+    /// (at least 10 s, user), then look for the respawn. No Tab here (user) - it only starts again
+    /// once the loot is over.
+    /// </summary>
     private void TickLodLoot()
     {
         var lod = _settings.Lod;
@@ -484,11 +488,12 @@ public sealed partial class AutomationPilot
             _lodDeathLines = Math.Min(_lodDeathLines, deathLines);
         }
 
-        // Name or treasure icon = targeted (user); Tab only once it has been gone a moment - Tab while
-        // targeted could switch to another target.
+        // Name or treasure icon = targeted (user). Gone for LootAfterMissingMs (2 s) = dead -> loot
+        // below; no Tab before that or while looting (user, 2026-10-23), so Tab only
+        // runs here when looting is off.
         if (boss != null)
             _lodBossSeenAt = now;
-        else if (now - _lodBossSeenAt > 1500)
+        else if (string.IsNullOrWhiteSpace(lod.LootKey) && now - _lodBossSeenAt > 1500)
             TapLodTab(now, 1500);
 
         // Moved by the game: the boss is dead (or we died and respawned) - start the next cycle.
@@ -510,11 +515,11 @@ public sealed partial class AutomationPilot
             }
         }
 
-        // Name gone for a while: probably dead but the death text was missed - loot anyway (user).
+        // Name / treasure icon gone 2 s: the boss is dead (user) - loot, even without the death text.
         if (now - _lodBossSeenAt > lod.LootAfterMissingMs && !string.IsNullOrWhiteSpace(lod.LootKey))
         {
             ReleaseHeldSkill();
-            Log?.Invoke(LogLevel.Info, $"'{lod.BossName}' gone for {lod.LootAfterMissingMs / 1000}s - looting with '{lod.LootKey}' for {lod.LootMs / 1000}s, then looking for it again.");
+            Log?.Invoke(LogLevel.Info, $"'{lod.BossName}' / treasure icon gone for {lod.LootAfterMissingMs / 1000.0:0.#}s - looting with '{lod.LootKey}' for {lod.LootMs / 1000}s, then looking for it again.");
             _lodLootAt = 0;
             Advance(PilotPhase.LodLoot, 0);
             return;

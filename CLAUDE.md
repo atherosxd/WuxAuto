@@ -361,9 +361,11 @@ on screen → `LodAttack`: spam `Dungeon.SkillKey` every 0.3 s — or hold it do
 * **Kill = "see you in hell"** (`Lod.DeathText`, what the boss says when it dies, user): a *new* line of
   it in the attack OCR (same whole-screen read as the name; an old line in the chat cannot re-trigger)
   → `LodLoot`: spam `Lod.LootKey` **`** (Oem3, vk 192; "`"/"~" are mapped) every 150 ms for
-  `Lod.LootMs` 5 s — there is no autohunt here to pick drops up (user) → back to Tab for the respawn.
-  The name gone `Lod.LootAfterMissingMs` 5 s mid-fight loots the same way (user; the death text may be
-  missed), without counting a kill.
+  `Lod.LootMs` **10 s** (minimum, user 2026-10-23; settings v19) — there is no autohunt here to pick
+  drops up (user) — **no Tab while looting** → back to Tab for the respawn. The name / target-bar
+  treasure icon gone `Lod.LootAfterMissingMs` **2 s** (was 5 s, v19) mid-fight = dead, loots the same
+  way without counting a kill; no Tab in that 2 s gap either (Tab during an attack only when the loot
+  key is empty).
 * **Boss name in view while turning south → stop the turn and attack** (user); the heading is then
   unknown, so the next time the boss is lost the pilot turns south first (no buff) before walking.
 * **Killed by the boss → put back at the map's starting point** (coordinate jump > `Lod.TeleportJump`

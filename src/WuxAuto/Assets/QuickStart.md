@@ -28,7 +28,7 @@ Everything it does is drawn on its preview and written to its log.
 
 * **AutoLaby** - The Labyrinth (Adept): 4 stages + Sacred Sky Lord, back to your home town, repeat.
 * **AutoLod** - Ultimate Den of Rebirth: walks to the boss **Bai Gu Great** pressing Tab and spams
-  skill `1` until it is dead (it auto-buffs with `O` on arrival and every ~5 min). When the boss says "see you in hell" it loots with the `` ` `` key for 5 s.
+  skill `1` until it is dead (it auto-buffs with `O` on arrival and every ~5 min). When the boss says "see you in hell" (or the boss's treasure icon is gone for 2 s) it loots with the `` ` `` key for 10 s, without pressing Tab.
   The boss respawns, so it keeps fighting until the map's timer runs out;
   then the game sends you to your home town and the pilot teleports back in. Killed by the boss, it walks in again from the start of the map.
   Out of keys is noticed at the teleport: LOD not on page 2 of the teleport list -> AutoLaby; still

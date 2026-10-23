@@ -300,13 +300,14 @@ public sealed class LodSettings
     /// </summary>
     public string LootKey { get; set; } = "`";
 
-    public int LootMs { get; set; } = 5000;
+    /// <summary>Loot time, at least 10 s (user); no Tab meanwhile.</summary>
+    public int LootMs { get; set; } = 10000;
 
     /// <summary>
-    /// The boss name gone this long mid-fight = probably dead without the death text being read: loot
-    /// anyway (user: "if the boss name disappears and for 5s still no boss name, spam the loot").
+    /// The boss name / target-bar treasure icon gone this long mid-fight = dead, also without the
+    /// death text: loot (user, 2026-10-23: 2 s, was 5 s).
     /// </summary>
-    public int LootAfterMissingMs { get; set; } = 5000;
+    public int LootAfterMissingMs { get; set; } = 2000;
 
     /// <summary>Boss name missing this long while attacking = lost target, walk/Tab again.</summary>
     public int BossGoneMs { get; set; } = 10000;
