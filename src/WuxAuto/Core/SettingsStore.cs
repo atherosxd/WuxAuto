@@ -26,7 +26,7 @@ public static class AppPaths
 public static class SettingsStore
 {
     /// <summary>Bump when an existing settings.json must be migrated (see <see cref="Migrate"/>).</summary>
-    private const int CurrentVersion = 18;
+    private const int CurrentVersion = 19;
 
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
@@ -141,6 +141,15 @@ public static class SettingsStore
         if (s.Version < 18 && s.Sequence != null)
             s.Sequence.CheckKeys = false;
 
+        // v19: LOD loot at least 10 s, boss/treasure icon gone 2 s = dead (user).
+        if (s.Version < 19 && s.Lod != null)
+        {
+            if (s.Lod.LootMs < 10000)
+                s.Lod.LootMs = 10000;
+            if (s.Lod.LootAfterMissingMs == 5000)
+                s.Lod.LootAfterMissingMs = 2000;
+        }
+
         s.Version = CurrentVersion;
         return true;
     }
@@ -220,7 +229,7 @@ public static class SettingsStore
         s.Lod.RespawnSettleMs = Math.Clamp(s.Lod.RespawnSettleMs, 0, 60000);
         s.Lod.BuffEveryMs = Math.Clamp(s.Lod.BuffEveryMs, 5000, 3600000);
         s.Lod.FlashlightMatchScore = Math.Clamp(s.Lod.FlashlightMatchScore, 0.30, 0.99);
-        s.Lod.LootMs = Math.Clamp(s.Lod.LootMs, 0, 60000);
+        s.Lod.LootMs = Math.Clamp(s.Lod.LootMs, 10000, 60000);
         s.Lod.ListPage = Math.Clamp(s.Lod.ListPage, 1, 20);
         s.Sequence.RestartDelayMs = Math.Clamp(s.Sequence.RestartDelayMs, 1000, 120000);
         s.Sequence.MaxRestarts = Math.Clamp(s.Sequence.MaxRestarts, 1, 100);
