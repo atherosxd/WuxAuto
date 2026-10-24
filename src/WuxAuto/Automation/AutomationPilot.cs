@@ -721,9 +721,9 @@ public sealed partial class AutomationPilot
             if (await FindLodBossAsync(frame) != null)
             {
                 // Resume (user): rebuff first - a fight may be running, so stop attacking for it
-                // (Space x5) - then attack.
+                // (Shura, else Space) - then attack.
                 Log?.Invoke(LogLevel.Warning, $"Already at {Destination} with '{_settings.Lod.BossName}' in view - rebuffing, then attacking.");
-                TryLodBuff(Environment.TickCount64, force: true, attacking: true);
+                TryLodBuff(frame, Environment.TickCount64, force: true, attacking: true);
                 BeginLodFight();
                 _lodHeadingUnknown = true;
                 Advance(PilotPhase.LodAttack, 700);
