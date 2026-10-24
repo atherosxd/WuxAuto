@@ -13,6 +13,7 @@ public enum PilotPhase
     Idle,
     Focus,
     CheckZone,
+    AutohuntOff,
     FontSize,
     OpenInventory,
     FindScroll,
@@ -197,6 +198,9 @@ public sealed partial class AutomationPilot
     private const int ArrivalY = 3415;
 
     private bool _fontChecked;
+    private int _huntOffPresses;              // AutohuntOff: taps of the autohunt key this visit (<= 3)
+    private long _huntOffPressedAt;
+    private List<string> _huntOffBaseline = [];   // autohunt log lines before the last tap
     private string? _homeTown;
     private int _fontStep;
     private int _fontClicks;
@@ -239,6 +243,7 @@ public sealed partial class AutomationPilot
         PilotPhase.Idle => "idle",
         PilotPhase.Focus => "focussing game window",
         PilotPhase.CheckZone => "checking where the character is",
+        PilotPhase.AutohuntOff => "making sure the autohunt is off in town",
         PilotPhase.FontSize => "checking the game's font size and TAB target",
         PilotPhase.OpenInventory => "opening inventory",
         PilotPhase.FindScroll => "locating teleport scroll",
@@ -390,6 +395,9 @@ public sealed partial class AutomationPilot
         _jumpAgreements = 0;
         _returning = false;
         _autohuntOff = false;
+        _huntOffPresses = 0;
+        _huntOffPressedAt = 0;
+        _huntOffBaseline = [];
         _compassAnchored = false;
         _bestFlashlightScore = 0;
         _bestFlashlightStep = 0;
@@ -568,6 +576,9 @@ public sealed partial class AutomationPilot
                     break;
                 case PilotPhase.CheckZone:
                     await TickCheckZoneAsync(frame);
+                    break;
+                case PilotPhase.AutohuntOff:
+                    await TickAutohuntOffAsync(frame);
                     break;
                 case PilotPhase.FontSize:
                     await TickFontSizeAsync(frame);
@@ -748,9 +759,18 @@ public sealed partial class AutomationPilot
             if (TownIn(title) != null && !_returning && await CheckKeysAsync(frame))
                 return;
 
-            // Once per Start, in town: the game's font size (user: 110 - 120 %) and TAB target (Default).
-            bool settingsCheck = _settings.Sequence.FontSizePercent > 0 || _settings.Sequence.TabTargetDefault;
-            Advance(!_fontChecked && settingsCheck ? PilotPhase.FontSize : PilotPhase.OpenInventory, 120);
+            // In town, every run (user, 2026-10-25): the autohunt must be off before the teleport -
+            // a restart, a closed stage 5 or a re-login can leave it running.
+            bool townCheck = TownIn(title) != null && !_returning;
+            if (townCheck && _settings.Sequence.AutohuntOffInTown && !string.IsNullOrWhiteSpace(dungeon.AutohuntKey))
+            {
+                _huntOffPresses = 0;
+                _huntOffBaseline = [];
+                Advance(PilotPhase.AutohuntOff, 120);
+                return;
+            }
+
+            Advance(AfterTownChecks(), 120);
             return;
         }
 
@@ -824,6 +844,129 @@ public sealed partial class AutomationPilot
         Log?.Invoke(LogLevel.Warning,
             $"Already in the Labyrinth - resuming at stage {found + 1} ('{text}') instead of teleporting.");
         Advance(PilotPhase.SelectBoss, 200);
+    }
+
+    /// <summary>Once per Start, in town: the game's font size (user: 110 - 120 %) and TAB target (Default); else the teleport.</summary>
+    private PilotPhase AfterTownChecks()
+    {
+        bool settingsCheck = _settings.Sequence.FontSizePercent > 0 || _settings.Sequence.TabTargetDefault;
+        return !_fontChecked && settingsCheck ? PilotPhase.FontSize : PilotPhase.OpenInventory;
+    }
+
+    /// <summary>
+    /// In town, before the teleport (user, 2026-10-25: "when the character goes to town - retrying,
+    /// an error - check whether the autohunt is on; press J, the log on the left shows 'Auto hunt
+    /// started' or 'Auto hunt ended'; if on, turn it off"). The key is a toggle, so: baseline of
+    /// the log's autohunt lines -> tap -> a new "ended" line = it was on, off now; a new "started"
+    /// line = it was off, tap again (expect "ended"). Nothing new within 2 s of the first tap ->
+    /// one more tap (the first key after focusing is sometimes eaten; two unread taps leave the
+    /// state as it was); still nothing -> warning + <c>autohunt_unread</c> snapshot, carry on.
+    /// At most 3 taps. A dry run sends nothing, so it skips the check.
+    /// </summary>
+    private async Task TickAutohuntOffAsync(Mat frame)
+    {
+        var seq = _settings.Sequence;
+        string key = _settings.Dungeon.AutohuntKey;
+        long now = Environment.TickCount64;
+
+        void Done() => Advance(AfterTownChecks(), 120);
+
+        if (_input.IsDryRun)
+        {
+            Log?.Invoke(LogLevel.Info, "Dry run - not checking whether the autohunt is on.");
+            Done();
+            return;
+        }
+
+        var roi = _settings.Regions.AttackMessage.ToPixels(frame.Width, frame.Height);
+        var lines = await ReadAutohuntLinesAsync(frame, roi);
+
+        bool Tap()
+        {
+            if (!_input.KeyTap(key))
+            {
+                _detail = "autohunt key blocked - waiting for the game to be in front";
+                _waitUntil = now + 300;
+                return false;
+            }
+
+            _huntOffBaseline = lines;
+            _huntOffPresses++;
+            _huntOffPressedAt = now;
+            _detail = $"pressed '{key}' ({_huntOffPresses}/3) - reading the combat log";
+            _waitUntil = now + 600;
+            return true;
+        }
+
+        if (_huntOffPresses == 0)
+        {
+            if (Tap())
+                Log?.Invoke(LogLevel.Info, $"In {HomeTown}: pressing '{key}' to see whether the autohunt is on ('{seq.AutohuntStartedText}' / '{seq.AutohuntEndedText}' in the combat log).");
+            return;
+        }
+
+        bool? on = AutohuntLog.NewState(_huntOffBaseline, lines, seq.AutohuntStartedText, seq.AutohuntEndedText, out string? line);
+        if (on == false)
+        {
+            Log?.Invoke(LogLevel.Success, $"Autohunt is off in town ('{line}' after '{key}' x{_huntOffPresses}).");
+            Done();
+            return;
+        }
+
+        if (on == true)
+        {
+            if (_huntOffPresses < 3)
+            {
+                if (Tap())
+                    Log?.Invoke(LogLevel.Warning, $"The autohunt was off - '{key}' turned it on ('{line}'); pressed it again to turn it off.");
+                return;
+            }
+
+            Log?.Invoke(LogLevel.Warning, $"The combat log still reads '{line}' after '{key}' x3 - carrying on.");
+            DebugArtifacts.SaveFrame(frame, _overlays, "autohunt_on");
+            Done();
+            return;
+        }
+
+        if (now - _huntOffPressedAt < 2000)
+        {
+            _detail = $"waiting for an autohunt line in the combat log ('{key}' x{_huntOffPresses})";
+            _waitUntil = now + 400;
+            return;
+        }
+
+        if (_huntOffPresses == 1)
+        {
+            if (Tap())
+                Log?.Invoke(LogLevel.Warning, $"No '{seq.AutohuntStartedText}' / '{seq.AutohuntEndedText}' line after '{key}' - pressed it once more (the first key after focusing is sometimes eaten).");
+            return;
+        }
+
+        Log?.Invoke(LogLevel.Warning, $"The combat log showed no autohunt line after '{key}' x{_huntOffPresses} - cannot tell whether the autohunt is on; carrying on.");
+        DebugArtifacts.SaveFrame(frame, _overlays, "autohunt_unread");
+        Done();
+    }
+
+    /// <summary>The combat log's autohunt lines ("autohuntstarted" / "autohuntended" keys), top to bottom.</summary>
+    private async Task<List<string>> ReadAutohuntLinesAsync(Mat frame, PixelRect roi)
+    {
+        var seq = _settings.Sequence;
+        string? prefix = AutohuntLog.Prefix(seq.AutohuntStartedText, seq.AutohuntEndedText);
+        if (prefix == null)
+            return [];
+
+        var (_, _, words) = await _analyzer.FindTextAsync(frame, roi, seq.AutohuntStartedText);
+        var keys = new List<string>();
+        foreach (var line in words.GroupBy(w => w.LineBounds).OrderBy(g => g.Key.Y))
+        {
+            string? key = AutohuntLog.Key(line.First().LineText, prefix);
+            if (key == null)
+                continue;
+            keys.Add(key);
+            _overlays.Add(new OverlayItem(line.Key, line.First().LineText, OverlayColor.Green));
+        }
+
+        return keys;
     }
 
     /// <summary>

@@ -403,6 +403,22 @@ public sealed class SequenceSettings
     /// </summary>
     public bool TabTargetDefault { get; set; } = true;
 
+    /// <summary>
+    /// In town, before every teleport (user, 2026-10-25): a restart after an error, a closed stage 5,
+    /// the LOD timer or a re-login can leave the autohunt running in town. The pilot taps the
+    /// autohunt key and reads the combat log: <see cref="AutohuntEndedText"/> = it was on and is
+    /// off now; <see cref="AutohuntStartedText"/> = it was off, so the key is tapped again. Nothing
+    /// readable after the tap: one more tap (the first key after focusing is sometimes eaten; two
+    /// unread taps leave the state as it was), then a warning and the run carries on.
+    /// </summary>
+    public bool AutohuntOffInTown { get; set; } = true;
+
+    /// <summary>Combat-log line printed when the autohunt turns on.</summary>
+    public string AutohuntStartedText { get; set; } = "Auto hunt started";
+
+    /// <summary>Combat-log line printed when the autohunt turns off.</summary>
+    public string AutohuntEndedText { get; set; } = "Auto hunt ended";
+
     /// <summary>Text on the destination row to click (OCR, fuzzy matching).</summary>
     public string DestinationText { get; set; } = "Labyrinth";
 

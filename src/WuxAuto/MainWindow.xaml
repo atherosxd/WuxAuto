@@ -360,6 +360,8 @@
                                           ToolTip="Auto LOD: after the first hit, stop attacking (Space) and Ctrl+click the pink ring round the boss's feet, then attack again." />
                                 <CheckBox Content="TAB target: Default" IsChecked="{Binding Settings.Sequence.TabTargetDefault}"
                                           ToolTip="On Start in town, with the font size: the game's Settings > VISUAL > TAB target is set to Default and saved." />
+                                <CheckBox Content="Autohunt off in town" IsChecked="{Binding Settings.Sequence.AutohuntOffInTown}"
+                                          ToolTip="In town, before every teleport: tap the autohunt key and read the combat log ('Auto hunt started' / 'ended'); turn it off if it was on." />
                             </WrapPanel>
                         </Grid>
 
