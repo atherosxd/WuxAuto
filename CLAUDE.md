@@ -110,6 +110,7 @@ The app itself:
 | small screens | `MainWindow.FitToScreen`: the 1380×880 window shrinks to the work area, min 760×500 (user, 2026-10-23: it ran past a small screen and the title bar buttons were out of reach). Drop-downs: the `ComboBox` template draws its own box (border #3A4458) with the chevron in a right-hand column; the old one showed no box and the chevron on the left when narrow |
 | **Dry run (no input)** | full detection, zero input — a "nothing happens" run is often dry-run |
 | **Focus game**, **Reload templates**, **Templates folder**, **Debug snapshots**, **Save settings** | obvious |
+| **Kill screenshots** (user, 2026-10-24: "to check whether it looted or not") | opens `%LOCALAPPDATA%\WuxAuto\kills`. `AutomationPilot.KillShots.cs` + `Vision/KillScreenshots`: plain JPEG (q 90, no overlays, newest 500 kept) when the pilot sees a boss die — Laby `WatchBoss` (banner / name gone) → `laby_s<N>_<boss>`, LOD death text → `lod_kill<N>`, target gone 2 s → `lod_gone` — and a second one when it moves on: LOD at the end of `LodLoot` (`_looted`); Laby 3 s later (`_after`, only in a zone-guarded phase) or earlier, right before `ClickMap` / `OpenInventory` act (the final boss's return teleport opens the inventory ~1.6 s after). Restarts drop a pending shot (`ResetRunState`). Not yet seen live |
 | checkboxes | `Loop`, `Focus on start`, `Only while game is focused`, `Restore cursor` |
 
 ---

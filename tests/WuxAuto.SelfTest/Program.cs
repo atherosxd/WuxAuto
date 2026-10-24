@@ -254,5 +254,24 @@ using (var lodFrame = new Mat(1080, 1920, MatType.CV_8UC4, new Scalar(22, 20, 18
         bossBelt?.ToString() ?? "not found");
 }
 
+// ---------------------------------------------------------------- kill screenshots
+// Plain JPEGs at the frame's size; only the newest maxFiles are kept. A temp folder, so the real
+// kills folder is never pruned by the test.
+string killsFolder = Path.Combine(Path.GetTempPath(), $"wuxauto-kills-{Guid.NewGuid():N}");
+try
+{
+    string[] saved = new[] { "a_first", "b_second", "c_third" }.Select(tag => KillScreenshots.Save(frame, tag, killsFolder, maxFiles: 2)).ToArray();
+    var left = Directory.GetFiles(killsFolder).Select(Path.GetFileName).Order(StringComparer.Ordinal).ToArray();
+    using var reread = Cv2.ImRead(saved[^1]);
+    Check("kill screenshots",
+        saved.All(f => f.Length > 0) && left.Length == 2 && left[0]!.EndsWith("_b_second.jpg") && left[1]!.EndsWith("_c_third.jpg")
+        && reread.Width == frame.Width && reread.Height == frame.Height && reread.Channels() == 3,
+        $"kept {string.Join(", ", left)}; reread {reread.Width}x{reread.Height}x{reread.Channels()}");
+}
+finally
+{
+    try { Directory.Delete(killsFolder, recursive: true); } catch { }
+}
+
 Console.WriteLine(failures == 0 ? "ALL CHECKS PASSED" : $"{failures} CHECK(S) FAILED");
 return failures == 0 ? 0 : 1;
