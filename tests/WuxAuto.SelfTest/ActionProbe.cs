@@ -11,7 +11,8 @@ namespace WuxAuto.SelfTest;
 /// <summary>
 /// Scripted input exploration: sends keys/clicks to the game and saves a frame after every step,
 /// so the UI flow can be mapped without the pilot. Steps are given as --do key:I, --do click:661,285,
-/// --do rclick:800,450, --do wheel:960,600,-5 (negative = down), --do wait:500.
+/// --do rclick:800,450, --do wheel:960,600,-5 (negative = down), --do wait:500, --do ctrlclick:960,400
+/// (Ctrl+left click), --do ctrlring / --do ctrlbelt (LOD: Ctrl+click the boss ring / belt on the last frame).
 /// </summary>
 internal static class ActionProbe
 {
@@ -48,6 +49,8 @@ internal static class ActionProbe
         if (previous == null)
             return 1;
 
+        using var analyzer = new WuxAuto.Vision.ScreenAnalyzer(settings);
+
         Save(previous, "step0-start.png");
 
         for (int i = 0; i < steps.Count; i++)
@@ -74,6 +77,18 @@ internal static class ActionProbe
                     case "rclick":
                         input.Click(int.Parse(parts[0]), int.Parse(parts[1]), MouseButton.Right);
                         break;
+                    case "ctrlclick":
+                        input.CtrlClick(int.Parse(parts[0]), int.Parse(parts[1]));
+                        break;
+                    case "ctrlring": // LOD: Ctrl+click the boss ring's centre (the feet) found on the last frame
+                    case "ctrlbelt": // LOD: Ctrl+click the boss's cyan belt found on the last frame
+                    {
+                        var spot = verb == "ctrlring" ? analyzer.FindBossRing(previous) : analyzer.FindBossBelt(previous);
+                        Console.WriteLine($"  {verb[4..]}: {(spot == null ? "not found" : spot.Value.ToString())}");
+                        if (spot is { } s)
+                            input.CtrlClick(s.CenterX, s.CenterY);
+                        break;
+                    }
                     case "drag":
                         input.Drag(int.Parse(parts[0]), int.Parse(parts[1]), int.Parse(parts[2]), int.Parse(parts[3]));
                         break;

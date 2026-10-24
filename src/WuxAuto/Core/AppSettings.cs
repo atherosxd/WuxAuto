@@ -275,6 +275,23 @@ public sealed class LodSettings
     public bool HoldSkill { get; set; }
 
     /// <summary>
+    /// Walk up to the boss (user, 2026-10-24; UI "Walk up to the boss (LOD)"): after the first
+    /// "Attack succeeded" of a fight, stop attacking (<see cref="StopAttackKey"/> x
+    /// <see cref="ApproachStopPresses"/>) and Ctrl+click the pink ring round the boss's feet (no ring:
+    /// just below its cyan belt), then attack again. Ctrl+click walks there; a plain click attacks.
+    /// </summary>
+    public bool ApproachBoss { get; set; } = true;
+
+    /// <summary>Stop-attack presses before each Ctrl+click (live: 2 were enough for a walk click).</summary>
+    public int ApproachStopPresses { get; set; } = 3;
+
+    /// <summary>Time for the walk after a Ctrl+click (live: ~165 units in under 1.8 s).</summary>
+    public int ApproachWaitMs { get; set; } = 1500;
+
+    /// <summary>Ctrl+clicks per fight before attacking from where the character is.</summary>
+    public int ApproachTries { get; set; } = 2;
+
+    /// <summary>
     /// Auto-buff key (user: O; autohunt is disabled on this map). Pressed on arrival and again every
     /// <see cref="BuffEveryMs"/> (4 min 50 s) - most buffs last 5 min (user). Empty = no buffing.
     /// </summary>

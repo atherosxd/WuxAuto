@@ -140,6 +140,28 @@ public sealed class WindowInput
     }
 
     /// <summary>
+    /// Left click with Ctrl held. In this client it walks to the clicked spot instead of attacking
+    /// what is under the cursor (LOD: walk up to the boss, user 2026-10-24). Verified with the default
+    /// foreground input; posted messages carry no Ctrl state, so background mode may just click.
+    /// </summary>
+    public bool CtrlClick(int clientX, int clientY)
+    {
+        if (!KeyDown("LeftCtrl"))
+            return false;
+
+        try
+        {
+            Thread.Sleep(40);
+            return Click(clientX, clientY);
+        }
+        finally
+        {
+            Thread.Sleep(40);
+            KeyUp("LeftCtrl");
+        }
+    }
+
+    /// <summary>
     /// Two quick left clicks. Most MMOs only run a consumable (teleport scroll) on a double click;
     /// a single click just picks the item up and leaves it hanging on the cursor.
     /// </summary>

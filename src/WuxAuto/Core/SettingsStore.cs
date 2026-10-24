@@ -238,6 +238,9 @@ public static class SettingsStore
         s.Dungeon.ManualAttackWaitMs = Math.Clamp(s.Dungeon.ManualAttackWaitMs, 0, 10000);
         s.Lod.LootAfterMissingMs = Math.Clamp(s.Lod.LootAfterMissingMs, 1000, 120000);
         s.Lod.StopAttackPresses = Math.Clamp(s.Lod.StopAttackPresses, 0, 20);
+        s.Lod.ApproachStopPresses = Math.Clamp(s.Lod.ApproachStopPresses, 0, 20);
+        s.Lod.ApproachWaitMs = Math.Clamp(s.Lod.ApproachWaitMs, 300, 10000);
+        s.Lod.ApproachTries = Math.Clamp(s.Lod.ApproachTries, 1, 10);
         s.Dungeon.ArrivalDelayMs = Math.Clamp(s.Dungeon.ArrivalDelayMs, 0, 10000);
         s.Dungeon.RowChevronThreshold = Math.Clamp(s.Dungeon.RowChevronThreshold, 0.05, 0.99);
         s.Dungeon.RowChevronTemplate = string.IsNullOrWhiteSpace(s.Dungeon.RowChevronTemplate)

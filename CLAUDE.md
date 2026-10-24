@@ -82,6 +82,11 @@ dotnet run --project .\tests\WuxAuto.SelfTest -- --capture
 dotnet run --project .\tests\WuxAuto.SelfTest -- --input I
 dotnet run --project .\tests\WuxAuto.SelfTest -- --do key:I --do rclick:661,285 --do wait:900
 dotnet run --project .\tests\WuxAuto.SelfTest -- --do wheel:891,350,-10   # wheel x,y,notches (negative = down)
+dotnet run --project .\tests\WuxAuto.SelfTest -- --do ctrlclick:960,400   # Ctrl+left click (walks there)
+dotnet run --project .\tests\WuxAuto.SelfTest -- --do ctrlring --do ctrlbelt   # LOD: Ctrl+click the boss ring / belt found live
+
+# LOD boss ring + belt for every PNG in a folder (fast, no OCR)
+dotnet run --project .\tests\WuxAuto.SelfTest -- --lodparts "$env:LOCALAPPDATA\WuxAuto\debug"
 ```
 
 `--do` frames land in `%TEMP%\wuxauto-step<N>-<verb>.png`. Check the frame before every click: an
@@ -135,7 +140,7 @@ publish. **All game-touching work happens on that one loop thread**; the UI only
 `Stop()` therefore takes effect within one frame, and the pilot is a `switch` over `PilotPhase`
 that is ticked, not a blocking script.
 
-`PilotPhase` (+ `LodRun, LodAttack, LodRespawn`): `Idle, Focus, CheckZone, FontSize, OpenInventory, FindScroll, FindChevron, FindDestination, WaitForLoad,
+`PilotPhase` (+ `LodRun, LodAttack, LodApproach, LodRespawn, LodLoot`): `Idle, Focus, CheckZone, FontSize, OpenInventory, FindScroll, FindChevron, FindDestination, WaitForLoad,
 WaitForGate, ClickMap, ReadStage, AdvanceStage, WaitBoss, SelectBoss, WatchBoss, FaceNorth,
 RunToTarget, ReturnToTown, Done, Failed`.
 
@@ -360,6 +365,25 @@ brightness) and the pilot "lined up" facing north at ~0.82 — user caught it. f
 `LodRun`: SimpleSteer with `_headingBase` = π (screen-up = world-south) towards **1191, 2413**
 (`Lod.TargetX/Y`, tolerance 60), Tab every `Lod.TabEveryMs` (1.5 s) → name **`Lod.BossName` "Bai Gu Great"**
 on screen → `LodAttack`: spam `Dungeon.SkillKey` every 0.3 s — or hold it down (`Lod.HoldSkill`, "Hold skill (LOD)"; released on every phase change, Stop, panic and failure) — Tab when the name is missing.
+* **Walk up to the boss** (user, 2026-10-24, `Lod.ApproachBoss` on, "Walk up to the boss (LOD)"): the first
+  *new* "Attack succeeded" line of a fight (combat-log lines from the same whole-screen OCR, keyed like
+  the Labyrinth's `ReadAttackLogAsync`; baseline = the lines at the fight's first targeted tick) ->
+  `LodApproach`: `StopAttackKey` x `ApproachStopPresses` (3) -> fresh frame -> **Ctrl+left click** the centre
+  of the pink ring round the boss's feet (`ScreenAnalyzer.FindBossRing`: H 135-162, S >= 35, V >= 170 - under
+  the boss's blue skill light the ring read S 50-80, too pale for `FindSelectionRing`; the biggest flat
+  patch plus every pink piece within 5 % h, since legs and the character cut it into arcs) -> wait
+  `ApproachWaitMs` (1.5 s) -> back to `LodAttack` (fresh "seen" timer, coordinate baseline re-read; a jump
+  > `TeleportJump` since before the walk = died -> `LodRespawn`). The first click always goes out - the
+  skill already stops the character on the ring at ~0.5 of its radius; a retry (<= `ApproachTries` 2) only
+  when the character (0.5 w, 0.54 h) is still outside 0.6 of the ring's radius. Click clamped to the
+  walk-click area (chat box!). Ctrl+click = walk (a plain click attacks). No ring -> `FindBossBelt` (3+ cyan
+  patches stacked in one column, >= 8 % h tall, or one tall thin cyan patch) and the click goes 6 % h
+  **below** it: a Ctrl+click on the belt itself is a floor point behind the boss (live: walked ~190 units
+  past it; from behind, the "belt" found was a cyan blade on its back). Verified live 2026-10-24 at
+  1920x1080: probe walk-away -> Ctrl+click ring -> 1183,1611 -> 1212,1775 at the feet, attack resumed by
+  itself; two pilot fights: first hit -> click -> 0.56 / 0.12 of the radius -> attacking. When only the
+  ring's front arc shows (boss over the character) its centre is a little in front of the feet. Snapshots
+  `lod_approach` / `lod_approach_miss` (<= 3 per Start). Not seen: the belt fallback inside the pilot.
 * **The boss respawns after dying** (user, after run 2: one "fight" lasted 18 min) → the map is unlimited
   until its timer runs out; then the game sends the character to town → the zone guard teleports in
   again (if that is refused, "Still in … after the teleport" stops the run). A target gone for
@@ -551,7 +575,7 @@ minutes, then it stops as before. Stop / F10 / a closed game window still stop f
 
 Key `DungeonSettings` defaults. The settings panel's **Dungeon** section (2026-10-21) edits Skill key,
 Autohunt key, Target key, Font size % and the switches Tab + skill at the last waypoint, Autohunt off
-for the run, Click the stage 5 gate, Auto reconnect, Hold skill (LOD), TAB target: Default; everything else only via `settings.json`.
+for the run, Click the stage 5 gate, Auto reconnect, Hold skill (LOD), Walk up to the boss (LOD), TAB target: Default; everything else only via `settings.json`.
 `tests/WuxAuto.UiShot -- <png> --settings --bottom` renders that panel; it restores `settings.json`
 afterwards (it ticks check boxes for the picture and the window saves on close — that once switched
 Dry run on in the real settings).
