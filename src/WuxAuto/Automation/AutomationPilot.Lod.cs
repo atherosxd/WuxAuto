@@ -287,12 +287,14 @@ public sealed partial class AutomationPilot
     /// (at least 10 s, user), then look for the respawn. No Tab here (user) - it only starts again
     /// once the loot is over.
     /// </summary>
-    private void TickLodLoot()
+    private void TickLodLoot(Mat frame)
     {
         var lod = _settings.Lod;
         long now = Environment.TickCount64;
         if (now - _phaseStart >= lod.LootMs || string.IsNullOrWhiteSpace(lod.LootKey))
         {
+            // The kill's second screenshot: what is left on the ground after looting.
+            TakePendingKillShot(frame);
             Log?.Invoke(LogLevel.Info, $"Looted for {lod.LootMs / 1000}s - waiting for '{lod.BossName}' to respawn.");
             LeaveLodAttack();
             return;
@@ -502,6 +504,7 @@ public sealed partial class AutomationPilot
             _lodKills++;
             ReleaseHeldSkill();
             Log?.Invoke(LogLevel.Success, $"'{lod.DeathText}' - '{lod.BossName}' killed (kill {_lodKills}); looting with '{lod.LootKey}' for {lod.LootMs / 1000}s.");
+            SaveLodKillShot(frame, $"lod_kill{_lodKills}");
             _lodLootAt = 0;
             Advance(PilotPhase.LodLoot, 0);
             return;
@@ -565,6 +568,7 @@ public sealed partial class AutomationPilot
         {
             ReleaseHeldSkill();
             Log?.Invoke(LogLevel.Info, $"'{lod.BossName}' / treasure icon gone for {lod.LootAfterMissingMs / 1000.0:0.#}s - looting with '{lod.LootKey}' for {lod.LootMs / 1000}s, then looking for it again.");
+            SaveLodKillShot(frame, "lod_gone");
             _lodLootAt = 0;
             Advance(PilotPhase.LodLoot, 0);
             return;

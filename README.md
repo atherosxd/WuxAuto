@@ -257,6 +257,18 @@ changes without restarting.
 Failures save a debug snapshot to `%LOCALAPPDATA%\WuxAuto\debug` with the detections that were on
 screen at the time — the *Debug snapshots* button opens that folder.
 
+Every boss kill saves two plain JPEGs (no overlays) to `%LOCALAPPDATA%\WuxAuto\kills`, to check
+whether the drops were picked up — the *Kill screenshots* button opens that folder:
+
+| When | File name ends in |
+| --- | --- |
+| Labyrinth boss dead (gate banner, or its name gone 10 s) | `laby_s<N>_<boss>` |
+| ~3 s later, or right before the map / inventory opens over the view | `laby_s<N>_<boss>_after` |
+| LOD "see you in hell" / target gone 2 s | `lod_kill<N>` / `lod_gone` |
+| LOD loot step over (10 s) | `…_looted` |
+
+Only the newest 500 files are kept.
+
 ## Repository layout
 
 ```

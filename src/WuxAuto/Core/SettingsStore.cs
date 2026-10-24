@@ -13,11 +13,13 @@ public static class AppPaths
     public static string DebugFolder => Path.Combine(Root, "debug");
     public static string TemplateFolder => Path.Combine(Root, "templates");
     public static string LogFolder => Path.Combine(Root, "logs");
+    public static string KillsFolder => Path.Combine(Root, "kills");
 
     public static void EnsureCreated()
     {
         Directory.CreateDirectory(Root);
         Directory.CreateDirectory(DebugFolder);
+        Directory.CreateDirectory(KillsFolder);
         Directory.CreateDirectory(TemplateFolder);
         Directory.CreateDirectory(LogFolder);
     }

@@ -89,6 +89,7 @@ public partial class MainViewModel : ObservableObject, IAsyncDisposable
         AppendLog(new LogEntry(LogLevel.Info, "WuxAuto ready. 1) refresh + bind a window  2) Start (F9)  3) Stop (F9) / panic (F10)."));
         AppendLog(new LogEntry(LogLevel.Trace, $"Settings: {AppPaths.SettingsFile}"));
         AppendLog(new LogEntry(LogLevel.Trace, $"Debug snapshots: {AppPaths.DebugFolder}"));
+        AppendLog(new LogEntry(LogLevel.Trace, $"Kill screenshots: {AppPaths.KillsFolder}"));
         AppendLog(new LogEntry(LogLevel.Trace, $"Extra templates: {AppPaths.TemplateFolder}"));
         AppendLog(new LogEntry(LogLevel.Trace, $"Log file: {_logFile}"));
 
@@ -426,6 +427,9 @@ public partial class MainViewModel : ObservableObject, IAsyncDisposable
 
     [RelayCommand]
     private void OpenDebugFolder() => OpenFolder(AppPaths.DebugFolder);
+
+    [RelayCommand]
+    private void OpenKillsFolder() => OpenFolder(AppPaths.KillsFolder);
 
     [RelayCommand]
     private void OpenTemplatesFolder() => OpenFolder(AppPaths.TemplateFolder);

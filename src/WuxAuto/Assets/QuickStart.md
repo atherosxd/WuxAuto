@@ -52,6 +52,13 @@ Everything it does is drawn on its preview and written to its log.
    screen; Settings > Mini mode > Position picks another spot) with Laby / LOD, Start and Stop; **Full** brings the big window back.
 6. **Restart on error** (on): after a problem the pilot starts over by itself, up to 5 times in 30 min.
 
+## Did it loot?
+
+Every boss kill saves two plain pictures to `%LOCALAPPDATA%\WuxAuto\kills`: one when the boss dies,
+one when the pilot moves on - LOD after the 10 s loot (`..._looted`), Labyrinth about 3 s later, just
+before the map or the inventory opens (`..._after`). The **Kill screenshots** button opens the folder.
+Only the newest 500 pictures are kept - copy any you want to keep somewhere else.
+
 ## Updates
 
 WuxAuto checks for a new version every time it starts (top of the window: version, **Check for
