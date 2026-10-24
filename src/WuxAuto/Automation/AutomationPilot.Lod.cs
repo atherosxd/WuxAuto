@@ -29,6 +29,12 @@ public sealed partial class AutomationPilot
     private bool _lodHeadingUnknown;
     private int _lodDeathLines = -1;
     private long _lodLootAt;
+    private HashSet<string>? _lodHitLines;
+    private bool _lodApproached;
+    private bool _lodApproachStopped;
+    private int _lodApproachTries;
+    private long _lodApproachClickAt;
+    private int _lodApproachSnapshots;
 
     private bool IsLod => _settings.Sequence.Mode == RunMode.AutoLod;
 
@@ -194,7 +200,7 @@ public sealed partial class AutomationPilot
     /// <summary>One whole-screen OCR: the boss name, and how many lines read like the death text.</summary>
     private async Task<(TextHit? Boss, int DeathLines)> ReadLodScreenAsync(Mat frame)
     {
-        var (boss, _, deathLines) = await ReadLodScreenFullAsync(frame);
+        var (boss, _, deathLines, _) = await ReadLodScreenFullAsync(frame);
         return (boss, deathLines);
     }
 
@@ -204,13 +210,14 @@ public sealed partial class AutomationPilot
     /// best hit is sometimes a single word ("[LOD]") that is too short to pass as the name, and the
     /// pilot then walked or turned with the boss right there (user). Without a readable name the
     /// target bar's treasure chest (monstericon: 0.90 at the top centre on targeted frames, not found
-    /// otherwise) counts too.
+    /// otherwise) counts too. HitLines: the "Attack succeeded" lines of the combat log (see
+    /// <see cref="AttackLineKey"/>), for the first hit of a fight.
     /// </summary>
-    private async Task<(TextHit? Boss, bool Targeted, int DeathLines)> ReadLodScreenFullAsync(Mat frame)
+    private async Task<(TextHit? Boss, bool Targeted, int DeathLines, IReadOnlyList<string> HitLines)> ReadLodScreenFullAsync(Mat frame)
     {
         var lod = _settings.Lod;
         if (string.IsNullOrWhiteSpace(lod.BossName))
-            return (null, false, 0);
+            return (null, false, 0, []);
 
         var roi = _settings.Regions.BossName.ToPixels(frame.Width, frame.Height);
         var (hit, _, words) = await _analyzer.FindTextAsync(frame, roi, lod.BossName);
@@ -242,7 +249,16 @@ public sealed partial class AutomationPilot
                 boss = new TextHit($"treasure icon {chest.Score:0.00}", chest.Score, chest.Bounds, string.Empty, chest.Bounds, 0);
         }
 
-        return (boss, boss != null, deathLines);
+        string hitText = _settings.Dungeon.AttackConfirmText;
+        var log = _settings.Regions.AttackMessage.ToPixels(frame.Width, frame.Height);
+        var hitLines = string.IsNullOrWhiteSpace(hitText) ? [] : lines
+            .Where(line => log.Contains(line.Bounds.CenterX, line.Bounds.CenterY))
+            .Where(line => TextMatcher.Similarity(line.Text, hitText) >= _settings.Detection.OcrMinSimilarity
+                           && TextMatcher.CoversMost(line.Text, hitText))
+            .Select(line => AttackLineKey(line.Text, hitText))
+            .ToList();
+
+        return (boss, boss != null, deathLines, hitLines);
     }
 
     /// <summary>
@@ -260,11 +276,7 @@ public sealed partial class AutomationPilot
 
         _faceSouth = false;
         _lodHeadingUnknown = true;
-        _lodBossSeenAt = Environment.TickCount64;
-        _lodSkillAt = 0;
-        _lodCoordsAt = 0;
-        _lodAttackCoords = null;
-        _lodDeathLines = -1;
+        BeginLodFight();
         Log?.Invoke(LogLevel.Success, $"'{boss.Text}' in view while turning - stopped the turn, spamming skill '{_settings.Dungeon.SkillKey}'.");
         Advance(PilotPhase.LodAttack, 0);
         return true;
@@ -290,6 +302,21 @@ public sealed partial class AutomationPilot
             _lodLootAt = now;
         _detail = $"looting ('{lod.LootKey}') {(now - _phaseStart) / 1000.0:0.0}s";
         _waitUntil = now + 60;
+    }
+
+    /// <summary>
+    /// A new fight (the boss just targeted): fresh timers, death-text baseline and combat-log
+    /// baseline, and one walk up to the boss after its first hit (<see cref="LodSettings.ApproachBoss"/>).
+    /// </summary>
+    private void BeginLodFight()
+    {
+        _lodBossSeenAt = Environment.TickCount64;
+        _lodSkillAt = 0;
+        _lodCoordsAt = 0;
+        _lodAttackCoords = null;
+        _lodDeathLines = -1;
+        _lodHitLines = null;
+        _lodApproached = false;
     }
 
     /// <summary>Back to finding the boss: the walk/Tab, or the south turn first if the heading is unknown.</summary>
@@ -338,11 +365,7 @@ public sealed partial class AutomationPilot
         if (boss != null)
         {
             Log?.Invoke(LogLevel.Success, $"'{boss.Text}' targeted - spamming skill '{_settings.Dungeon.SkillKey}' ({_lodKills} kill(s) so far).");
-            _lodDeathLines = -1;
-            _lodBossSeenAt = now;
-            _lodSkillAt = 0;
-            _lodCoordsAt = 0;
-            _lodAttackCoords = null;
+            BeginLodFight();
             Advance(PilotPhase.LodAttack, 0);
             return;
         }
@@ -466,7 +489,7 @@ public sealed partial class AutomationPilot
             }
         }
 
-        var (boss, _, deathLines) = await ReadLodScreenFullAsync(frame);
+        var (boss, _, deathLines, hitLines) = await ReadLodScreenFullAsync(frame);
 
         // "see you in hell" = the boss died (user): loot it. Only a new line counts - an old one
         // may still be in the chat log.
@@ -492,7 +515,29 @@ public sealed partial class AutomationPilot
         // below; no Tab before that or while looting (user, 2026-10-23), so Tab only
         // runs here when looting is off.
         if (boss != null)
+        {
             _lodBossSeenAt = now;
+
+            // The first "Attack succeeded" of the fight (a line that was not in the log before):
+            // stop attacking and walk up to the boss (user, 2026-10-24).
+            if (lod.ApproachBoss && !_lodApproached)
+            {
+                if (_lodHitLines == null)
+                {
+                    _lodHitLines = [.. hitLines];
+                }
+                else if (hitLines.FirstOrDefault(line => !_lodHitLines.Contains(line)) is { } hit)
+                {
+                    BeginLodApproach(hit);
+                    return;
+                }
+                else
+                {
+                    // Lines the OCR missed on one frame and reads on the next are not new hits.
+                    _lodHitLines.UnionWith(hitLines);
+                }
+            }
+        }
         else if (string.IsNullOrWhiteSpace(lod.LootKey) && now - _lodBossSeenAt > 1500)
             TapLodTab(now, 1500);
 
@@ -534,6 +579,156 @@ public sealed partial class AutomationPilot
 
         _detail = $"spamming '{skill}' on '{lod.BossName}' (seen {(now - _lodBossSeenAt) / 1000.0:0.0}s ago)";
         _waitUntil = now + Math.Min(lod.SkillEveryMs, 300);
+    }
+
+    private void BeginLodApproach(string hit)
+    {
+        _lodApproached = true;
+        _lodApproachStopped = false;
+        _lodApproachTries = 0;
+        _lodApproachClickAt = 0;
+        Log?.Invoke(LogLevel.Info, $"First hit on '{_settings.Lod.BossName}' ({hit}) - stopping the attack to walk up to it.");
+        Advance(PilotPhase.LodApproach, 0);
+    }
+
+    /// <summary>
+    /// After the first hit of a fight (user, 2026-10-24): stop attacking (Space) and Ctrl+click the
+    /// pink ring round the boss's feet - Ctrl+click walks there (live: 1183,1611 -> 1212,1775, at the
+    /// boss's feet, and the attack carried on by itself). No ring: just below the cyan belt, which is
+    /// where the feet are (a Ctrl+click on the belt itself is a floor spot behind the boss - live, it
+    /// walked ~190 units past it). Next to the boss after a click, nothing found, or ApproachTries
+    /// used up -> back to the attack.
+    /// </summary>
+    private async Task TickLodApproachAsync(Mat frame)
+    {
+        var lod = _settings.Lod;
+        long now = Environment.TickCount64;
+
+        if (_lodApproachClickAt > 0 && now - _lodApproachClickAt < lod.ApproachWaitMs)
+        {
+            _detail = $"walking up to '{lod.BossName}' (Ctrl+click {_lodApproachTries}/{lod.ApproachTries})";
+            _waitUntil = _lodApproachClickAt + lod.ApproachWaitMs;
+            return;
+        }
+
+        // The boss may have died while the character walked: the attack phase loots it.
+        var (_, deathLines) = await ReadLodScreenAsync(frame);
+        if (_lodDeathLines >= 0 && deathLines > _lodDeathLines)
+        {
+            await ResumeLodAttackAsync(frame, "the death text showed while walking");
+            return;
+        }
+
+        string what = "pink ring";
+        var spot = _analyzer.FindBossRing(frame);
+        bool ring = spot != null;
+        if (spot == null && _analyzer.FindBossBelt(frame) is { } belt)
+        {
+            int feetY = belt.Bottom + (int)(frame.Height * 0.06);
+            spot = new PixelRect(belt.X, feetY - belt.Width / 2, belt.Width, belt.Width);
+            what = "boss's feet below its belt";
+            _overlays.Add(new OverlayItem(belt, "belt", OverlayColor.Blue));
+        }
+
+        // The camera follows the character: its feet are at the middle of the client, a little low.
+        // Next to the boss = the inner part of its ring, or right at the feet below the belt. The
+        // first Ctrl+click always goes out (user: after the first hit, Ctrl+click the ring - the skill
+        // stops the character on the ring at about half its radius); this only decides a retry.
+        int meX = frame.Width / 2, meY = (int)(frame.Height * 0.54);
+        double away = double.MaxValue;
+        if (spot is { } found)
+        {
+            _overlays.Add(new OverlayItem(found, what, OverlayColor.Green));
+            double dx = meX - found.CenterX, dy = meY - found.CenterY;
+            away = ring
+                ? Math.Sqrt(Math.Pow(dx / Math.Max(1, found.Width / 2.0), 2) + Math.Pow(dy / Math.Max(1, found.Height / 2.0), 2))
+                : Math.Sqrt(dx * dx + dy * dy) / (frame.Height * 0.08);
+            if (_lodApproachTries > 0 && away <= 0.6)
+            {
+                await ResumeLodAttackAsync(frame, $"next to it after {_lodApproachTries} Ctrl+click(s) ({what}, {away:0.00} of its radius)");
+                return;
+            }
+        }
+
+        if (spot == null || _lodApproachTries >= lod.ApproachTries)
+        {
+            if (_lodApproachSnapshots++ < 3)
+                DebugArtifacts.SaveFrame(frame, _overlays, "lod_approach_miss");
+            await ResumeLodAttackAsync(frame, spot == null
+                ? "no pink ring or belt in view - attacking from here"
+                : $"still not next to it after {_lodApproachTries} Ctrl+click(s) - attacking from here");
+            return;
+        }
+
+        // Stop attacking first (user: Space), then take a fresh frame - the boss may move.
+        if (!_lodApproachStopped)
+        {
+            if (!string.IsNullOrWhiteSpace(lod.StopAttackKey))
+            {
+                for (int i = 0; i < lod.ApproachStopPresses; i++)
+                {
+                    if (!_input.KeyTap(lod.StopAttackKey))
+                    {
+                        _detail = "stop key blocked - waiting for the game to be in front";
+                        _waitUntil = now + 300;
+                        return;
+                    }
+
+                    Thread.Sleep(100);
+                }
+            }
+
+            _lodApproachStopped = true;
+            _detail = $"stopped attacking ('{lod.StopAttackKey}' x{lod.ApproachStopPresses})";
+            _waitUntil = Environment.TickCount64 + 150;
+            return;
+        }
+
+        // Inside the walk-click area, as the LodRun clicks: a ring low on the left would otherwise put
+        // the click on the chat box, and the skill key would then type into the chat.
+        int clickX = Math.Clamp(spot.Value.CenterX, (int)(frame.Width * 0.25), (int)(frame.Width * RunClickRight));
+        int clickY = Math.Clamp(spot.Value.CenterY, (int)(frame.Height * RunClickTop), (int)(frame.Height * 0.78));
+        if (!_input.CtrlClick(clickX, clickY))
+        {
+            _detail = "Ctrl+click blocked - waiting for the game to be in front";
+            _waitUntil = now + 300;
+            return;
+        }
+
+        _lodApproachTries++;
+        _lodApproachStopped = false;
+        _lodApproachClickAt = Environment.TickCount64;
+        _lastClick = (clickX, clickY, _lodApproachClickAt);
+        Log?.Invoke(LogLevel.Info, $"Ctrl+clicked the {what} at {clickX},{clickY} (character {away:0.00} of its radius out) - walking up to '{lod.BossName}' ({_lodApproachTries}/{lod.ApproachTries}).");
+        if (_lodApproachTries == 1 && _lodApproachSnapshots++ < 3)
+            DebugArtifacts.SaveFrame(frame, _overlays, "lod_approach", (clickX, clickY));
+        _waitUntil = _lodApproachClickAt + lod.ApproachWaitMs;
+    }
+
+    /// <summary>
+    /// Back to the skill spam after the walk, with a fresh "seen" timer so the walk is not taken for a
+    /// lost target. The coordinates are the new death-jump baseline (the walk itself moves the
+    /// character), but a jump past TeleportJump since before the walk is a death, as in LodAttack.
+    /// </summary>
+    private async Task ResumeLodAttackAsync(Mat frame, string why)
+    {
+        var lod = _settings.Lod;
+        var coords = await _analyzer.ReadCoordinatesAsync(frame);
+        if (coords != null && _lodAttackCoords is (int ax, int ay) && coords.DistanceTo(ax, ay) > lod.TeleportJump)
+        {
+            Log?.Invoke(LogLevel.Warning, $"Moved to {coords} (from {ax},{ay}) while walking up to '{lod.BossName}' - killed by the boss? Walking back in.");
+            DebugArtifacts.SaveFrame(frame, _overlays, "lod_died");
+            Advance(PilotPhase.LodRespawn, lod.RespawnSettleMs);
+            return;
+        }
+
+        Log?.Invoke(LogLevel.Success, $"Walk up to '{lod.BossName}': {why} - attacking again.");
+        long now = Environment.TickCount64;
+        _lodBossSeenAt = now;
+        _lodSkillAt = 0;
+        _lodCoordsAt = now;
+        _lodAttackCoords = coords == null ? null : (coords.X, coords.Y);
+        Advance(PilotPhase.LodAttack, 0);
     }
 
     /// <summary>Lets go of a held skill key (phase change, stop, panic).</summary>

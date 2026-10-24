@@ -35,6 +35,7 @@ public enum PilotPhase
     AutoWar,
     LodRun,
     LodAttack,
+    LodApproach,
     LodRespawn,
     LodLoot,
     Done,
@@ -257,6 +258,7 @@ public sealed partial class AutomationPilot
         PilotPhase.RunToTarget => "running to the staging point",
         PilotPhase.LodRun => "walking to the LOD boss, pressing Tab",
         PilotPhase.LodAttack => "spamming the skill on the LOD boss",
+        PilotPhase.LodApproach => "walking up to the LOD boss (Ctrl+click on its ring)",
         PilotPhase.LodRespawn => "back at the start - settling",
         PilotPhase.LodLoot => "looting the LOD boss",
         PilotPhase.ReturnToTown => "autohunt off, returning to town",
@@ -280,6 +282,7 @@ public sealed partial class AutomationPilot
         _lodKills = 0;
         _lodBuffAt = 0;
         _lodBuffs = 0;
+        _lodApproachSnapshots = 0;
         _fontStep = 0;
         _runStart = Environment.TickCount64;
         ResetRunState();
@@ -609,6 +612,9 @@ public sealed partial class AutomationPilot
                 case PilotPhase.LodAttack:
                     await TickLodAttackAsync(frame);
                     break;
+                case PilotPhase.LodApproach:
+                    await TickLodApproachAsync(frame);
+                    break;
                 case PilotPhase.LodRespawn:
                     await TickLodRespawnAsync(frame);
                     break;
@@ -702,11 +708,7 @@ public sealed partial class AutomationPilot
                 // (Space x5) - then attack.
                 Log?.Invoke(LogLevel.Warning, $"Already at {Destination} with '{_settings.Lod.BossName}' in view - rebuffing, then attacking.");
                 TryLodBuff(Environment.TickCount64, force: true, attacking: true);
-                _lodBossSeenAt = Environment.TickCount64;
-                _lodSkillAt = 0;
-                _lodCoordsAt = 0;
-                _lodAttackCoords = null;
-                _lodDeathLines = -1;
+                BeginLodFight();
                 _lodHeadingUnknown = true;
                 Advance(PilotPhase.LodAttack, 700);
                 return;
@@ -3130,19 +3132,23 @@ public sealed partial class AutomationPilot
     private async Task<string> ReadAttackLogAsync(Mat frame, PixelRect roi, string text)
     {
         var lines = await ReadTextLinesAsync(frame, roi, text);
+        return string.Join("|", lines.Select(line => AttackLineKey(line.Text, text)));
+    }
+
+    /// <summary>
+    /// One combat-log line as "attacksucceeded...damage(N)": the semi-transparent log sits over the
+    /// moving game world, so stray characters before it and the cut-off "Attribu..." tail OCR
+    /// differently from frame to frame and would look like a new hit.
+    /// </summary>
+    private static string AttackLineKey(string line, string text)
+    {
         string start = TextMatcher.Normalize(text);
-        return string.Join("|", lines.Select(line =>
-        {
-            // Keep "attacksucceeded...damage(N)" only: the semi-transparent log sits over the moving
-            // game world, so stray characters before it and the cut-off "Attribu..." tail OCR
-            // differently from frame to frame and would look like a new hit.
-            string value = TextMatcher.Normalize(line.Text);
-            int from = value.IndexOf(start, StringComparison.Ordinal);
-            if (from > 0)
-                value = value[from..];
-            int tail = value.IndexOf("attrib", StringComparison.Ordinal);
-            return tail > 0 ? value[..tail] : value;
-        }));
+        string value = TextMatcher.Normalize(line);
+        int from = value.IndexOf(start, StringComparison.Ordinal);
+        if (from > 0)
+            value = value[from..];
+        int tail = value.IndexOf("attrib", StringComparison.Ordinal);
+        return tail > 0 ? value[..tail] : value;
     }
 
     /// <summary>
@@ -3938,7 +3944,7 @@ public sealed partial class AutomationPilot
         => phase is PilotPhase.WaitForGate or PilotPhase.ClickMap or PilotPhase.ReadStage or PilotPhase.AdvanceStage
             or PilotPhase.WaitBoss or PilotPhase.SelectBoss or PilotPhase.WatchBoss or PilotPhase.FaceNorth
             or PilotPhase.AimGate or PilotPhase.RunToTarget
-            or PilotPhase.LodRun or PilotPhase.LodAttack or PilotPhase.LodRespawn or PilotPhase.LodLoot;
+            or PilotPhase.LodRun or PilotPhase.LodAttack or PilotPhase.LodApproach or PilotPhase.LodRespawn or PilotPhase.LodLoot;
 
     /// <summary>
     /// The zone name at the top of the minimap panel, e.g. "[The Labyrinth (Adep", "[Piercing City)",

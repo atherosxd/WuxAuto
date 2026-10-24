@@ -48,6 +48,28 @@ internal static class FrameProbe
         return 0;
     }
 
+    /// <summary>
+    /// Fast check over a folder of saved frames: the LOD boss's pink ring and cyan belt (the spots the
+    /// pilot Ctrl+clicks to walk up to it). Run with: --lodparts &lt;dir&gt;
+    /// </summary>
+    public static int LodParts(string dir)
+    {
+        var settings = SettingsStore.Load();
+        using var analyzer = new ScreenAnalyzer(settings);
+        foreach (string path in Directory.GetFiles(dir, "*.png").Where(p => !p.EndsWith(".scan.png") && !p.EndsWith(".crop.png")).Order())
+        {
+            using var frame = Cv2.ImRead(path, ImreadModes.Color);
+            if (frame.Empty())
+                continue;
+
+            var ring = analyzer.FindBossRing(frame);
+            var belt = analyzer.FindBossBelt(frame);
+            Console.WriteLine($"{Path.GetFileName(path)} {frame.Width}x{frame.Height} | ring {(ring == null ? "-" : ring.Value.ToString())} | belt {(belt == null ? "-" : belt.Value.ToString())}");
+        }
+
+        return 0;
+    }
+
     public static async Task<int> RunAsync(string path, string[] args)
     {
         var source = Cv2.ImRead(path, ImreadModes.Unchanged);
@@ -168,6 +190,10 @@ internal static class FrameProbe
                     Console.WriteLine($"  AUTO BUFF title {g.Key}: X {analyzer.FindCloseButtonRightOf(frame, g.Key)}");
             }
         }
+
+        var bossRing = analyzer.FindBossRing(frame);
+        var bossBelt = analyzer.FindBossBelt(frame);
+        Console.WriteLine($"  LOD boss ring: {(bossRing == null ? "-" : bossRing.Value.ToString())}, belt: {(bossBelt == null ? "-" : bossBelt.Value.ToString())}");
 
         // Every stage name, as CheckZone looks for it when resuming inside the Labyrinth.
         var allBossRoi = settings.Regions.BossName.ToPixels(frame.Width, frame.Height);

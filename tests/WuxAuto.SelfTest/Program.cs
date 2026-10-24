@@ -63,6 +63,10 @@ if (updateInstallIndex >= 0)
     return UpdateProbe.Install(args[updateInstallIndex + 1], args[updateInstallIndex + 2]);
 }
 
+int lodPartsIndex = Array.IndexOf(args, "--lodparts");
+if (lodPartsIndex >= 0 && lodPartsIndex + 1 < args.Length)
+    return FrameProbe.LodParts(args[lodPartsIndex + 1]);
+
 int titlesIndex = Array.IndexOf(args, "--titles");
 if (titlesIndex >= 0 && titlesIndex + 1 < args.Length)
     return await FrameProbe.TitlesAsync(args[titlesIndex + 1]);
@@ -220,6 +224,34 @@ if (verbose)
 {
     foreach (string detail in report.Details)
         Console.WriteLine($"    {detail}");
+}
+
+// ---------------------------------------------------------------- LOD boss ring + belt
+// The pale pink ring round the boss's feet (live: H ~150, S 50-80, V 255), cut into three arcs by the
+// boss's legs and the character, plus a pink speck elsewhere; four cyan circles stacked as the belt,
+// plus two side by side (the boss's eyes) that are not a belt.
+using (var lodFrame = new Mat(1080, 1920, MatType.CV_8UC4, new Scalar(22, 20, 18, 255)))
+{
+    var lavender = new Scalar(250, 170, 235, 255);
+    foreach (var (from, to) in new[] { (10, 80), (100, 170), (190, 350) })
+        Cv2.Ellipse(lodFrame, new Point(1000, 450), new Size(130, 55), 0, from, to, lavender, 6, LineTypes.AntiAlias);
+    Cv2.Rectangle(lodFrame, new Rect(500, 800, 10, 10), lavender, -1);
+
+    var cyan = new Scalar(230, 230, 0, 255);
+    foreach (int y in new[] { 230, 270, 310, 350 })
+        Cv2.Circle(lodFrame, new Point(990, y), 14, cyan, -1, LineTypes.AntiAlias);
+    Cv2.Circle(lodFrame, new Point(900, 150), 10, cyan, -1);
+    Cv2.Circle(lodFrame, new Point(940, 150), 10, cyan, -1);
+
+    var bossRing = analyzer.FindBossRing(lodFrame);
+    Check("lod boss ring",
+        bossRing is { } r && Math.Abs(r.CenterX - 1000) <= 15 && Math.Abs(r.CenterY - 450) <= 15 && r.Width >= 230,
+        bossRing?.ToString() ?? "not found");
+
+    var bossBelt = analyzer.FindBossBelt(lodFrame);
+    Check("lod boss belt",
+        bossBelt is { } b && Math.Abs(b.CenterX - 990) <= 6 && b.Y <= 220 && b.Bottom >= 360,
+        bossBelt?.ToString() ?? "not found");
 }
 
 Console.WriteLine(failures == 0 ? "ALL CHECKS PASSED" : $"{failures} CHECK(S) FAILED");

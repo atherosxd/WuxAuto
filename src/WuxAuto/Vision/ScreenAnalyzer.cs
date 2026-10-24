@@ -390,6 +390,141 @@ public sealed class ScreenAnalyzer : IDisposable
     }
 
     /// <summary>
+    /// LOD (user, 2026-10-24): the pink ring round the boss's feet. Under the boss's blue skill light
+    /// it is pale (live: H ~150, S 50-80, V 255), too pale for <see cref="FindSelectionRing"/>, so the
+    /// colour band is wider. Not the box of every pink pixel either: the biggest patch that lies flat
+    /// (a ring on the floor seen from above is wider than tall), plus the pink pieces next to it - the
+    /// boss's legs and the character cut the ring into arcs.
+    /// </summary>
+    public PixelRect? FindBossRing(Mat frame)
+    {
+        var roi = WorldArea(frame);
+        if (roi.Width < 8 || roi.Height < 8)
+            return null;
+
+        using var hsv = ToHsv(frame, roi);
+        using var mask = new Mat();
+        Cv2.InRange(hsv, new Scalar(135, 35, 170), new Scalar(162, 255, 255), mask);
+        int k = Math.Max(3, frame.Height / 90) | 1;
+        using var kernel = Cv2.GetStructuringElement(MorphShapes.Ellipse, new Size(k, k));
+        Cv2.MorphologyEx(mask, mask, MorphTypes.Close, kernel);
+
+        double minPixels = frame.Width * (double)frame.Height * 1.5e-4;
+        var parts = Components(mask).Where(c => c.Pixels >= minPixels / 6).ToList();
+        var seed = parts
+            .Where(c => c.Pixels >= minPixels && c.Box.Width >= frame.Width * 0.04 && c.Box.Width >= c.Box.Height)
+            .OrderByDescending(c => c.Pixels)
+            .Select(c => (Rect?)c.Box)
+            .FirstOrDefault();
+        if (seed is not { } ring)
+            return null;
+
+        // The boss's legs and the character stand on the ring and cut it into pieces: add every
+        // flat-ish pink piece close to it.
+        int reach = (int)(frame.Height * 0.05);
+        bool grew = true;
+        while (grew)
+        {
+            grew = false;
+            for (int i = parts.Count - 1; i >= 0; i--)
+            {
+                var box = parts[i].Box;
+                if (box.Height > box.Width * 2 || !Inflate(ring, reach).IntersectsWith(box))
+                    continue;
+
+                var union = ring | box;
+                parts.RemoveAt(i);
+                if (union == ring)
+                    continue;
+
+                ring = union;
+                grew = true;
+            }
+        }
+
+        return new PixelRect(roi.X + ring.X, roi.Y + ring.Y, ring.Width, ring.Height);
+
+        static Rect Inflate(Rect r, int by) => new(r.X - by, r.Y - by, r.Width + 2 * by, r.Height + 2 * by);
+    }
+
+    /// <summary>
+    /// LOD (user, 2026-10-24): the belt hanging down the boss's front, four cyan circles one above the
+    /// other. Found as 3+ cyan patches stacked in one column, or one tall thin cyan patch when the
+    /// glow joins them.
+    /// </summary>
+    public PixelRect? FindBossBelt(Mat frame)
+    {
+        var roi = WorldArea(frame);
+        if (roi.Width < 8 || roi.Height < 8)
+            return null;
+
+        using var hsv = ToHsv(frame, roi);
+        using var mask = new Mat();
+        Cv2.InRange(hsv, new Scalar(80, 120, 170), new Scalar(100, 255, 255), mask);
+
+        double unit = frame.Height / 1080.0;
+        var blobs = Components(mask)
+            .Where(c => c.Pixels >= 40 * unit * unit && c.Box.Width <= frame.Height * 0.08)
+            .Select(c => c.Box)
+            .ToList();
+
+        Rect? found = blobs
+            .Where(b => b.Height >= frame.Height * 0.10 && b.Height >= 3 * b.Width)
+            .OrderByDescending(b => b.Height)
+            .Select(b => (Rect?)b)
+            .FirstOrDefault();
+
+        // A chain: from each patch downwards, the next patch in the same column within a gap.
+        double column = frame.Height * 0.03, gap = frame.Height * 0.08;
+        foreach (var top in blobs.OrderBy(b => b.Y))
+        {
+            var chain = new List<Rect> { top };
+            var last = top;
+            foreach (var next in blobs.Where(b => b.Y > last.Y).OrderBy(b => b.Y))
+            {
+                if (Math.Abs(CenterX(next) - CenterX(top)) <= column && next.Y - last.Bottom <= gap)
+                {
+                    chain.Add(next);
+                    last = next;
+                }
+            }
+
+            if (chain.Count < 3 || last.Bottom - top.Y < frame.Height * 0.08)
+                continue;
+
+            int left = chain.Min(b => b.X), right = chain.Max(b => b.Right);
+            var box = new Rect(left, top.Y, right - left, last.Bottom - top.Y);
+            if (found is not { } f || box.Height > f.Height)
+                found = box;
+        }
+
+        return found is { } belt ? new PixelRect(roi.X + belt.X, roi.Y + belt.Y, belt.Width, belt.Height) : null;
+
+        static double CenterX(Rect r) => r.X + r.Width / 2.0;
+    }
+
+    /// <summary>The game world between the HUD panels, where the ring and boss detectors look.</summary>
+    private static PixelRect WorldArea(Mat frame) => new PixelRect((int)(frame.Width * 0.05), (int)(frame.Height * 0.12),
+        (int)(frame.Width * 0.70), (int)(frame.Height * 0.78)).Clamp(frame.Width, frame.Height);
+
+    /// <summary>Connected patches of a mask: bounding box and pixel count.</summary>
+    private static List<(Rect Box, int Pixels)> Components(Mat mask)
+    {
+        using var labels = new Mat();
+        using var stats = new Mat();
+        using var centroids = new Mat();
+        int count = Cv2.ConnectedComponentsWithStats(mask, labels, stats, centroids);
+        var list = new List<(Rect, int)>(Math.Max(0, count - 1));
+        for (int i = 1; i < count; i++)
+        {
+            var box = new Rect(stats.At<int>(i, 0), stats.At<int>(i, 1), stats.At<int>(i, 2), stats.At<int>(i, 3));
+            list.Add((box, stats.At<int>(i, 4)));
+        }
+
+        return list;
+    }
+
+    /// <summary>
     /// The gold-framed checkbox left of a settings label (autohunt window, 1024x768: box centre
     /// ~20 px left of the label). Found by its gold border; falls back to 1.7 text heights left.
     /// </summary>
