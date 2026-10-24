@@ -1,5 +1,6 @@
 using System.IO;
 using OpenCvSharp;
+using WuxAuto.Automation;
 using WuxAuto.Core;
 using WuxAuto.SelfTest;
 using WuxAuto.Vision;
@@ -271,6 +272,22 @@ try
 finally
 {
     try { Directory.Delete(killsFolder, recursive: true); } catch { }
+}
+
+{
+    // AutohuntOff: only a line that is new since the key press counts, the bottom-most new one decides,
+    // OCR noise in the tail is tolerated, and an unchanged (full) log reads as nothing.
+    const string started = "Auto hunt started", ended = "Auto hunt ended";
+    string[] before = ["autohuntended", "autohuntstarted"];
+    bool? a = AutohuntLog.NewState(before, ["autohuntended", "autohuntstarted", "autohuntended"], started, ended, out var la);
+    bool? b = AutohuntLog.NewState(before, ["autohuntstarted", "autohuntended", "autohuntstarted"], started, ended, out _);
+    bool? c = AutohuntLog.NewState(before, ["autohuntended", "autohuntstarted"], started, ended, out _);
+    bool? d = AutohuntLog.NewState([], ["autohuntendeď"], started, ended, out _);
+    bool? e = AutohuntLog.NewState(["autohuntstarted"], ["autohuntstarted", "autohuntstarted"], started, ended, out _);
+    string? k = AutohuntLog.Key("[12:01] Auto hunt ended", AutohuntLog.Prefix(started, ended)!);
+    Check("autohunt log",
+        a == false && b == true && c == null && d == false && e == true && k == "autohuntended",
+        $"new ended={a} ({la}), new started={b}, unchanged={c}, noisy ended={d}, repeated started={e}, key={k}");
 }
 
 Console.WriteLine(failures == 0 ? "ALL CHECKS PASSED" : $"{failures} CHECK(S) FAILED");
