@@ -71,6 +71,45 @@ internal static class FrameProbe
     }
 
     /// <summary>
+    /// Fast check over a folder of saved frames: the Run skill icon on the skill bar and the gold
+    /// ring round it (on / off), as the pilot judges it in town. A crop round every hit lands in
+    /// %TEMP%\wuxauto-runskill\&lt;frame&gt;.png to check by eye. Run with: --runskill &lt;dir&gt;
+    /// </summary>
+    public static int RunSkill(string dir)
+    {
+        var settings = SettingsStore.Load();
+        using var analyzer = new ScreenAnalyzer(settings);
+        string template = settings.Sequence.RunSkillTemplate;
+        string outDir = Path.Combine(Path.GetTempPath(), "wuxauto-runskill");
+        Directory.CreateDirectory(outDir);
+        foreach (string path in Directory.GetFiles(dir, "*.png").Where(p => !p.EndsWith(".scan.png") && !p.EndsWith(".crop.png")).Order())
+        {
+            using var frame = Cv2.ImRead(path, ImreadModes.Color);
+            if (frame.Empty())
+                continue;
+
+            var roi = settings.Regions.Hotbar.ToPixels(frame.Width, frame.Height);
+            var (hit, ms) = analyzer.FindIconAnyScale(frame, template, roi, 0.30);
+            string verdict = "-";
+            string ringText = "";
+            if (hit != null)
+            {
+                double ring = analyzer.RingFraction(frame, hit.Bounds);
+                ringText = $" ring {ring:0.00}";
+                verdict = hit.Score < settings.Sequence.RunSkillMatchScore ? "below score"
+                    : ring >= settings.Sequence.RunSkillRingMin ? "ON" : "off -> click";
+                var box = hit.Bounds.Inflate(hit.Bounds.Width / 2).Clamp(frame.Width, frame.Height);
+                using var crop = new Mat(frame, new Rect(box.X, box.Y, box.Width, box.Height));
+                Cv2.ImWrite(Path.Combine(outDir, Path.GetFileName(path)), crop);
+            }
+
+            Console.WriteLine($"{Path.GetFileName(path)} {frame.Width}x{frame.Height} | {template}: {(hit == null ? "not found" : $"{hit.Score:0.000} at {hit.Bounds.CenterX},{hit.Bounds.CenterY} {hit.Bounds.Width}x{hit.Bounds.Height} scale {hit.Scale:0.00}")}{ringText} -> {verdict} ({ms:0} ms)");
+        }
+
+        return 0;
+    }
+
+    /// <summary>
     /// Fast check over a folder of saved frames: the LOD Shura icon on the skill bar (the stop-attack
     /// click), as the pilot looks for it. Run with: --shura &lt;dir&gt;
     /// </summary>

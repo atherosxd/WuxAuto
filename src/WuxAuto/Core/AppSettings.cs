@@ -446,6 +446,38 @@ public sealed class SequenceSettings
     /// </summary>
     public bool AutohuntOffInTown { get; set; } = true;
 
+    /// <summary>
+    /// In town, before every teleport (user, 2026-10-25): the Run skill must be on. Its icon
+    /// (<see cref="RunSkillTemplate"/>, the user's flame icon cropped inside the ring) is looked for
+    /// on the skill bar (<see cref="RegionSettings.Hotbar"/>); an active skill has a gold ring round
+    /// it (<see cref="ScreenAnalyzer.RingFraction"/> at least <see cref="RunSkillRingMin"/>). No ring
+    /// -> the icon is clicked, up to 3 times, a fresh frame after each. Icon not on the bar ->
+    /// <see cref="RunSkillKey"/> once per Start (the key is a toggle and without the icon the state
+    /// is unknown, so it is never pressed twice). Off = never look.
+    /// </summary>
+    public bool RunSkillCheck { get; set; } = true;
+
+    /// <summary>The Run skill icon (runskill.png, 33 px inside the ring of the user's 54 px crop). Empty = never look.</summary>
+    public string RunSkillTemplate { get; set; } = "runskill";
+
+    /// <summary>
+    /// Minimum template score for the Run icon on the bar (saved frames: 0.975-1.000 on every bar
+    /// from 1024 to 2304 wide; a login screen scored 0.81 at x0.5, nothing else above 0.74).
+    /// </summary>
+    public double RunSkillMatchScore { get; set; } = 0.88;
+
+    /// <summary>
+    /// Fallback when the icon is not on the bar: the hotbar key of the slot the player put the Run
+    /// skill in (UI "Run key", user: W). Empty = only the icon.
+    /// </summary>
+    public string RunSkillKey { get; set; } = "W";
+
+    /// <summary>
+    /// Share of the ring (36 directions round the icon) that must read gold for "on": the user's
+    /// active icon scores ~0.5 (the ring is drawn under parts of the icon), an inactive one 0.
+    /// </summary>
+    public double RunSkillRingMin { get; set; } = 0.25;
+
     /// <summary>Combat-log line printed when the autohunt turns on.</summary>
     public string AutohuntStartedText { get; set; } = "Auto hunt started";
 

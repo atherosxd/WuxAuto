@@ -16,6 +16,7 @@ Everything it does is drawn on its preview and written to its log.
   | Settings > VISUAL > Interface Scale | **Auto** |
   | Settings > VISUAL > Font Size | **110 - 120 %** (the pilot checks it on start and fixes it if outside) |
   | Settings > VISUAL > TAB target | **Default** (the pilot checks it on start and sets it) |
+  | Skill bar | the **Run** skill on it (the pilot turns it on in town before every teleport - a ring round the icon = on; icon not found -> it presses the "Run key", default `W`, once) |
 
 * In the game: a
   **teleport scroll** in the inventory with The Labyrinth (Adept) available, and **skill 1** on the

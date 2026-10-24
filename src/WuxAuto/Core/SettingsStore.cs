@@ -245,6 +245,10 @@ public static class SettingsStore
         s.Lod.ShuraEveryMs = Math.Clamp(s.Lod.ShuraEveryMs, 50, 5000);
         s.Lod.ShuraTemplate = (s.Lod.ShuraTemplate ?? "").Trim();
         s.Lod.ShuraKey = (s.Lod.ShuraKey ?? "").Trim();
+        s.Sequence.RunSkillTemplate = (s.Sequence.RunSkillTemplate ?? "").Trim();
+        s.Sequence.RunSkillKey = (s.Sequence.RunSkillKey ?? "").Trim();
+        s.Sequence.RunSkillMatchScore = Math.Clamp(s.Sequence.RunSkillMatchScore, 0.3, 1.0);
+        s.Sequence.RunSkillRingMin = Math.Clamp(s.Sequence.RunSkillRingMin, 0.05, 1.0);
         s.Lod.ApproachStopPresses = Math.Clamp(s.Lod.ApproachStopPresses, 0, 20);
         s.Lod.ApproachWaitMs = Math.Clamp(s.Lod.ApproachWaitMs, 300, 10000);
         s.Lod.ApproachTries = Math.Clamp(s.Lod.ApproachTries, 1, 10);
