@@ -183,6 +183,7 @@ but it also only ever talks to the bound window.
 | `Regions` | Every region is `x, y, width, height` as fractions of the client area, so one profile works at any resolution. Not editable and not saved: rebuilt from the defaults at every run. |
 | `Sequence ▸ Dry run` / `Loop` | Detect without input; repeat the sequence. |
 | `Sequence ▸ TabTargetDefault` | On (default): on Start in town the game's Settings ▸ VISUAL ▸ TAB target is set to `Default` and saved. Off = leave it alone. |
+| `Lod ▸ ShuraKey` ("Shura key (LOD)") | Auto LOD stops the attack with **Shura** before a mid-fight buff and before the walk up to the boss: the `shura.png` icon is looked for on the skill bar (`Regions ▸ Hotbar`, bottom 15 %) and clicked `ShuraPresses` (3) times, `ShuraEveryMs` (200) apart. Not found → this key, the same way (default `E`, the slot Shura is in); empty → `StopAttackKey` (Space) × 15 (buff) / 3 (walk) as before. The same icon in two slots → the leftmost. |
 | `Sequence ▸ AutohuntOffInTown` | On (default): in town, before every teleport, the autohunt key is tapped and the combat log read (`AutohuntStartedText` / `AutohuntEndedText`, "Auto hunt started" / "Auto hunt ended"); "started" = it was off, so it is tapped again. Off = never touch it in town. |
 
 ### Regions

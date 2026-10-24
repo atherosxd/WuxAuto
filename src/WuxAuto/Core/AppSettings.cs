@@ -231,6 +231,13 @@ public sealed class RegionSettings
 
     public PixelRect CompassRect(int clientWidth, int clientHeight)
         => Compass.ToPixels(clientWidth, clientHeight);
+
+    /// <summary>
+    /// The skill bar along the bottom of the client (1920x1080: x 600-1320, y 995-1050). The LOD
+    /// Shura skill (<see cref="LodSettings.ShuraTemplate"/>) is looked for here. A tall band because
+    /// the bar keeps roughly the same pixel size at every resolution.
+    /// </summary>
+    public NormRect Hotbar { get; set; } = new(0.20, 0.85, 0.60, 0.15);
 }
 
 /// <summary>Auto LOD (user, 2026-10-21) - see AutomationPilot.Lod.cs.</summary>
@@ -300,8 +307,34 @@ public sealed class LodSettings
     public int BuffEveryMs { get; set; } = 290000;
 
     /// <summary>
+    /// Shura (user, 2026-10-25): the skill that stops the attack sequence, instead of spamming Space
+    /// - before a mid-fight buff and before the walk up to the boss. Its icon (shura.png, the blue
+    /// burst) is looked for on the skill bar (<see cref="RegionSettings.Hotbar"/>) and clicked
+    /// <see cref="ShuraPresses"/> times, <see cref="ShuraEveryMs"/> apart. Not found -> the
+    /// <see cref="ShuraKey"/> the player set for its slot; no key either -> <see cref="StopAttackKey"/>
+    /// as before. Empty = never look for the icon.
+    /// </summary>
+    public string ShuraTemplate { get; set; } = "shura";
+
+    /// <summary>Minimum template score for the Shura icon (saved frames: 0.95-1.00 on the bar, at most 0.70 without one).</summary>
+    public double ShuraMatchScore { get; set; } = 0.80;
+
+    /// <summary>
+    /// Fallback when the icon is not found: the hotbar key of the slot the player put Shura in
+    /// (UI "Shura key (LOD)"; default E, user). Empty = straight to <see cref="StopAttackKey"/>.
+    /// </summary>
+    public string ShuraKey { get; set; } = "E";
+
+    /// <summary>Clicks / key taps of Shura per stop (user: 3 are enough).</summary>
+    public int ShuraPresses { get; set; } = 3;
+
+    /// <summary>Pause between them (user: 0.2 s is fine).</summary>
+    public int ShuraEveryMs { get; set; } = 200;
+
+    /// <summary>
     /// A buff mid-fight only works once the character stops attacking (user): tap this key
-    /// <see cref="StopAttackPresses"/> times first (user: Space x5).
+    /// <see cref="StopAttackPresses"/> times first (user: Space x5). The last resort after
+    /// <see cref="ShuraTemplate"/> and <see cref="ShuraKey"/>.
     /// </summary>
     public string StopAttackKey { get; set; } = "Space";
 

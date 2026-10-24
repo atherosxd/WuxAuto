@@ -87,6 +87,9 @@ dotnet run --project .\tests\WuxAuto.SelfTest -- --do ctrlring --do ctrlbelt   #
 
 # LOD boss ring + belt for every PNG in a folder (fast, no OCR)
 dotnet run --project .\tests\WuxAuto.SelfTest -- --lodparts "$env:LOCALAPPDATA\WuxAuto\debug"
+
+# LOD Shura icon on the skill bar (score, box) for every PNG in a folder
+dotnet run --project .\tests\WuxAuto.SelfTest -- --shura "$env:LOCALAPPDATA\WuxAuto\debug"
 ```
 
 `--do` frames land in `%TEMP%\wuxauto-step<N>-<verb>.png`. Check the frame before every click: an
@@ -370,7 +373,7 @@ on screen → `LodAttack`: spam `Dungeon.SkillKey` every 0.3 s — or hold it do
 * **Walk up to the boss** (user, 2026-10-24, `Lod.ApproachBoss` on, "Walk up to the boss (LOD)"): the first
   *new* "Attack succeeded" line of a fight (combat-log lines from the same whole-screen OCR, keyed like
   the Labyrinth's `ReadAttackLogAsync`; baseline = the lines at the fight's first targeted tick) ->
-  `LodApproach`: `StopAttackKey` x `ApproachStopPresses` (3) -> fresh frame -> **Ctrl+left click** the centre
+  `LodApproach`: `StopLodAttack` (Shura, else `StopAttackKey` x `ApproachStopPresses` 3) -> fresh frame -> **Ctrl+left click** the centre
   of the pink ring round the boss's feet (`ScreenAnalyzer.FindBossRing`: H 135-162, S >= 35, V >= 170 - under
   the boss's blue skill light the ring read S 50-80, too pale for `FindSelectionRing`; the biggest flat
   patch plus every pink piece within 5 % h, since legs and the character cut it into arcs) -> wait
@@ -416,9 +419,19 @@ on screen → `LodAttack`: spam `Dungeon.SkillKey` every 0.3 s — or hold it do
 * **Buff** (user; autohunt is disabled on this map): `Lod.BuffKey` **O** on arrival and after being put
   back at the start (before the south turn), then every `Lod.BuffEveryMs` **290 s** (most buffs last
   5 min) while walking or attacking; a held skill is let go for it. Mid-fight the buff is ignored until
-  the attack stops (user): `Lod.StopAttackKey` **Space** × `StopAttackPresses` **15** (100 ms apart, ~1.5 s; 5 quick presses did
-  not stop the attack and the buff was ignored — user, run 4; settings v17 migrates 5 → 15), 0.4 s, then
-  O, then the skill resumes. Empty key = off.
+  the attack stops (user): `StopLodAttack` (also before the walk up to the boss), 0.4 s, then O, then
+  the skill resumes. Empty key = off.
+* **Stop the attack = Shura** (user, 2026-10-25, instead of spamming Space): `StopLodAttack(frame,
+  presses, out how)` in `AutomationPilot.Lod.cs`. The user's `Assets/shura.png` (51×51, the blue burst)
+  is matched in `Regions.Hotbar` (0.20, 0.85, 0.60, 0.15 — the skill bar; 1920×1080: x 600–1320,
+  y 995–1050) with `FindIcons` ≥ `Lod.ShuraMatchScore` **0.80**; best score wins, a tie (the same icon in
+  two slots, 1035 and 1240 at 1920×1080, both 1.00) → the leftmost; clicked `Lod.ShuraPresses` **3**
+  times `Lod.ShuraEveryMs` **200** ms apart (user: "3 spam is enough, 0.2 s is okay"). Not on the bar →
+  `Lod.ShuraKey` (UI "Shura key (LOD)", the slot the player put it in; default **E**, user) tapped the
+  same way → empty key → `StopAttackKey` Space × 15 (buff) / `ApproachStopPresses` 3 (walk) as before. No frame (the buff before the south turn) = no icon lookup. Probe:
+  `--shura <dir>` prints score/box per PNG: 0.95–1.00 on every saved bar (1024, 1152, 1920 wide),
+  ≤ 0.70 on frames without one (login screen, stage5_closed, a window over the game). Not yet seen
+  live — whether a click on the icon actually stops the attack is the user's word.
 * **Out of entries → Auto Laby** (user, 2026-10-22): the LOD entry is on page `Lod.ListPage` **2** of the
   teleport list (user) — that page seen without it = out of keys → `Sequence.Mode` = `AutoLaby`
   (saved, buttons refreshed) and "Labyrinth" is clicked on the same page. Fallback for other layouts: With no "[Den of Rebirth]" entries left the map
@@ -428,7 +441,7 @@ on screen → `LodAttack`: spam `Dungeon.SkillKey` every 0.3 s — or hold it do
   region). Destination missing on the last page → in LOD: snapshot `lod_no_entries`, `Sequence.Mode`
   = `AutoLaby` (saved; `ModeChanged` refreshes the buttons), page **back** with `<` for "Labyrinth";
   first page reached without it → fail. The list's "3 / 3" counter is not read by OCR, so it is not used.
-* `CheckZone` on Start in the LOD zone (user): boss name in view → **rebuff** (Space ×5 + O, a fight may be
+* `CheckZone` on Start in the LOD zone (user): boss name in view → **rebuff** (`StopLodAttack` + O, a fight may be
   running) → attack; otherwise Tab up to 3× (1.5 s apart) and look again; still nothing → buff, face south
   and walk. Tab is also spammed while turning south (`TurnTabEveryMs` 400 ms, user; the turn ticks every
   ~0.5 s, so in practice once per tap).

@@ -64,6 +64,10 @@ if (updateInstallIndex >= 0)
     return UpdateProbe.Install(args[updateInstallIndex + 1], args[updateInstallIndex + 2]);
 }
 
+int shuraIndex = Array.IndexOf(args, "--shura");
+if (shuraIndex >= 0 && shuraIndex + 1 < args.Length)
+    return FrameProbe.Shura(args[shuraIndex + 1]);
+
 int lodPartsIndex = Array.IndexOf(args, "--lodparts");
 if (lodPartsIndex >= 0 && lodPartsIndex + 1 < args.Length)
     return FrameProbe.LodParts(args[lodPartsIndex + 1]);

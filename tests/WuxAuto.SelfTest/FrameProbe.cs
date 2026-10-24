@@ -70,6 +70,30 @@ internal static class FrameProbe
         return 0;
     }
 
+    /// <summary>
+    /// Fast check over a folder of saved frames: the LOD Shura icon on the skill bar (the stop-attack
+    /// click), as the pilot looks for it. Run with: --shura &lt;dir&gt;
+    /// </summary>
+    public static int Shura(string dir)
+    {
+        var settings = SettingsStore.Load();
+        using var analyzer = new ScreenAnalyzer(settings);
+        string template = settings.Lod.ShuraTemplate;
+        foreach (string path in Directory.GetFiles(dir, "*.png").Where(p => !p.EndsWith(".scan.png") && !p.EndsWith(".crop.png")).Order())
+        {
+            using var frame = Cv2.ImRead(path, ImreadModes.Color);
+            if (frame.Empty())
+                continue;
+
+            var roi = settings.Regions.Hotbar.ToPixels(frame.Width, frame.Height);
+            var (hit, ms) = analyzer.FindIconAnyScale(frame, template, roi, 0.30);
+            string verdict = hit == null ? "-" : hit.Score >= settings.Lod.ShuraMatchScore ? "click" : "below score";
+            Console.WriteLine($"{Path.GetFileName(path)} {frame.Width}x{frame.Height} | {template}: {(hit == null ? "not found" : $"{hit.Score:0.000} at {hit.Bounds.CenterX},{hit.Bounds.CenterY} {hit.Bounds.Width}x{hit.Bounds.Height} scale {hit.Scale:0.00}")} -> {verdict} ({ms:0} ms)");
+        }
+
+        return 0;
+    }
+
     public static async Task<int> RunAsync(string path, string[] args)
     {
         var source = Cv2.ImRead(path, ImreadModes.Unchanged);

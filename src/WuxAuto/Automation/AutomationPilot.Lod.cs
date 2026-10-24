@@ -75,7 +75,7 @@ public sealed partial class AutomationPilot
     /// Auto-buff (key O, user): on arrival / after being put back at the start (<paramref name="force"/>)
     /// and whenever the last one is BuffEveryMs old. True when it pressed the key (give it a moment).
     /// </summary>
-    private bool TryLodBuff(long now, bool force, bool attacking = false)
+    private bool TryLodBuff(Mat? frame, long now, bool force, bool attacking = false)
     {
         var lod = _settings.Lod;
         if (string.IsNullOrWhiteSpace(lod.BuffKey) || (!force && now - _lodBuffAt < lod.BuffEveryMs))
@@ -83,16 +83,12 @@ public sealed partial class AutomationPilot
 
         ReleaseHeldSkill();
 
-        // Mid-fight the buff is ignored until the attack stops (user): Space a few times first.
-        if (attacking && !string.IsNullOrWhiteSpace(lod.StopAttackKey))
+        // Mid-fight the buff is ignored until the attack stops (user): Shura (or Space) first.
+        string stopped = "";
+        if (attacking)
         {
-            for (int i = 0; i < lod.StopAttackPresses; i++)
-            {
-                if (!_input.KeyTap(lod.StopAttackKey))
-                    return false;
-                Thread.Sleep(100);
-            }
-
+            if (!StopLodAttack(frame, lod.StopAttackPresses, out stopped))
+                return false;
             Thread.Sleep(400);
         }
 
@@ -102,9 +98,104 @@ public sealed partial class AutomationPilot
         _lodBuffAt = now;
         _lodBuffs++;
         Log?.Invoke(LogLevel.Info, attacking
-            ? $"Re-buffed ('{lod.StopAttackKey}' x{lod.StopAttackPresses}, then '{lod.BuffKey}') mid-fight - buff {_lodBuffs}."
+            ? $"Re-buffed ({stopped}, then '{lod.BuffKey}') mid-fight - buff {_lodBuffs}."
             : $"Buffed ('{lod.BuffKey}') - buff {_lodBuffs}; again in {lod.BuffEveryMs / 1000}s.");
         return true;
+    }
+
+    /// <summary>
+    /// Stops the attack sequence (user, 2026-10-25: Shura instead of spamming Space) before a mid-fight
+    /// buff and before the walk up to the boss. The Shura icon (<see cref="LodSettings.ShuraTemplate"/>)
+    /// on the skill bar is clicked <see cref="LodSettings.ShuraPresses"/> times,
+    /// <see cref="LodSettings.ShuraEveryMs"/> apart; not on the bar (dimmed, moved, another layout) -> the
+    /// <see cref="LodSettings.ShuraKey"/> the player set for its slot, the same way; no key either ->
+    /// <see cref="LodSettings.StopAttackKey"/> x <paramref name="stopKeyPresses"/>, 100 ms apart.
+    /// <paramref name="how"/> says which one went out; no <paramref name="frame"/> = no icon lookup.
+    /// False = the input was blocked (the game is not in front); the caller retries.
+    /// </summary>
+    private bool StopLodAttack(Mat? frame, int stopKeyPresses, out string how)
+    {
+        var lod = _settings.Lod;
+        var shura = frame == null ? null : FindShura(frame);
+        if (shura != null)
+        {
+            for (int i = 0; i < lod.ShuraPresses; i++)
+            {
+                if (!_input.Click(shura.Bounds.CenterX, shura.Bounds.CenterY))
+                {
+                    how = "Shura click blocked";
+                    return false;
+                }
+
+                Thread.Sleep(lod.ShuraEveryMs);
+            }
+
+            how = $"Shura clicked x{lod.ShuraPresses} at {shura.Bounds.CenterX},{shura.Bounds.CenterY} ({shura.Score:0.00})";
+            return true;
+        }
+
+        if (!string.IsNullOrWhiteSpace(lod.ShuraKey))
+        {
+            for (int i = 0; i < lod.ShuraPresses; i++)
+            {
+                if (!_input.KeyTap(lod.ShuraKey))
+                {
+                    how = "Shura key blocked";
+                    return false;
+                }
+
+                Thread.Sleep(lod.ShuraEveryMs);
+            }
+
+            how = $"Shura icon not on the bar - key '{lod.ShuraKey}' x{lod.ShuraPresses}";
+            return true;
+        }
+
+        if (string.IsNullOrWhiteSpace(lod.StopAttackKey) || stopKeyPresses <= 0)
+        {
+            how = "no Shura icon, no Shura key and no stop key - nothing pressed";
+            return true;
+        }
+
+        for (int i = 0; i < stopKeyPresses; i++)
+        {
+            if (!_input.KeyTap(lod.StopAttackKey))
+            {
+                how = "stop key blocked";
+                return false;
+            }
+
+            Thread.Sleep(100);
+        }
+
+        how = $"no Shura icon or key - '{lod.StopAttackKey}' x{stopKeyPresses}";
+        return true;
+    }
+
+    /// <summary>
+    /// The Shura icon on the skill bar (<see cref="RegionSettings.Hotbar"/>), drawn on the preview. The
+    /// best score wins; the same icon in two slots (a 1920x1080 bar had it at 1035 and 1240, both 1.00)
+    /// -> the leftmost. Saved frames: 0.95-1.00 on every bar at 1024, 1152 and 1920 wide, at most
+    /// 0.70 without one (login screen, a window over the game).
+    /// </summary>
+    private TemplateMatch? FindShura(Mat frame)
+    {
+        var lod = _settings.Lod;
+        if (string.IsNullOrWhiteSpace(lod.ShuraTemplate))
+            return null;
+
+        var roi = _settings.Regions.Hotbar.ToPixels(frame.Width, frame.Height);
+        var hits = _analyzer.FindIcons(frame, lod.ShuraTemplate, roi, lod.ShuraMatchScore, maxResults: 4);
+        TemplateMatch? best = null;
+        foreach (var hit in hits)
+        {
+            _overlays.Add(new OverlayItem(hit.Bounds, $"shura {hit.Score:0.00}", OverlayColor.Green));
+            if (best == null || hit.Score > best.Score + 0.01 ||
+                (Math.Abs(hit.Score - best.Score) <= 0.01 && hit.Bounds.CenterX < best.Bounds.CenterX))
+                best = hit;
+        }
+
+        return best;
     }
 
     /// <summary>
@@ -165,7 +256,7 @@ public sealed partial class AutomationPilot
         // Buffs first (user: "upon teleporting, do the auto buff then the other"); a blocked key is
         // caught by the timer in the walk.
         if (buff)
-            TryLodBuff(Environment.TickCount64, force: true);
+            TryLodBuff(null, Environment.TickCount64, force: true);
         _faceSouth = true;
         _earlyNorth = false;
         _compassAnchored = false;
@@ -351,7 +442,7 @@ public sealed partial class AutomationPilot
         var lod = _settings.Lod;
         long now = Environment.TickCount64;
 
-        if (TryLodBuff(now, force: false))
+        if (TryLodBuff(frame, now, force: false))
         {
             _waitUntil = now + 700;
             return;
@@ -469,9 +560,9 @@ public sealed partial class AutomationPilot
         string skill = _settings.Dungeon.SkillKey;
         long now = Environment.TickCount64;
 
-        // Re-buff on the timer, also mid-fight: stop attacking first (Space x5), the skill resumes
-        // on the next tick.
-        if (TryLodBuff(now, force: false, attacking: true))
+        // Re-buff on the timer, also mid-fight: stop attacking first (Shura / Space), the skill
+        // resumes on the next tick.
+        if (TryLodBuff(frame, now, force: false, attacking: true))
         {
             _waitUntil = now + 700;
             return;
@@ -664,26 +755,19 @@ public sealed partial class AutomationPilot
             return;
         }
 
-        // Stop attacking first (user: Space), then take a fresh frame - the boss may move.
+        // Stop attacking first (user: Shura, else Space), then take a fresh frame - the boss may move.
         if (!_lodApproachStopped)
         {
-            if (!string.IsNullOrWhiteSpace(lod.StopAttackKey))
+            if (!StopLodAttack(frame, lod.ApproachStopPresses, out string how))
             {
-                for (int i = 0; i < lod.ApproachStopPresses; i++)
-                {
-                    if (!_input.KeyTap(lod.StopAttackKey))
-                    {
-                        _detail = "stop key blocked - waiting for the game to be in front";
-                        _waitUntil = now + 300;
-                        return;
-                    }
-
-                    Thread.Sleep(100);
-                }
+                _detail = $"{how} - waiting for the game to be in front";
+                _waitUntil = now + 300;
+                return;
             }
 
             _lodApproachStopped = true;
-            _detail = $"stopped attacking ('{lod.StopAttackKey}' x{lod.ApproachStopPresses})";
+            _detail = $"stopped attacking ({how})";
+            Log?.Invoke(LogLevel.Info, $"Stopped the attack to walk up: {how}.");
             _waitUntil = Environment.TickCount64 + 150;
             return;
         }

@@ -240,6 +240,11 @@ public static class SettingsStore
         s.Dungeon.ManualAttackWaitMs = Math.Clamp(s.Dungeon.ManualAttackWaitMs, 0, 10000);
         s.Lod.LootAfterMissingMs = Math.Clamp(s.Lod.LootAfterMissingMs, 1000, 120000);
         s.Lod.StopAttackPresses = Math.Clamp(s.Lod.StopAttackPresses, 0, 20);
+        s.Lod.ShuraMatchScore = Math.Clamp(s.Lod.ShuraMatchScore, 0.3, 1.0);
+        s.Lod.ShuraPresses = Math.Clamp(s.Lod.ShuraPresses, 1, 20);
+        s.Lod.ShuraEveryMs = Math.Clamp(s.Lod.ShuraEveryMs, 50, 5000);
+        s.Lod.ShuraTemplate = (s.Lod.ShuraTemplate ?? "").Trim();
+        s.Lod.ShuraKey = (s.Lod.ShuraKey ?? "").Trim();
         s.Lod.ApproachStopPresses = Math.Clamp(s.Lod.ApproachStopPresses, 0, 20);
         s.Lod.ApproachWaitMs = Math.Clamp(s.Lod.ApproachWaitMs, 300, 10000);
         s.Lod.ApproachTries = Math.Clamp(s.Lod.ApproachTries, 1, 10);
