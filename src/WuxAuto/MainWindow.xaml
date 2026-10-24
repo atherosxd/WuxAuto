@@ -84,7 +84,7 @@
                             <TextBlock Grid.Row="3" Grid.Column="1" Text="110 - 120 %  (Settings ▸ Visual)" />
 
                             <TextBlock Grid.Row="4" Grid.Column="0" Text="Tab target" Style="{StaticResource FieldLabel}" Margin="0,2,12,2" />
-                            <TextBlock Grid.Row="4" Grid.Column="1" Text="Default / Nearest Monster" />
+                            <TextBlock Grid.Row="4" Grid.Column="1" Text="Default  (Settings ▸ Visual)" />
                         </Grid>
                     </StackPanel>
                 </Border>
@@ -354,6 +354,8 @@
                                           ToolTip="Log back in after a disconnect (the game must remember the account)." />
                                 <CheckBox Content="Hold skill (LOD)" IsChecked="{Binding Settings.Lod.HoldSkill}"
                                           ToolTip="Auto LOD: hold the skill key down while attacking instead of spamming it." />
+                                <CheckBox Content="TAB target: Default" IsChecked="{Binding Settings.Sequence.TabTargetDefault}"
+                                          ToolTip="On Start in town, with the font size: the game's Settings > VISUAL > TAB target is set to Default and saved." />
                             </WrapPanel>
                         </Grid>
 

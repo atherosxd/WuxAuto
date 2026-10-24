@@ -378,6 +378,14 @@ public sealed class SequenceSettings
     /// <summary>Upper end of the accepted font size range (see <see cref="FontSizePercent"/>).</summary>
     public int FontSizeMaxPercent { get; set; } = 120;
 
+    /// <summary>
+    /// On Start in town, in the same Settings visit as the font size: VISUAL -> "TAB target" (at the
+    /// bottom of the list, scrolled to) is set to Default with the row's left chevron - Default is
+    /// the first of Default, Nearest enemy, Enemy worth CP, Nearest monster (user, 2026-10-24) -
+    /// then SAVE. Off = leave it alone.
+    /// </summary>
+    public bool TabTargetDefault { get; set; } = true;
+
     /// <summary>Text on the destination row to click (OCR, fuzzy matching).</summary>
     public string DestinationText { get; set; } = "Labyrinth";
 

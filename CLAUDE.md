@@ -81,7 +81,13 @@ dotnet run --project .\tests\WuxAuto.SelfTest -- --dxgi
 dotnet run --project .\tests\WuxAuto.SelfTest -- --capture
 dotnet run --project .\tests\WuxAuto.SelfTest -- --input I
 dotnet run --project .\tests\WuxAuto.SelfTest -- --do key:I --do rclick:661,285 --do wait:900
+dotnet run --project .\tests\WuxAuto.SelfTest -- --do wheel:891,350,-10   # wheel x,y,notches (negative = down)
 ```
+
+`--do` frames land in `%TEMP%\wuxauto-step<N>-<verb>.png`. Check the frame before every click: an
+Escape with a target selected only clears the target (no SETTINGS window), and the clicks meant for
+the window then walk the character (2026-10-24). `WuxAuto.slnx` does not build `tests\WuxAuto.SelfTest`
+— build it on its own before `--no-build` runs, or the probe is stale.
 
 The frame probe prints, per template, the best score, box, learned scale and timing, plus OCR
 words and the map scroll-arrow result. `--crop` writes `<frame>.crop.png` next to the frame.
@@ -143,7 +149,7 @@ RunToTarget, ReturnToTown, Done, Failed`.
 | --- | --- |
 | Focus | activates the bound HWND (`FocusOnStart`), then waits `Input.FocusSettleMs` (800 ms) before the first key |
 | CheckZone | **before any teleport** (run 28, user): reads the minimap title. Labyrinth → no teleport: the highest stage whose boss name is on screen (whole name, `IsFullName`; Tab up to 5×; the open map lists every name, so it waits for the map to close) → `SelectBoss` at that stage (`_autohuntPressed` = true, J is a toggle). No name, but the coordinates are within 400 of the arrival point (3595, 3415) → a late teleport: carry on from `ZoomOut` (run 31). Otherwise → fail, never teleport. Anywhere else → `OpenInventory`. A re-login puts the character back where it was (Labyrinth mid-fight), and Start after an Alt-Tab did the same; both ran the teleport inside the dungeon before. The probe prints `stage name '...'` for every stage |
-| FontSize | once per Start, in town (user, 2026-10-21): **Escape** opens SETTINGS (Escape toggles it; the first press right after focusing was eaten once) → click the `VISUAL` tab → `ReadSettingRowAsync("Font size")` reads the value (`110%`) and the bright `<` / `>` glyphs beside it (1024×768: value 590,259, chevrons 541/671,263) → within `Sequence.FontSizePercent` … `FontSizeMaxPercent` (110 … 120, user 2026-10-23; min 0 = off) it is left alone, outside it the chevrons move it to the nearer end, ≤ 12 clicks → **SAVE** (exact word) if changed → Escape. Only text-found buttons are clicked — the window also has CHARACTER SELECT and EXIT. Anything unexpected just closes it and carries on. It was already 110 % when mapped. The VISUAL click right after Escape did not take once (still on SOUND, run 32): no "Font size" row → click VISUAL again (≤ 3), 900 ms after each. First live try read no value: the hit was the single word "Font" (< 60 % of "Font size") — the whole OCR line is judged now, and a miss saves `fontsize_unread` |
+| FontSize | once per Start, in town (user, 2026-10-21): **Escape** opens SETTINGS (Escape toggles it; the first press right after focusing was eaten once) → click the `VISUAL` tab → `ReadSettingRowAsync("Font size")` reads the value (`110%`) and the bright `<` / `>` glyphs beside it (1024×768: value 590,259, chevrons 541/671,263) → within `Sequence.FontSizePercent` … `FontSizeMaxPercent` (110 … 120, user 2026-10-23; min 0 = off) it is left alone, outside it the chevrons move it to the nearer end, ≤ 12 clicks → **SAVE** (exact word) if changed → Escape. Only text-found buttons are clicked — the window also has CHARACTER SELECT and EXIT. Anything unexpected just closes it and carries on. It was already 110 % when mapped. The VISUAL click right after Escape did not take once (still on SOUND, run 32): no "Font size" row → click VISUAL again (≤ 3), 900 ms after each. First live try read no value: the hit was the single word "Font" (< 60 % of "Font size") — the whole OCR line is judged now, and a miss saves `fontsize_unread`. **TAB target (user, 2026-10-24, `Sequence.TabTargetDefault` on, check box "TAB target: Default"):** same visit, after the font: the VISUAL list is first wheeled to the top (`TopStep`; the game reopens it at the top anyway), then down (10 notches, ≤ 3×) at a point 10 text heights under the VISUAL tab word until `ReadSettingRowAsync(…, numeric: false)` reads the row (`ValueText` = leftmost OCR line right of the label with 2+ letter words, must start in the left ¾ of the band). Options, in order: **Default → Nearest enemy → Enemy worth CP → Nearest monster**; the left chevron (found even when dimmed) is clicked until it reads Default (≤ 5) → one **SAVE** for both settings (SAVE leaves the window open) → Escape; a miss saves `tabtarget_unread`. 1920×1080: label (724,786), value ≈1063,784, chevrons 995 / 1178 x; all four values read right. Verified live 2026-10-24: Nearest monster → Default, saved, still Default after reopening. **Open:** at 1920×1080 the font row's right chevron (1178–1189) lies past the 30 h band end (label right 794 + 30×13 = 1184) and is dropped, so a font below the range cannot be raised there ("could not be set to 120%") |
 | Inventory | taps `Input.InventoryKey` (default `I`) |
 | Scroll | finds `teleportscroll.png` in `Regions.Scroll` (threshold 0.78: real ≈0.83, a town-screen look-alike scored 0.70 and made the pilot skip `I`) and **right-clicks** it (left click only picks it up in this client) |
 | List | OCRs `Regions.TeleportList` for `Sequence.DestinationText` (`Labyrinth`, matches `[The Labyrinth (Adept)]` on page 2); pages with `rightchevron.png` while missing |
@@ -545,7 +551,7 @@ minutes, then it stops as before. Stop / F10 / a closed game window still stop f
 
 Key `DungeonSettings` defaults. The settings panel's **Dungeon** section (2026-10-21) edits Skill key,
 Autohunt key, Target key, Font size % and the switches Tab + skill at the last waypoint, Autohunt off
-for the run, Click the stage 5 gate, Auto reconnect; everything else only via `settings.json`.
+for the run, Click the stage 5 gate, Auto reconnect, Hold skill (LOD), TAB target: Default; everything else only via `settings.json`.
 `tests/WuxAuto.UiShot -- <png> --settings --bottom` renders that panel; it restores `settings.json`
 afterwards (it ticks check boxes for the picture and the window saves on close — that once switched
 Dry run on in the real settings).

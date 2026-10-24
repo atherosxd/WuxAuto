@@ -202,6 +202,11 @@ public sealed partial class AutomationPilot
     private int _fontTabClicks;
     private bool _fontChanged;
     private int _fontGoal;
+    private PixelRect _visualTab;     // the VISUAL tab's word: the wheel scrolls the list below it
+    private readonly List<string> _settingsChanges = new();
+    private int _tabClicks;
+    private int _tabScrolls;
+    private bool _tabChanged;
     private int _refineDir;
     private double _refineBest;
     private int _refineTaps;
@@ -233,7 +238,7 @@ public sealed partial class AutomationPilot
         PilotPhase.Idle => "idle",
         PilotPhase.Focus => "focussing game window",
         PilotPhase.CheckZone => "checking where the character is",
-        PilotPhase.FontSize => "checking the game's font size",
+        PilotPhase.FontSize => "checking the game's font size and TAB target",
         PilotPhase.OpenInventory => "opening inventory",
         PilotPhase.FindScroll => "locating teleport scroll",
         PilotPhase.FindChevron => "clicking next page chevron",
@@ -736,8 +741,9 @@ public sealed partial class AutomationPilot
             if (TownIn(title) != null && !_returning && await CheckKeysAsync(frame))
                 return;
 
-            // Once per Start, in town: the game's font size (user: 110 %).
-            Advance(!_fontChecked && _settings.Sequence.FontSizePercent > 0 ? PilotPhase.FontSize : PilotPhase.OpenInventory, 120);
+            // Once per Start, in town: the game's font size (user: 110 - 120 %) and TAB target (Default).
+            bool settingsCheck = _settings.Sequence.FontSizePercent > 0 || _settings.Sequence.TabTargetDefault;
+            Advance(!_fontChecked && settingsCheck ? PilotPhase.FontSize : PilotPhase.OpenInventory, 120);
             return;
         }
 
@@ -814,14 +820,20 @@ public sealed partial class AutomationPilot
     }
 
     /// <summary>
-    /// Settings (Escape) -> VISUAL -> "Font size" kept within <see cref="SequenceSettings.FontSizePercent"/>
-    /// .. <see cref="SequenceSettings.FontSizeMaxPercent"/>: outside it, the chevrons beside the value
-    /// move it to the nearer end -> SAVE if it changed -> Escape. Only buttons found by
-    /// their own text are clicked (the window also has CHARACTER SELECT and EXIT). Anything
-    /// unexpected: close the window and carry on with the run - the font is not worth a failure.
+    /// One visit to the game's Settings window per Start, in town:
+    /// Escape -> VISUAL -> list scrolled to the top -> "Font size" kept within
+    /// <see cref="SequenceSettings.FontSizePercent"/> .. <see cref="SequenceSettings.FontSizeMaxPercent"/>
+    /// (outside it, the chevrons beside the value move it to the nearer end) -> list scrolled down
+    /// to "TAB target", set to Default with its left chevron (<see cref="SequenceSettings.TabTargetDefault"/>)
+    /// -> SAVE once if anything changed -> Escape. Only buttons found by their own text are clicked
+    /// (the window also has CHARACTER SELECT and EXIT). Anything unexpected: close the window and
+    /// carry on with the run - neither setting is worth a failure.
     /// </summary>
     private async Task TickFontSizeAsync(Mat frame)
     {
+        const int OpenStep = 0, VisualStep = 1, TopStep = 2, FontStep = 3, TabStep = 4, SaveStep = 5, CloseStep = 9;
+        const int ListNotches = 10;   // one 10-notch scroll ran the 17-row VISUAL list end to end (1920x1080)
+
         int low = _settings.Sequence.FontSizePercent;
         int high = Math.Max(low, _settings.Sequence.FontSizeMaxPercent);
         var full = new PixelRect(0, 0, frame.Width, frame.Height);
@@ -833,43 +845,80 @@ public sealed partial class AutomationPilot
             return hit != null && TextMatcher.CoversMost(hit.Text, text) ? hit : null;
         }
 
-        void Close(string message, LogLevel level)
+        void Close()
         {
             _fontChecked = true;
-            _fontStep = 9;
+            _fontStep = CloseStep;
             _attempts = 0;
-            Log?.Invoke(level, message);
+        }
+
+        // Font size done (or skipped): the TAB target next, then SAVE if anything changed.
+        void AfterFont()
+        {
+            if (_settings.Sequence.TabTargetDefault)
+            {
+                _fontStep = TabStep;
+                return;
+            }
+
+            AfterTab();
+        }
+
+        void AfterTab()
+        {
+            if (_fontChanged || _tabChanged)
+                _fontStep = SaveStep;
+            else
+                Close();
+        }
+
+        // Scrolls the VISUAL list: the wheel over a point well below the VISUAL tab is over the
+        // list at every resolution seen (1920x1080: 10 text heights below the tab = the Font size row).
+        bool ScrollList(int notches)
+        {
+            int x = _visualTab.CenterX;
+            int y = Math.Min(frame.Height - 1, _visualTab.Bottom + _visualTab.Height * 10);
+            if (_input.Wheel(x, y, notches))
+                return true;
+
+            _detail = "scroll blocked - waiting for the game to be in front";
+            _waitUntil = now + 300;
+            return false;
         }
 
         switch (_fontStep)
         {
-            case 0: // open Settings
+            case OpenStep:
                 _fontClicks = 0;
                 _fontTabClicks = 0;
                 _fontChanged = false;
+                _tabClicks = 0;
+                _tabScrolls = 0;
+                _tabChanged = false;
+                _settingsChanges.Clear();
                 if (!_input.KeyTap("Escape"))
                 {
                     _waitUntil = now + 300;
                     return;
                 }
 
-                _fontStep = 1;
+                _fontStep = VisualStep;
                 _waitUntil = now + 900;
                 return;
 
-            case 1: // Settings open? then the VISUAL tab
+            case VisualStep: // Settings open? then the VISUAL tab
             {
                 if (await Find("SETTINGS") == null)
                 {
                     if (++_attempts < 3)
                     {
-                        _fontStep = 0;
+                        _fontStep = OpenStep;
                         return;
                     }
 
                     _fontChecked = true;
-                    _fontStep = 0;
-                    Log?.Invoke(LogLevel.Warning, "The Settings window did not open - leaving the font size alone.");
+                    _fontStep = OpenStep;
+                    Log?.Invoke(LogLevel.Warning, "The Settings window did not open - leaving the font size and TAB target alone.");
                     Advance(PilotPhase.OpenInventory, 300);
                     return;
                 }
@@ -877,18 +926,27 @@ public sealed partial class AutomationPilot
                 var visual = await Find("VISUAL");
                 if (visual == null)
                 {
-                    Close("Settings opened but no VISUAL tab was read - leaving the font size alone.", LogLevel.Warning);
+                    Log?.Invoke(LogLevel.Warning, "Settings opened but no VISUAL tab was read - leaving the font size and TAB target alone.");
+                    Close();
                     return;
                 }
 
                 if (!Click(visual.Bounds))
                     return;
-                _fontStep = 2;
+                _visualTab = visual.Bounds;
+                _fontStep = TopStep;
                 _waitUntil = now + 900;
                 return;
             }
 
-            case 2: // read the row, step towards the target
+            case TopStep: // the list may still be scrolled down from the last visit: back to the top
+                if (!ScrollList(ListNotches))
+                    return;
+                _fontStep = FontStep;
+                _waitUntil = now + 700;
+                return;
+
+            case FontStep: // read the row, step towards the target
             {
                 var row = await _analyzer.ReadSettingRowAsync(frame, "Font size");
 
@@ -896,30 +954,35 @@ public sealed partial class AutomationPilot
                 // take (run 32). Click it again, up to 3 times.
                 if (row == null && ++_fontTabClicks < 3)
                 {
-                    _fontStep = 1;
+                    _fontStep = VisualStep;
                     _attempts = 0;
                     _waitUntil = now + 500;
+                    return;
+                }
+
+                if (low <= 0) // font size check off
+                {
+                    AfterFont();
                     return;
                 }
 
                 if (row?.Percent is not int percent)
                 {
                     DebugArtifacts.SaveFrame(frame, _overlays, "fontsize_unread");
-                    Close("No 'Font size' value was read in the Settings window - leaving it alone.", LogLevel.Warning);
+                    Log?.Invoke(LogLevel.Warning, "No 'Font size' value was read in the Settings window - leaving it alone.");
+                    AfterFont();
                     return;
                 }
 
                 if (percent >= low && percent <= high)
                 {
                     if (_fontChanged)
-                    {
-                        _fontStep = 3;
-                        return;
-                    }
-
-                    Close(low == high
-                        ? $"Font size is already {percent}%."
-                        : $"Font size is {percent}% (within {low}-{high}%).", LogLevel.Info);
+                        _settingsChanges.Add($"font size {percent}%");
+                    else
+                        Log?.Invoke(LogLevel.Info, low == high
+                            ? $"Font size is already {percent}%."
+                            : $"Font size is {percent}% (within {low}-{high}%).");
+                    AfterFont();
                     return;
                 }
 
@@ -929,7 +992,10 @@ public sealed partial class AutomationPilot
                 var chevron = percent < _fontGoal ? row.Right : row.Left;
                 if (chevron == null || ++_fontClicks > 12)
                 {
-                    Close($"Font size is {percent}% and could not be set to {_fontGoal}% - leaving it.", LogLevel.Warning);
+                    Log?.Invoke(LogLevel.Warning, $"Font size is {percent}% and could not be set to {_fontGoal}% - leaving it.");
+                    if (_fontChanged)
+                        _settingsChanges.Add($"font size {percent}%");
+                    AfterFont();
                     return;
                 }
 
@@ -941,18 +1007,73 @@ public sealed partial class AutomationPilot
                 return;
             }
 
-            case 3: // SAVE - the exact word only
+            case TabStep: // "TAB target" -> Default; the row is at the bottom of the list
             {
+                var row = await _analyzer.ReadSettingRowAsync(frame, "TAB target", numeric: false);
+                if (row?.ValueText is not string value)
+                {
+                    if (_tabScrolls < 3)
+                    {
+                        if (!ScrollList(-ListNotches))
+                            return;
+                        _tabScrolls++;
+                        _detail = $"scrolling the VISUAL list to 'TAB target' ({_tabScrolls}/3)";
+                        _waitUntil = now + 700;
+                        return;
+                    }
+
+                    DebugArtifacts.SaveFrame(frame, _overlays, "tabtarget_unread");
+                    Log?.Invoke(LogLevel.Warning, "No 'TAB target' value was read in the Settings window - leaving it alone.");
+                    if (_tabChanged)
+                        _settingsChanges.Add("TAB target (changed, then unread)");
+                    AfterTab();
+                    return;
+                }
+
+                // Default is the first option: every click on the left chevron moves one step towards it.
+                if (IsDefaultTabTarget(value))
+                {
+                    if (_tabChanged)
+                        _settingsChanges.Add("TAB target Default");
+                    else
+                        Log?.Invoke(LogLevel.Info, "TAB target is already Default.");
+                    AfterTab();
+                    return;
+                }
+
+                if (row.Left == null || _tabClicks >= 5)
+                {
+                    Log?.Invoke(LogLevel.Warning, $"TAB target is '{value}' and could not be set to Default - leaving it.");
+                    if (_tabChanged)
+                        _settingsChanges.Add($"TAB target {value}");
+                    AfterTab();
+                    return;
+                }
+
+                if (!Click(row.Left.Value))
+                    return;
+                _tabClicks++;
+                _tabChanged = true;
+                _detail = $"TAB target '{value}' -> Default";
+                _waitUntil = now + 500;
+                return;
+            }
+
+            case SaveStep: // SAVE - the exact word only
+            {
+                string changes = _settingsChanges.Count > 0 ? string.Join(", ", _settingsChanges) : "settings changed";
                 var save = await Find("SAVE");
                 if (save == null || TextMatcher.Normalize(save.Text) != "save")
                 {
-                    Close($"Font size set to {_fontGoal}%, but no SAVE button was read - it may not stick.", LogLevel.Warning);
+                    Log?.Invoke(LogLevel.Warning, $"Set {changes}, but no SAVE button was read - it may not stick.");
+                    Close();
                     return;
                 }
 
                 if (!Click(save.Bounds))
                     return;
-                Close($"Font size set to {_fontGoal}% and saved.", LogLevel.Success);
+                Log?.Invoke(LogLevel.Success, $"Set {changes} and saved.");
+                Close();
                 _waitUntil = now + 800;
                 return;
             }
@@ -967,12 +1088,18 @@ public sealed partial class AutomationPilot
                     return;
                 }
 
-                _fontStep = 0;
+                _fontStep = OpenStep;
                 Advance(PilotPhase.OpenInventory, 300);
                 return;
             }
         }
     }
+
+    /// <summary>
+    /// The TAB target value reads as "Default". The other options (Nearest enemy, Enemy worth CP,
+    /// Nearest monster) score below 0.2 against it.
+    /// </summary>
+    public static bool IsDefaultTabTarget(string value) => TextMatcher.Similarity(value, "Default") >= 0.75;
 
     private void TickOpenInventory(Mat frame)
     {

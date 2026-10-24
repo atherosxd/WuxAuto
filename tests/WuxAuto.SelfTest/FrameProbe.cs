@@ -131,6 +131,11 @@ internal static class FrameProbe
         if (fontRow != null)
             Console.WriteLine($"  setting 'Font size': label {fontRow.Label}, value {fontRow.Value} = {fontRow.Percent}, left {fontRow.Left}, right {fontRow.Right}");
 
+        var tabRow = await analyzer.ReadSettingRowAsync(frame, "TAB target", numeric: false);
+        if (tabRow != null)
+            Console.WriteLine($"  setting 'TAB target': label {tabRow.Label}, value {tabRow.Value} = '{tabRow.ValueText}' " +
+                              $"(default {WuxAuto.Automation.AutomationPilot.IsDefaultTabTarget(tabRow.ValueText ?? string.Empty)}), left {tabRow.Left}, right {tabRow.Right}");
+
         // The stage 5 gate glow, in the bands TickAimGate searches.
         int glowArea = Math.Max(150, frame.Width * frame.Height / 4000);
         foreach (var band in new[] { new NormRect(0.25, 0.07, 0.31, 0.15), new NormRect(0.25, 0.22, 0.50, 0.20) })

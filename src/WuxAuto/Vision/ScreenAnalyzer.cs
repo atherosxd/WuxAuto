@@ -180,15 +180,13 @@ public sealed class ScreenAnalyzer : IDisposable
     }
 
     /// <summary>
-    /// Finds the map list's page arrows from the "Spawns" column header: they are the light
-    /// glyphs in the band just above that word. Picked as bright blobs, so there is no template
-    /// and no fixed offset to go stale when the map window scales differently.
+    /// A row of the game's Settings window ("Font size   &lt;  110%  &gt;", "TAB target  &lt;  Default  &gt;"):
+    /// the value read on the row of <paramref name="label"/> and the bright chevron glyph on either
+    /// side of it. <paramref name="numeric"/> rows take the first word with a digit and fill
+    /// <see cref="SettingRow.Percent"/>; text rows take the first OCR line right of the label.
+    /// A dimmed chevron (the end of the option list) is still found (TAB target at Default, 1920x1080).
     /// </summary>
-    /// <summary>
-    /// A row of the game's Settings window ("Font size   &lt;  110%  &gt;"): the value read on the
-    /// row of <paramref name="label"/> and the bright chevron glyph on either side of it.
-    /// </summary>
-    public async Task<SettingRow?> ReadSettingRowAsync(Mat frame, string label)
+    public async Task<SettingRow?> ReadSettingRowAsync(Mat frame, string label, bool numeric = true)
     {
         var full = new PixelRect(0, 0, frame.Width, frame.Height);
         var (hit, _, _) = await FindTextAsync(frame, full, label);
@@ -202,22 +200,59 @@ public sealed class ScreenAnalyzer : IDisposable
             .Clamp(frame.Width, frame.Height);
 
         var words = await Ocr.RecognizeAsync(frame, band, 2.0);
-        var value = words.FirstOrDefault(w => w.Text.Any(char.IsDigit));
+        var value = numeric ? NumericValue(words) : TextValue(words, band);
         if (value == null)
             return new SettingRow(labelBox, null, null, null, null);
 
-        string digits = new(value.Text.Where(char.IsDigit).ToArray());
-        int? percent = int.TryParse(digits, out int v) ? v : null;
+        int? percent = null;
+        if (numeric)
+        {
+            string digits = new(value.Value.Text.Where(char.IsDigit).ToArray());
+            percent = int.TryParse(digits, out int v) ? v : null;
+        }
 
         // Chevrons: the nearest bright glyph left and right of the value, on the same row.
+        var box = value.Value.Bounds;
         var blobs = FindBrightBlobs(frame, band)
             .Where(b => b.Height >= h * 0.6 && b.Height <= h * 2.5 && b.Width <= h * 1.6)
             .ToList();
-        PixelRect? left = blobs.Where(b => b.Right <= value.Bounds.X - 2).OrderByDescending(b => b.CenterX).Select(b => (PixelRect?)b).FirstOrDefault();
-        PixelRect? right = blobs.Where(b => b.X >= value.Bounds.Right + 2).OrderBy(b => b.CenterX).Select(b => (PixelRect?)b).FirstOrDefault();
-        return new SettingRow(labelBox, value.Bounds, percent, left, right);
+        PixelRect? left = blobs.Where(b => b.Right <= box.X - 2).OrderByDescending(b => b.CenterX).Select(b => (PixelRect?)b).FirstOrDefault();
+        PixelRect? right = blobs.Where(b => b.X >= box.Right + 2).OrderBy(b => b.CenterX).Select(b => (PixelRect?)b).FirstOrDefault();
+        return new SettingRow(labelBox, box, percent, left, right, value.Value.Text);
+
+        static (string Text, PixelRect Bounds)? NumericValue(IReadOnlyList<OcrWord> words)
+        {
+            var word = words.FirstOrDefault(w => w.Text.Any(char.IsDigit));
+            return word == null ? null : (word.Text, word.Bounds);
+        }
+
+        // The leftmost line with real words ("Default", "Nearest enemy", "Enemy worth CP"). Words of
+        // fewer than 2 letters are dropped: a chevron misread as "<" or "K". The line must start in
+        // the left three quarters of the band - text further right is the game world beyond the
+        // Settings window, not the value.
+        static (string Text, PixelRect Bounds)? TextValue(IReadOnlyList<OcrWord> words, PixelRect band)
+        {
+            var line = words
+                .Where(w => w.Text.Count(char.IsLetter) >= 2)
+                .GroupBy(w => w.LineBounds)
+                .OrderBy(g => g.Min(w => w.Bounds.X))
+                .FirstOrDefault();
+            if (line == null || line.Min(w => w.Bounds.X) > band.X + band.Width * 3 / 4)
+                return null;
+
+            var ordered = line.OrderBy(w => w.Bounds.X).ToList();
+            var bounds = PixelRect.FromBounds(
+                ordered.Min(w => w.Bounds.X), ordered.Min(w => w.Bounds.Y),
+                ordered.Max(w => w.Bounds.Right), ordered.Max(w => w.Bounds.Bottom));
+            return (string.Join(' ', ordered.Select(w => w.Text)), bounds);
+        }
     }
 
+    /// <summary>
+    /// Finds the map list's page arrows from the "Spawns" column header: they are the light
+    /// glyphs in the band just above that word. Picked as bright blobs, so there is no template
+    /// and no fixed offset to go stale when the map window scales differently.
+    /// </summary>
     public async Task<(PixelRect? Up, PixelRect? Down)> FindMapScrollArrowsAsync(Mat frame, PixelRect roi)
     {
         var (spawns, _, _) = await FindTextAsync(frame, roi, "Spawns");
