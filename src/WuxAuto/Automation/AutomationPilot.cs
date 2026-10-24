@@ -14,6 +14,7 @@ public enum PilotPhase
     Focus,
     CheckZone,
     AutohuntOff,
+    RunSkill,
     FontSize,
     OpenInventory,
     FindScroll,
@@ -198,6 +199,9 @@ public sealed partial class AutomationPilot
     private const int ArrivalY = 3415;
 
     private bool _fontChecked;
+    private bool _runSkillDue;                // RunSkill: in town this run, not checked yet
+    private int _runSkillClicks;              // RunSkill: clicks on the icon this visit (<= 3)
+    private bool _runKeyPressed;              // RunSkill: the fallback key went out this Start (a toggle - never twice)
     private int _huntOffPresses;              // AutohuntOff: taps of the autohunt key this visit (<= 3)
     private long _huntOffPressedAt;
     private List<string> _huntOffBaseline = [];   // autohunt log lines before the last tap
@@ -244,6 +248,7 @@ public sealed partial class AutomationPilot
         PilotPhase.Focus => "focussing game window",
         PilotPhase.CheckZone => "checking where the character is",
         PilotPhase.AutohuntOff => "making sure the autohunt is off in town",
+        PilotPhase.RunSkill => "making sure the Run skill is on",
         PilotPhase.FontSize => "checking the game's font size and TAB target",
         PilotPhase.OpenInventory => "opening inventory",
         PilotPhase.FindScroll => "locating teleport scroll",
@@ -280,6 +285,7 @@ public sealed partial class AutomationPilot
     {
         _runCount = 0;
         _fontChecked = false;
+        _runKeyPressed = false;
         _labyOut = false;
         _lodOut = false;
         _restartTimes.Clear();
@@ -580,6 +586,9 @@ public sealed partial class AutomationPilot
                 case PilotPhase.AutohuntOff:
                     await TickAutohuntOffAsync(frame);
                     break;
+                case PilotPhase.RunSkill:
+                    TickRunSkill(frame);
+                    break;
                 case PilotPhase.FontSize:
                     await TickFontSizeAsync(frame);
                     break;
@@ -762,6 +771,8 @@ public sealed partial class AutomationPilot
             // In town, every run (user, 2026-10-25): the autohunt must be off before the teleport -
             // a restart, a closed stage 5 or a re-login can leave it running.
             bool townCheck = TownIn(title) != null && !_returning;
+            _runSkillDue = townCheck && _settings.Sequence.RunSkillCheck;
+            _runSkillClicks = 0;
             if (townCheck && _settings.Sequence.AutohuntOffInTown && !string.IsNullOrWhiteSpace(dungeon.AutohuntKey))
             {
                 _huntOffPresses = 0;
@@ -846,9 +857,18 @@ public sealed partial class AutomationPilot
         Advance(PilotPhase.SelectBoss, 200);
     }
 
-    /// <summary>Once per Start, in town: the game's font size (user: 110 - 120 %) and TAB target (Default); else the teleport.</summary>
+    /// <summary>
+    /// In town: the Run skill (every run), then once per Start the game's font size (user: 110 - 120 %)
+    /// and TAB target (Default); else the teleport.
+    /// </summary>
     private PilotPhase AfterTownChecks()
     {
+        if (_runSkillDue)
+        {
+            _runSkillDue = false;
+            return PilotPhase.RunSkill;
+        }
+
         bool settingsCheck = _settings.Sequence.FontSizePercent > 0 || _settings.Sequence.TabTargetDefault;
         return !_fontChecked && settingsCheck ? PilotPhase.FontSize : PilotPhase.OpenInventory;
     }
@@ -945,6 +965,129 @@ public sealed partial class AutomationPilot
         Log?.Invoke(LogLevel.Warning, $"The combat log showed no autohunt line after '{key}' x{_huntOffPresses} - cannot tell whether the autohunt is on; carrying on.");
         DebugArtifacts.SaveFrame(frame, _overlays, "autohunt_unread");
         Done();
+    }
+
+    /// <summary>
+    /// In town, before the teleport (user, 2026-10-25: "before running LOD or Laby add a check if the
+    /// Run skill is activated, it will have a ring on it"). The icon
+    /// (<see cref="SequenceSettings.RunSkillTemplate"/>, cropped inside the ring) is looked for on the
+    /// skill bar; the gold ring round it (<see cref="ScreenAnalyzer.RingFraction"/>) = on. No ring ->
+    /// click the icon and look again on the next frame, at most 3 clicks (then a warning and
+    /// <c>runskill_off</c>). Icon not on the bar -> tap <see cref="SequenceSettings.RunSkillKey"/>
+    /// once per Start: the key is a toggle and without the icon nothing says whether it was on, so a
+    /// second press could turn it off again (<c>runskill_unread</c>). A dry run only reports.
+    /// </summary>
+    private void TickRunSkill(Mat frame)
+    {
+        var seq = _settings.Sequence;
+        long now = Environment.TickCount64;
+
+        void Done() => Advance(AfterTownChecks(), 120);
+
+        var icon = FindRunSkill(frame);
+        if (icon == null)
+        {
+            string missing = string.IsNullOrWhiteSpace(seq.RunSkillTemplate)
+                ? "The Run skill has no icon template"
+                : $"The Run skill icon ('{seq.RunSkillTemplate}') is not on the skill bar";
+            if (string.IsNullOrWhiteSpace(seq.RunSkillKey))
+            {
+                Log?.Invoke(LogLevel.Warning, $"{missing} and no Run key is set - carrying on.");
+                DebugArtifacts.SaveFrame(frame, _overlays, "runskill_unread");
+                Done();
+                return;
+            }
+
+            if (_input.IsDryRun)
+            {
+                Log?.Invoke(LogLevel.Info, $"Dry run - {missing.ToLowerInvariant()}; would press '{seq.RunSkillKey}' once.");
+                Done();
+                return;
+            }
+
+            if (_runKeyPressed)
+            {
+                Log?.Invoke(LogLevel.Info, $"{missing}; '{seq.RunSkillKey}' was already pressed this session (it is a toggle) - carrying on.");
+                Done();
+                return;
+            }
+
+            if (!_input.KeyTap(seq.RunSkillKey))
+            {
+                _detail = "Run key blocked - waiting for the game to be in front";
+                _waitUntil = now + 300;
+                return;
+            }
+
+            _runKeyPressed = true;
+            Log?.Invoke(LogLevel.Warning, $"{missing} - pressed '{seq.RunSkillKey}' once (cannot tell whether it was already on; not again this session).");
+            DebugArtifacts.SaveFrame(frame, _overlays, "runskill_unread");
+            Done();
+            return;
+        }
+
+        double ring = _analyzer.RingFraction(frame, icon.Bounds);
+        bool on = ring >= seq.RunSkillRingMin;
+        _overlays.Add(new OverlayItem(icon.Bounds.Inflate(icon.Bounds.Width / 3), $"ring {ring:0.00}", on ? OverlayColor.Green : OverlayColor.Red));
+        int x = icon.Bounds.CenterX, y = icon.Bounds.CenterY;
+        if (on)
+        {
+            string after = _runSkillClicks > 0 ? $" after {_runSkillClicks} click(s)" : "";
+            Log?.Invoke(LogLevel.Success, $"The Run skill is on{after} (ring {ring:0.00} round its icon at {x},{y}, score {icon.Score:0.00}).");
+            Done();
+            return;
+        }
+
+        if (_input.IsDryRun)
+        {
+            Log?.Invoke(LogLevel.Info, $"Dry run - the Run skill is off (ring {ring:0.00}); would click its icon at {x},{y} (score {icon.Score:0.00}).");
+            Done();
+            return;
+        }
+
+        if (_runSkillClicks >= 3)
+        {
+            Log?.Invoke(LogLevel.Warning, $"Still no ring round the Run skill icon at {x},{y} after {_runSkillClicks} clicks (ring {ring:0.00}) - carrying on.");
+            DebugArtifacts.SaveFrame(frame, _overlays, "runskill_off");
+            Done();
+            return;
+        }
+
+        if (!_input.Click(x, y))
+        {
+            _detail = "Run icon click blocked - waiting for the game to be in front";
+            _waitUntil = now + 300;
+            return;
+        }
+
+        _runSkillClicks++;
+        Log?.Invoke(LogLevel.Info, $"The Run skill is off (ring {ring:0.00}) - clicked its icon at {x},{y} ({_runSkillClicks}/3, score {icon.Score:0.00}).");
+        _detail = $"clicked the Run skill icon ({_runSkillClicks}/3) - looking for its ring";
+        _waitUntil = now + 900;
+    }
+
+    /// <summary>
+    /// The Run skill icon on the skill bar (<see cref="RegionSettings.Hotbar"/>), drawn on the
+    /// preview; the best score wins, equal scores -> the leftmost (as <c>FindShura</c>).
+    /// </summary>
+    private TemplateMatch? FindRunSkill(Mat frame)
+    {
+        var seq = _settings.Sequence;
+        if (string.IsNullOrWhiteSpace(seq.RunSkillTemplate))
+            return null;
+
+        var roi = _settings.Regions.Hotbar.ToPixels(frame.Width, frame.Height);
+        var hits = _analyzer.FindIcons(frame, seq.RunSkillTemplate, roi, seq.RunSkillMatchScore, maxResults: 4);
+        TemplateMatch? best = null;
+        foreach (var hit in hits)
+        {
+            _overlays.Add(new OverlayItem(hit.Bounds, $"run {hit.Score:0.00}", OverlayColor.Green));
+            if (best == null || hit.Score > best.Score + 0.01 ||
+                (Math.Abs(hit.Score - best.Score) <= 0.01 && hit.Bounds.CenterX < best.Bounds.CenterX))
+                best = hit;
+        }
+
+        return best;
     }
 
     /// <summary>The combat log's autohunt lines ("autohuntstarted" / "autohuntended" keys), top to bottom.</summary>

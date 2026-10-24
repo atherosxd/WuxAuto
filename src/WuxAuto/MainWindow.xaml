@@ -306,6 +306,7 @@
                                 <RowDefinition Height="Auto" />
                                 <RowDefinition Height="Auto" />
                                 <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
                             </Grid.RowDefinitions>
 
                             <TextBlock Grid.Row="0" Grid.Column="0" Text="Skill key" Style="{StaticResource FieldLabel}"
@@ -346,13 +347,17 @@
                                        ToolTip="Auto LOD: Shura stops the attack before a mid-fight buff and before the walk up to the boss. Its icon (shura.png) is clicked on the skill bar; when it is not found this key is tapped instead (the slot you put Shura in, default E). Empty = Space when the icon is not found." />
                             <TextBox Grid.Row="3" Grid.Column="3" Style="{StaticResource WideField}" Text="{Binding Settings.Lod.ShuraKey, UpdateSourceTrigger=PropertyChanged}" />
 
-                            <WrapPanel Grid.Row="4" Grid.Column="0" Grid.ColumnSpan="4">
+                            <TextBlock Grid.Row="4" Grid.Column="0" Text="Run key" Style="{StaticResource FieldLabel}"
+                                       ToolTip="In town, before every teleport: the Run skill must be on (a gold ring round its icon). Its icon (runskill.png) is found on the skill bar and clicked when the ring is missing; when the icon is not found this key is tapped once per Start instead (the slot you put Run in, default W). Empty = only the icon." />
+                            <TextBox Grid.Row="4" Grid.Column="1" Style="{StaticResource WideField}" Text="{Binding Settings.Sequence.RunSkillKey, UpdateSourceTrigger=PropertyChanged}" />
+
+                            <WrapPanel Grid.Row="5" Grid.Column="0" Grid.ColumnSpan="4">
                                 <CheckBox Content="Tab + skill at the last waypoint" IsChecked="{Binding Settings.Dungeon.TabAtWaypoint}"
                                           ToolTip="At 3603,1973: Tab until the last boss shows, then spam the skill key. Off = walk to the boss coordinates." />
                                 <CheckBox Content="Autohunt off for the run" IsChecked="{Binding Settings.Dungeon.FinalBossPressAutohunt}"
                                           ToolTip="Autohunt off after stage 4, on again at the last boss." />
                             </WrapPanel>
-                            <WrapPanel Grid.Row="5" Grid.Column="0" Grid.ColumnSpan="4">
+                            <WrapPanel Grid.Row="6" Grid.Column="0" Grid.ColumnSpan="4">
                                 <CheckBox Content="Click the stage 5 gate" IsChecked="{Binding Settings.Dungeon.AimGate}"
                                           ToolTip="Tilt the camera if needed and click the red/orange gate after stage 4." />
                                 <CheckBox Content="Auto reconnect" IsChecked="{Binding Settings.Sequence.AutoReconnect}"
@@ -365,6 +370,8 @@
                                           ToolTip="On Start in town, with the font size: the game's Settings > VISUAL > TAB target is set to Default and saved." />
                                 <CheckBox Content="Autohunt off in town" IsChecked="{Binding Settings.Sequence.AutohuntOffInTown}"
                                           ToolTip="In town, before every teleport: tap the autohunt key and read the combat log ('Auto hunt started' / 'ended'); turn it off if it was on." />
+                                <CheckBox Content="Run skill on in town" IsChecked="{Binding Settings.Sequence.RunSkillCheck}"
+                                          ToolTip="In town, before every teleport: find the Run skill icon on the skill bar and click it when it has no ring (= not active); icon not found -> the Run key once per Start." />
                             </WrapPanel>
                         </Grid>
 

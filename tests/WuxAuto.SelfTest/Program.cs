@@ -64,6 +64,10 @@ if (updateInstallIndex >= 0)
     return UpdateProbe.Install(args[updateInstallIndex + 1], args[updateInstallIndex + 2]);
 }
 
+int runSkillIndex = Array.IndexOf(args, "--runskill");
+if (runSkillIndex >= 0 && runSkillIndex + 1 < args.Length)
+    return FrameProbe.RunSkill(args[runSkillIndex + 1]);
+
 int shuraIndex = Array.IndexOf(args, "--shura");
 if (shuraIndex >= 0 && shuraIndex + 1 < args.Length)
     return FrameProbe.Shura(args[shuraIndex + 1]);

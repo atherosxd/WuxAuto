@@ -358,6 +358,66 @@ public sealed class ScreenAnalyzer : IDisposable
     }
 
     /// <summary>
+    /// How much of the gold ring the game draws round an active skill's icon is there: the share of
+    /// 36 directions from the icon's centre with a gold pixel (H 15-30, S 60-150, V 150-240; the
+    /// user's crop of the active Run skill: a flat 185,161,107, lighter 213,190,133 at the outside;
+    /// the icon's own flame is more saturated, S 180+) between 0.68 and 0.85 of <paramref name="icon"/>'s
+    /// width out from its centre - the ring sits at radius 23-27 round the 33 px template of that crop.
+    /// The user's active icon: 0.5 (the icon covers parts of the ring). Under a modal dialog the whole
+    /// screen is dimmed (a 1920x1080 frame: ring V 66-86, the icon's flame 102 instead of 255), so the
+    /// brightness floor follows the brightest pixel of the icon (150 of 255). 0 when the ring would
+    /// leave the frame.
+    /// </summary>
+    public double RingFraction(Mat frame, PixelRect icon)
+    {
+        double cx = icon.X + icon.Width / 2.0;
+        double cy = icon.Y + icon.Height / 2.0;
+        double rMin = icon.Width * 0.68;
+        double rMax = icon.Width * 0.85;
+        int margin = (int)Math.Ceiling(rMax) + 1;
+        var roi = new PixelRect((int)cx - margin, (int)cy - margin, margin * 2 + 1, margin * 2 + 1);
+        if (roi.X < 0 || roi.Y < 0 || roi.Right > frame.Width || roi.Bottom > frame.Height || rMin < 2)
+            return 0;
+
+        using var crop = new Mat(frame, new Rect(roi.X, roi.Y, roi.Width, roi.Height));
+        using var bgr = new Mat();
+        if (crop.Channels() == 4)
+            Cv2.CvtColor(crop, bgr, ColorConversionCodes.BGRA2BGR);
+        else
+            crop.CopyTo(bgr);
+        using var hsv = new Mat();
+        Cv2.CvtColor(bgr, hsv, ColorConversionCodes.BGR2HSV);
+
+        var iconRect = new Rect(icon.X - roi.X, icon.Y - roi.Y, icon.Width, icon.Height);
+        using var iconHsv = new Mat(hsv, iconRect);
+        using var value = iconHsv.ExtractChannel(2);
+        Cv2.MinMaxLoc(value, out _, out double maxValue);
+        double minValue = Math.Max(40, 150 * maxValue / 255);
+
+        using var mask = new Mat();
+        Cv2.InRange(hsv, new Scalar(15, 60, minValue), new Scalar(30, 150, 240), mask);
+
+        const int directions = 36;
+        int hits = 0;
+        for (int i = 0; i < directions; i++)
+        {
+            double angle = i * 2 * Math.PI / directions;
+            bool hit = false;
+            for (double r = rMin; r <= rMax && !hit; r += 1.0)
+            {
+                int x = (int)Math.Round(cx + r * Math.Cos(angle)) - roi.X;
+                int y = (int)Math.Round(cy + r * Math.Sin(angle)) - roi.Y;
+                hit = x >= 0 && y >= 0 && x < mask.Width && y < mask.Height && mask.At<byte>(y, x) != 0;
+            }
+
+            if (hit)
+                hits++;
+        }
+
+        return hits / (double)directions;
+    }
+
+    /// <summary>
     /// The magenta ring the game draws on the floor under the selected monster (user crop:
     /// H 143-150, S 95-145, V 195-255). Searched in the game world only - the HUD has a few
     /// magenta pixels in fixed places (hotbar, buff icons). On 267 saved frames every hit of
