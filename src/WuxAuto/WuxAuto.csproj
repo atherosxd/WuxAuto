@@ -12,6 +12,7 @@
     <PlatformTarget>x64</PlatformTarget>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <ApplicationManifest>app.manifest</ApplicationManifest>
+    <ApplicationIcon>WuxAuto.ico</ApplicationIcon>
     <AssemblyName>WuxAuto</AssemblyName>
     <RootNamespace>WuxAuto</RootNamespace>
     <Version>0.1.0</Version>
@@ -26,6 +27,11 @@
     <PackageReference Include="OpenCvSharp4.runtime.win" Version="4.13.0.20260627" />
     <PackageReference Include="Vortice.Direct3D11" Version="3.8.3" />
     <PackageReference Include="Vortice.DXGI" Version="3.8.3" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Window icon (the exe icon comes from ApplicationIcon). Built by branding\make_icon.py. -->
+    <Resource Include="WuxAuto.ico" />
   </ItemGroup>
 
   <ItemGroup>

@@ -139,6 +139,8 @@ src/WuxAuto
   ViewModels/, MainWindow.*   WPF UI
 tests/WuxAuto.SelfTest      offline probes (see above)
 tests/WuxAuto.UiShot        renders the window to a PNG
+branding/                   wuxen2-source.png + make_icon.py -> WuxAuto-logo.png (README) and
+                            src/WuxAuto/WuxAuto.ico (exe + window icon; "AUTO" drawn over "ONLINE")
 README.md                   user-facing documentation (kept up to date - read it too)
 ```
 

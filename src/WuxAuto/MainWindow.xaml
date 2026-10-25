@@ -4,6 +4,7 @@
         xmlns:vm="clr-namespace:WuxAuto.ViewModels"
         xmlns:core="clr-namespace:WuxAuto.Core"
         Title="WuxAuto - Wuxen2 pilot"
+        Icon="WuxAuto.ico"
         Height="880" Width="1380"
         MinHeight="500" MinWidth="760"
         Background="{StaticResource Bg}"

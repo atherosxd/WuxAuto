@@ -1,5 +1,7 @@
 # WuxAuto
 
+<img src="branding/WuxAuto-logo.png" alt="WuxAuto" width="160" align="right" />
+
 A small WPF pilot for the game window `Wuxen2.exe` (TwelveSky2 / Unity port). It captures the
 game with the Desktop Duplication API, finds UI elements with OpenCV template matching and the
 built-in Windows OCR engine, and then drives the **teleport-to-Labyrinth** sequence with input
