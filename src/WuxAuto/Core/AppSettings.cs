@@ -418,6 +418,24 @@ public sealed class SequenceSettings
     public string CancelDialogText { get; set; } = "Bohai";
 
     /// <summary>
+    /// Auto-confirm (user, 2026-10-25, for selling items): while the game is bound and the pilot is
+    /// not running, a Ctrl + right click on the game starts watching every frame for the game's confirm
+    /// dialog ("Fist Scroll Box Confirm to use?" with CANCEL / OK) and its <see cref="AutoConfirmButton"/>
+    /// is clicked the moment it shows (one frame + OCR, ~0.2 s). The watch lasts 3 s per click
+    /// (the dialog is up long before that). A plain right click leaves the dialog to the player. Check box "Auto confirm (Ctrl + right click)".
+    /// </summary>
+    public bool AutoConfirmDialogs { get; set; } = true;
+
+    /// <summary>The word that marks the dialog's message line (one letter of OCR noise allowed).</summary>
+    public string AutoConfirmText { get; set; } = "Confirm";
+
+    /// <summary>
+    /// The button to click: a line reading exactly this under the message, else the lowest gold
+    /// button under it (OK and USE ALL are gold, CANCEL is dark).
+    /// </summary>
+    public string AutoConfirmButton { get; set; } = "OK";
+
+    /// <summary>
     /// On Start in town: Settings (Escape) -> VISUAL -> "Font size" is checked against
     /// <see cref="FontSizePercent"/> .. <see cref="FontSizeMaxPercent"/> (user: 110 - 120 % read well).
     /// Inside the range it is left alone; outside it is moved to the nearer end with the row's

@@ -31,6 +31,9 @@ public sealed record CompassReading(double AngleFromNorth, double Score, PixelRe
 
 public sealed record OcrWord(string Text, PixelRect Bounds, string LineText, PixelRect LineBounds);
 
+/// <summary>A confirm dialog: its message line and the button to click (<c>How</c>: "read" or "gold button").</summary>
+public sealed record ConfirmDialog(string Message, PixelRect MessageBounds, PixelRect Button, string How);
+
 /// <summary>
 /// A Settings window row: label, value box, value text and number (numeric rows), and the chevrons
 /// beside the value.
