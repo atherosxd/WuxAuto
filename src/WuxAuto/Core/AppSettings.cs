@@ -775,9 +775,12 @@ public sealed class DungeonSettings
     /// <summary>
     /// Once the boss is selected (magenta ring under it + its name, or a hit), press the skill key
     /// this many times before turning the autohunt on (user: autohunt alone did not attack a
-    /// selected boss). 0 = autohunt straight away.
+    /// selected boss; 2026-10-26: at least 15). 0 = autohunt straight away.
     /// </summary>
-    public int ManualAttacks { get; set; } = 10;
+    public int ManualAttacks { get; set; } = 15;
+
+    /// <summary>At least this long between two skill presses (user, 2026-10-26: 300 ms or more).</summary>
+    public int ManualAttackIntervalMs { get; set; } = 300;
 
     /// <summary>After the last manual press: wait this long, then look for "Attack succeeded" (user: 500 ms).</summary>
     public int ManualAttackWaitMs { get; set; } = 500;

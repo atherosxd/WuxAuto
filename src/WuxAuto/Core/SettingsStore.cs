@@ -28,7 +28,7 @@ public static class AppPaths
 public static class SettingsStore
 {
     /// <summary>Bump when an existing settings.json must be migrated (see <see cref="Migrate"/>).</summary>
-    private const int CurrentVersion = 19;
+    private const int CurrentVersion = 20;
 
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
@@ -152,6 +152,10 @@ public static class SettingsStore
                 s.Lod.LootAfterMissingMs = 2000;
         }
 
+        // v20: at least 15 skill presses on the stage 5 boss before the autohunt (user, 2026-10-26).
+        if (s.Version < 20 && s.Dungeon is { ManualAttacks: > 0 and < 15 })
+            s.Dungeon.ManualAttacks = 15;
+
         s.Version = CurrentVersion;
         return true;
     }
@@ -237,6 +241,7 @@ public static class SettingsStore
         s.Sequence.MaxRestarts = Math.Clamp(s.Sequence.MaxRestarts, 1, 100);
         s.Sequence.LabyKeyWaitSeconds = Math.Clamp(s.Sequence.LabyKeyWaitSeconds, 0, 3600);
         s.Dungeon.ManualAttacks = Math.Clamp(s.Dungeon.ManualAttacks, 0, 100);
+        s.Dungeon.ManualAttackIntervalMs = Math.Clamp(s.Dungeon.ManualAttackIntervalMs, 100, 5000);
         s.Dungeon.ManualAttackWaitMs = Math.Clamp(s.Dungeon.ManualAttackWaitMs, 0, 10000);
         s.Lod.LootAfterMissingMs = Math.Clamp(s.Lod.LootAfterMissingMs, 1000, 120000);
         s.Lod.StopAttackPresses = Math.Clamp(s.Lod.StopAttackPresses, 0, 20);
