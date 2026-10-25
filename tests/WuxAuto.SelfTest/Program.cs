@@ -68,6 +68,10 @@ int runSkillIndex = Array.IndexOf(args, "--runskill");
 if (runSkillIndex >= 0 && runSkillIndex + 1 < args.Length)
     return FrameProbe.RunSkill(args[runSkillIndex + 1]);
 
+int confirmIndex = Array.IndexOf(args, "--confirm");
+if (confirmIndex >= 0 && confirmIndex + 1 < args.Length)
+    return await FrameProbe.ConfirmAsync(args[confirmIndex + 1]);
+
 int shuraIndex = Array.IndexOf(args, "--shura");
 if (shuraIndex >= 0 && shuraIndex + 1 < args.Length)
     return FrameProbe.Shura(args[shuraIndex + 1]);

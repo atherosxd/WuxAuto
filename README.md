@@ -164,6 +164,17 @@ only runs while the minimap title says **The Labyrinth**; the title is read ever
 (e.g. Bohai Outpost) → snapshot `wrong_zone` and the next run. If the **Bohai Outpost** dialog shows
 (`Sequence ▸ CancelDialogText`, default `Bohai`), its `Cancel` button is clicked.
 
+### Auto confirm (selling items)
+
+While the game is bound and the pilot is **not** running, **Ctrl + right click** an item: the
+game's confirm dialog (`... Confirm to use?` / `... Confirm to sell?` over CANCEL / OK) is read on
+every frame and its **OK** is clicked the moment it shows (about 0.2 s). A plain right click leaves
+the dialog to you. The watch lasts 3 s per Ctrl + right click, so a selling spree with Ctrl held
+just keeps going. The check box "Auto confirm (Ctrl + right click)" turns it off; `Sequence ▸
+AutoConfirmText` (`Confirm`) is the word that marks the dialog and `AutoConfirmButton` (`OK`) the
+button - read as text, or found as the lowest gold button under the message (OK and USE ALL are
+gold, CANCEL is dark). The first dialogs of each app start are saved as `autoconfirm` snapshots.
+
 ### Input safety
 
 By default (`Input ▸ Mode = ForegroundSendInput`, `Only while game is focused`) the pilot sends
@@ -188,6 +199,7 @@ but it also only ever talks to the bound window.
 | `Sequence ▸ TabTargetDefault` | On (default): on Start in town the game's Settings ▸ VISUAL ▸ TAB target is set to `Default` and saved. Off = leave it alone. |
 | `Lod ▸ ShuraKey` ("Shura key (LOD)") | Auto LOD stops the attack with **Shura** before a mid-fight buff and before the walk up to the boss: the `shura.png` icon is looked for on the skill bar (`Regions ▸ Hotbar`, bottom 15 %) and clicked `ShuraPresses` (3) times, `ShuraEveryMs` (200) apart. Not found → this key, the same way (default `E`, the slot Shura is in); empty → `StopAttackKey` (Space) × 15 (buff) / 3 (walk) as before. The same icon in two slots → the leftmost. |
 | `Sequence ▸ AutohuntOffInTown` | On (default): in town, before every teleport, the autohunt key is tapped and the combat log read (`AutohuntStartedText` / `AutohuntEndedText`, "Auto hunt started" / "Auto hunt ended"); "started" = it was off, so it is tapped again. Off = never touch it in town. |
+| `Sequence ▸ AutoConfirmDialogs` ("Auto confirm (Ctrl + right click)") / `AutoConfirmText` / `AutoConfirmButton` | On (default): while the game is bound and the pilot is not running, a Ctrl + right click on the game starts a 3 s watch for a dialog line containing `AutoConfirmText` (`Confirm`); its `AutoConfirmButton` (`OK`: the line reading exactly that under the message, else the lowest gold button under it) is clicked as soon as it shows. Off = never. |
 | `Sequence ▸ RunSkillCheck` ("Run skill on in town") / `RunSkillKey` ("Run key") | On (default): in town, before every teleport, the Run skill icon (`runskill.png`, `RunSkillTemplate`) is looked for on the skill bar (`Regions ▸ Hotbar`) at `RunSkillMatchScore` (0.88) or better and the gold ring round it measured (`RunSkillRingMin`: 0.25 of the ring = on). No ring → the icon is clicked, up to 3 times. Icon not found → `RunSkillKey` (default `W`) once per Start. Off = never look. |
 
 ### Regions

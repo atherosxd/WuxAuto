@@ -93,6 +93,9 @@ dotnet run --project .\tests\WuxAuto.SelfTest -- --shura "$env:LOCALAPPDATA\WuxA
 
 # Run skill icon + its gold ring (on/off) on the skill bar for every PNG; crops -> %TEMP%\wuxauto-runskill
 dotnet run --project .\tests\WuxAuto.SelfTest -- --runskill "$env:LOCALAPPDATA\WuxAuto\debug"
+
+# auto-confirm dialog (message line + OK button) for every PNG (absolute path; tests\frames holds the user's crop)
+dotnet run --project .\tests\WuxAuto.SelfTest -- --confirm "$env:LOCALAPPDATA\WuxAuto\debug"
 ```
 
 `--do` frames land in `%TEMP%\wuxauto-step<N>-<verb>.png`. Check the frame before every click: an
@@ -574,6 +577,28 @@ page-2 rule (§4.5) stays as a backup.
 `Fail()` no longer stops the pilot: it saves the snapshot as before, waits `RestartDelayMs` (5 s) and
 starts over from `Focus` (zone check → teleport or resume). At most `MaxRestarts` (5) within 30
 minutes, then it stops as before. Stop / F10 / a closed game window still stop for good.
+
+### 4.7 Auto confirm (user, 2026-10-25, "to make it faster to sell")
+
+`Automation/AutoConfirm.cs`, ticked by `WuxEngine.VisionLoopAsync` on every frame **while the pilot is
+not running** (the pilot handles its own dialogs; its Ctrl+clicks would arm it). `Sequence.AutoConfirmDialogs`
+(on, check box "Auto confirm (Ctrl + right click)"), `AutoConfirmText` "Confirm", `AutoConfirmButton` "OK".
+The player's gesture is polled per frame with `GetAsyncKeyState` (Ctrl down + right button edge, or the
+"pressed since last call" bit for a click shorter than a frame) while the game is in front and the cursor
+is over its client → watch for 3 s (extended 1.5 s after every confirmed dialog so a spree with Ctrl held
+keeps going). While watching: `ScreenAnalyzer.FindConfirmDialogAsync` OCRs the whole frame at ×1 (37–575 ms,
+avg 157 on the saved frames) → the widest line containing "confirm" (one letter off per word allowed) →
+the button: a line reading exactly "OK"/"0K" under it, else `FindGoldButtons` sized in text heights
+(≥ 3 h wide, 1.2–5 h tall; the dialog keeps its pixel size at every resolution) under the message
+(8 h down, ±12 h sideways), lowest row, right-most (OK bottom right; USE ALL above it; CANCEL is dark).
+One click per 400 ms; a frame without the dialog resets the per-dialog count (a selling spree's dialogs
+all pop up at the same spot); 3 clicks on one dialog that stays → warning + `autoconfirm_stuck`. Snapshots `autoconfirm` (≤ 3 per app start). Dry run only logs. Checked on the 342
+saved debug frames: 5 hits, all the real `[Bohai Outpost (Adept)] Confirm to move?` WAR dialog (OK never
+read as text, always the gold button, click dead centre at 1024, 1273, 1920 and 2048 wide), nothing else.
+`tests/frames/confirm_use_dialog.png` is the user's crop of the USE dialog ("Fist Scroll Box Confirm to
+use?", USE ALL (x100) / CANCEL / OK). **The sell dialog itself and the live click are not yet seen.**
+Note: while the pilot is idle the Bohai dialog is not cancelled; a Ctrl + right click within 3 s of it
+would confirm the move instead.
 
 ## 6. Settings and persistence — read this before changing defaults
 

@@ -109,6 +109,30 @@ internal static class FrameProbe
         return 0;
     }
 
+    /// <summary>--confirm &lt;dir&gt;: the auto-confirm dialog (message line + OK) for every PNG, as the app finds it.</summary>
+    public static async Task<int> ConfirmAsync(string dir)
+    {
+        var settings = SettingsStore.Load();
+        using var analyzer = new ScreenAnalyzer(settings);
+        foreach (string path in Directory.GetFiles(dir, "*.png").Where(p => !p.EndsWith(".scan.png") && !p.EndsWith(".crop.png")).Order())
+        {
+            using var source = Cv2.ImRead(path, ImreadModes.Color);
+            if (source.Empty())
+                continue;
+            using var frame = new Mat();
+            Cv2.CvtColor(source, frame, ColorConversionCodes.BGR2BGRA);
+
+            var trace = new List<string>();
+            var watch = System.Diagnostics.Stopwatch.StartNew();
+            var dialog = await analyzer.FindConfirmDialogAsync(frame, settings.Sequence.AutoConfirmText, settings.Sequence.AutoConfirmButton, trace);
+            Console.WriteLine($"{Path.GetFileName(path)} {frame.Width}x{frame.Height} | {(dialog == null ? "no confirm dialog" : $"'{dialog.Message}' -> click {dialog.Button.CenterX},{dialog.Button.CenterY} ({dialog.How})")} ({watch.ElapsedMilliseconds} ms)");
+            foreach (string line in trace)
+                Console.WriteLine($"    {line}");
+        }
+
+        return 0;
+    }
+
     /// <summary>
     /// Fast check over a folder of saved frames: the LOD Shura icon on the skill bar (the stop-attack
     /// click), as the pilot looks for it. Run with: --shura &lt;dir&gt;

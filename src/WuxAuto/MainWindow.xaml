@@ -373,6 +373,8 @@
                                           ToolTip="In town, before every teleport: tap the autohunt key and read the combat log ('Auto hunt started' / 'ended'); turn it off if it was on." />
                                 <CheckBox Content="Run skill on in town" IsChecked="{Binding Settings.Sequence.RunSkillCheck}"
                                           ToolTip="In town, before every teleport: find the Run skill icon on the skill bar and click it when it has no ring (= not active); icon not found -> the Run key once per Start." />
+                                <CheckBox Content="Auto confirm (Ctrl + right click)" IsChecked="{Binding Settings.Sequence.AutoConfirmDialogs}"
+                                          ToolTip="While the game is bound and the pilot is not running: after a Ctrl + right click on the game (selling / using items) the '... Confirm to ...?' dialog's OK is clicked the moment it shows (about 0.2 s). A plain right click leaves the dialog alone." />
                             </WrapPanel>
                         </Grid>
 

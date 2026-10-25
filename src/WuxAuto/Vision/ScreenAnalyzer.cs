@@ -290,11 +290,83 @@ public sealed class ScreenAnalyzer : IDisposable
 
 
     /// <summary>
+    /// The game's confirm dialog ("Fist Scroll Box Confirm to use?" over CANCEL / OK; the sell
+    /// dialog looks the same): a line containing <paramref name="text"/> (one letter of OCR noise
+    /// allowed per word) and, under it, the button. Read first: a line that is exactly
+    /// <paramref name="button"/> ("0K" counts for OK) within 8 text heights below the message and
+    /// 12 to either side. Else the lowest row of gold buttons there, its right-most one (OK and
+    /// USE ALL are gold, CANCEL is dark; OK sits bottom right). Whole-frame OCR at x1, 40-600 ms.
+    /// </summary>
+    public async Task<ConfirmDialog?> FindConfirmDialogAsync(Mat frame, string text, string button, List<string>? trace = null)
+    {
+        string wanted = TextMatcher.Normalize(text);
+        string wantedButton = TextMatcher.Normalize(button);
+        if (wanted.Length < 3 || wantedButton.Length == 0)
+            return null;
+
+        var full = new PixelRect(0, 0, frame.Width, frame.Height);
+        // x1: the dialog text is large and this runs every frame while armed (speed, user).
+        var words = await Ocr.RecognizeAsync(frame, full, 1.0);
+        var lines = words.GroupBy(w => w.LineBounds).Select(g => (Bounds: g.Key, Text: g.First().LineText, Words: g.ToList())).ToList();
+        trace?.Add($"{lines.Count} line(s): {string.Join(" | ", lines.Select(l => l.Text))}");
+
+        bool HasWanted(IEnumerable<OcrWord> lineWords, string lineText)
+            => TextMatcher.Normalize(lineText).Contains(wanted, StringComparison.Ordinal)
+               || lineWords.Any(w => TextMatcher.Normalize(w.Text) is { Length: >= 5 } word
+                                     && Math.Abs(word.Length - wanted.Length) <= 1
+                                     && TextMatcher.Levenshtein(word, wanted) <= 1);
+
+        // The widest matching line: the message, not a stray word somewhere in the chat.
+        var message = lines.Where(l => HasWanted(l.Words, l.Text)).OrderByDescending(l => l.Bounds.Width).FirstOrDefault();
+        if (message.Text == null)
+            return null;
+
+        // Sizes in text heights: the dialog keeps its pixel size at every resolution (user's crop:
+        // text 17 px, OK 180x45 some 105 px under the message, 98 px right of its centre).
+        int h = Math.Max(8, message.Bounds.Height);
+        int reachY = 8 * h;
+        int reachX = 12 * h;
+        bool Under(PixelRect box)
+            => box.Y > message.Bounds.Bottom && box.CenterY - message.Bounds.Bottom <= reachY
+               && Math.Abs(box.CenterX - message.Bounds.CenterX) <= reachX;
+
+        bool IsButtonText(string value)
+        {
+            string normalized = TextMatcher.Normalize(value);
+            return normalized == wantedButton || (wantedButton == "ok" && normalized == "0k");
+        }
+
+        // A line that is only the button word (never the word inside a longer message).
+        var read = lines.Where(l => IsButtonText(l.Text) && Under(l.Bounds))
+            .OrderBy(l => l.Bounds.Y)
+            .Select(l => (PixelRect?)l.Bounds)
+            .FirstOrDefault();
+        if (read is { } readBox)
+        {
+            trace?.Add($"message '{message.Text}' {message.Bounds}; '{button}' read at {readBox}");
+            return new ConfirmDialog(message.Text, message.Bounds, readBox, "read");
+        }
+
+        var gold = FindGoldButtons(frame, minWidth: 3 * h, minHeight: (int)(1.2 * h), maxHeight: 5 * h).Where(Under).ToList();
+        trace?.Add($"message '{message.Text}' {message.Bounds}; '{button}' not read, {gold.Count} gold button(s) under it: {string.Join(", ", gold)}");
+        if (gold.Count == 0)
+            return null;
+
+        int lowest = gold.Max(b => b.CenterY);
+        var bottomRow = gold.Where(b => lowest - b.CenterY <= b.Height / 2).OrderByDescending(b => b.CenterX).First();
+        return new ConfirmDialog(message.Text, message.Bounds, bottomRow, "gold button");
+    }
+
+    /// <summary>
     /// Gold buttons of the login screens (LOG IN, CONNECT, OK, ...): their dark text on gold is
     /// often unreadable for OCR, but the filled gold rectangle is easy to find by colour. Thin gold
     /// frame lines are dropped by size, shape and fill ratio. Largest first.
     /// </summary>
     public IReadOnlyList<PixelRect> FindGoldButtons(Mat frame)
+        => FindGoldButtons(frame, (int)(frame.Width * 0.06), (int)(frame.Height * 0.025), (int)(frame.Height * 0.12));
+
+    /// <summary>Gold buttons with explicit size limits (pixels) - for dialogs whose size does not follow the client's.</summary>
+    public IReadOnlyList<PixelRect> FindGoldButtons(Mat frame, int minWidth, int minHeight, int maxHeight)
     {
         using var bgr = new Mat();
         Cv2.CvtColor(frame, bgr, ColorConversionCodes.BGRA2BGR);
@@ -314,7 +386,7 @@ public sealed class ScreenAnalyzer : IDisposable
             var box = Cv2.BoundingRect(contour);
             double aspect = box.Width / (double)Math.Max(1, box.Height);
             double fill = Cv2.ContourArea(contour) / Math.Max(1.0, box.Width * box.Height);
-            if (box.Width < frame.Width * 0.06 || box.Height < frame.Height * 0.025 || box.Height > frame.Height * 0.12)
+            if (box.Width < minWidth || box.Height < minHeight || box.Height > maxHeight)
                 continue;
             if (aspect < 1.8 || aspect > 12 || fill < 0.5)
                 continue;

@@ -28,6 +28,7 @@ public sealed class WuxEngine : IAsyncDisposable
     private readonly ScreenAnalyzer _analyzer;
     private readonly WindowInput _input;
     private readonly AutomationPilot _pilot;
+    private readonly AutoConfirm _autoConfirm;
 
     private CancellationTokenSource? _loopCts;
     private Task? _loopTask;
@@ -49,6 +50,8 @@ public sealed class WuxEngine : IAsyncDisposable
         _input = new WindowInput(settings);
         _analyzer = new ScreenAnalyzer(settings);
         _pilot = new AutomationPilot(settings, _analyzer, _input);
+        _autoConfirm = new AutoConfirm(settings, _analyzer, _input);
+        _autoConfirm.Log += (level, message) => EmitLog(level, message);
 
         _input.Log += (level, message) => EmitLog(level, message);
         _pilot.Log += (level, message) => EmitLog(level, message);
@@ -115,6 +118,7 @@ public sealed class WuxEngine : IAsyncDisposable
             return;
 
         _pilot.Stop("unbound");
+        _autoConfirm.Reset();
         _loopCts?.Cancel();
         _capture.Stop();
 
@@ -250,6 +254,8 @@ public sealed class WuxEngine : IAsyncDisposable
 
                     if (_pilot.IsRunning)
                         await _pilot.TickAsync(mat, frame, token);
+                    else
+                        await _autoConfirm.TickAsync(mat);
 
                     PublishPreview(mat, frame);
                 }
@@ -343,9 +349,11 @@ public sealed class WuxEngine : IAsyncDisposable
                 scale = 1.0;
             }
 
-            var overlays = _pilot.IsRunning ? _pilot.Overlays : _scanOverlays;
+            var overlays = _pilot.IsRunning ? _pilot.Overlays
+                : _autoConfirm.Overlays.Count > 0 ? _scanOverlays.Concat(_autoConfirm.Overlays).ToList()
+                : _scanOverlays;
             (int X, int Y)? click = null;
-            if (_pilot.LastClick is { } last && now - last.Ticks < 2000)
+            if ((_pilot.IsRunning ? _pilot.LastClick : _autoConfirm.LastClick) is { } last && now - last.Ticks < 2000)
                 click = (last.X, last.Y);
 
             OverlayRenderer.Draw(small, overlays, click, scale);
