@@ -342,7 +342,7 @@
                             <TextBox Grid.Row="2" Grid.Column="3" Style="{StaticResource WideField}" Text="{Binding Settings.Sequence.LabyKeyWaitSeconds}" />
 
                             <TextBlock Grid.Row="3" Grid.Column="0" Text="Manual attacks" Style="{StaticResource FieldLabel}"
-                                       ToolTip="Laby: once the boss is selected (magenta ring + name), press the skill key this many times before turning the autohunt on. 0 = autohunt straight away." />
+                                       ToolTip="Laby, stage 5: once the boss is selected, press the skill key at least this many times (300 ms or more apart, see Attack gap); the autohunt only goes on once the magenta selection ring shows under the boss. 0 = autohunt straight away." />
                             <TextBox Grid.Row="3" Grid.Column="1" Style="{StaticResource WideField}" Text="{Binding Settings.Dungeon.ManualAttacks}" />
                             <TextBlock Grid.Row="3" Grid.Column="2" Text="Shura key (LOD)" Style="{StaticResource FieldLabel}"
                                        ToolTip="Auto LOD: Shura stops the attack before a mid-fight buff and before the walk up to the boss. Its icon (shura.png) is clicked on the skill bar; when it is not found this key is tapped instead (the slot you put Shura in, default E). Empty = Space when the icon is not found." />
@@ -351,6 +351,9 @@
                             <TextBlock Grid.Row="4" Grid.Column="0" Text="Run key" Style="{StaticResource FieldLabel}"
                                        ToolTip="In town, before every teleport: the Run skill must be on (a gold ring round its icon). Its icon (runskill.png) is found on the skill bar and clicked when the ring is missing; when the icon is not found this key is tapped once per Start instead (the slot you put Run in, default W). Empty = only the icon." />
                             <TextBox Grid.Row="4" Grid.Column="1" Style="{StaticResource WideField}" Text="{Binding Settings.Sequence.RunSkillKey, UpdateSourceTrigger=PropertyChanged}" />
+                            <TextBlock Grid.Row="4" Grid.Column="2" Text="Attack gap (ms)" Style="{StaticResource FieldLabel}"
+                                       ToolTip="Laby, stage 5: at least this long between two skill presses on the boss (default 300 ms)." />
+                            <TextBox Grid.Row="4" Grid.Column="3" Style="{StaticResource WideField}" Text="{Binding Settings.Dungeon.ManualAttackIntervalMs}" />
 
                             <WrapPanel Grid.Row="5" Grid.Column="0" Grid.ColumnSpan="4">
                                 <CheckBox Content="Tab + skill at the last waypoint" IsChecked="{Binding Settings.Dungeon.TabAtWaypoint}"
