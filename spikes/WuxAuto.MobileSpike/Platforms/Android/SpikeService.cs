@@ -11,6 +11,7 @@ using Android.Views.Accessibility;
 using System.Diagnostics;
 using APath = Android.Graphics.Path;
 using Java.Util.Concurrent;
+using Android.Gms.Extensions;
 
 namespace WuxAuto.MobileSpike;
 
@@ -142,8 +143,110 @@ public class SpikeService : AccessibilityService
                 return GestureAsync("TAP", new[] { Stroke(tap, 0, 100) });
             }
             case "MULTIC": return MultiContinuedAsync(i, W, H);
+            case "OCR": return OcrAsync(I("x"), I("y"), I("w"), I("h"), I("scale", 1));
+            case "MATCH": return Task.Run(() => Match(I("x"), I("y"), I("w"), I("h")));
         }
         return Task.CompletedTask;
+    }
+
+    /// <summary>Copy of <see cref="LastShot"/> (Offer recycles the stored one on replace), or null with a log line when there is no usable game frame.</summary>
+    static Bitmap? CopyLastShot(string who)
+    {
+        for (var attempt = 0; attempt < 3; attempt++)
+        {
+            var s = LastShot;
+            if (s == null || LastShotLit < BlackLit)
+            {
+                Log.Warn(Tag, $"{who}: no usable LastShot (null={s == null} lit={LastShotLit:F3}); run SHOT/SHOTMP first");
+                return null;
+            }
+            try { return s.Copy(Bitmap.Config.Argb8888!, false); }
+            catch (Exception ex) { Log.Warn(Tag, $"{who}: copy raced a replace ({ex.Message}), retrying"); }
+        }
+        return null;
+    }
+
+    static readonly System.Text.RegularExpressions.Regex CoordRx = new(
+        @"(\d{3,6})(?:\s+,\s*|\s*,\s+)(\d{3,6})|(\d{4,6})\s*\.\s*(\d{4,6})");
+
+    /// <summary>OCR of the last shot; with w,h > 0 only the box x,y,w,h, upscaled by <paramref name="scale"/> (boxes are then relative to the crop).</summary>
+    async Task OcrAsync(int cx, int cy, int cw, int ch, int scale)
+    {
+        using var full = CopyLastShot("OCR");
+        if (full == null) return;
+        var bmp = full;
+        if (cw > 0 && ch > 0)
+        {
+            cx = Math.Min(Math.Max(cx, 0), full.Width - 1); cy = Math.Min(Math.Max(cy, 0), full.Height - 1);
+            cw = Math.Min(cw, full.Width - cx); ch = Math.Min(ch, full.Height - cy);
+            scale = Math.Min(Math.Max(scale, 1), 4);
+            using var part = Bitmap.CreateBitmap(full, cx, cy, cw, ch);
+            bmp = Bitmap.CreateScaledBitmap(part, cw * scale, ch * scale, true)!;
+            Log.Info(Tag, $"ocr crop {cx},{cy},{cw},{ch} x{scale}");
+        }
+        var sw = Stopwatch.StartNew();
+        try
+        {
+            var image = Xamarin.Google.MLKit.Vision.Common.InputImage.FromBitmap(bmp, 0)!;
+            var client = Xamarin.Google.MLKit.Vision.Text.TextRecognition.GetClient(
+                Xamarin.Google.MLKit.Vision.Text.Latin.TextRecognizerOptions.DefaultOptions!)!;
+            var result = (Xamarin.Google.MLKit.Vision.Text.Text?)await client.Process(image)!.AsAsync<Java.Lang.Object>();
+            sw.Stop();
+            bool title = false, coords = false;
+            foreach (var block in result!.TextBlocks!)
+                foreach (var line in block.Lines!)
+                {
+                    var r = line.BoundingBox;
+                    var text = line.Text ?? "";
+                    Log.Info(Tag, $"ocr \"{text}\" {r?.Left},{r?.Top},{r?.Width()},{r?.Height()}");
+                    if (text.Contains("Piercing", StringComparison.OrdinalIgnoreCase)) title = true;
+                    if (CoordRx.IsMatch(text)) { coords = true; Log.Info(Tag, $"ocr coordinate line: \"{text}\""); }
+                }
+            Log.Info(Tag, $"ocr ms={sw.ElapsedMilliseconds} frame={bmp.Width}x{bmp.Height} lit={LastShotLit:F3} piercing={title} coords={coords}");
+            client.Close();
+        }
+        catch (Exception ex) { Log.Error(Tag, $"OCR failed: {ex}"); }
+        finally { if (!ReferenceEquals(bmp, full)) bmp.Recycle(); }
+    }
+
+    static bool _emguInit;
+
+    /// <summary>ARGB_8888 bitmap to a gray Emgu Mat.</summary>
+    static Emgu.CV.Mat ToGray(Bitmap b)
+    {
+        int w = b.Width, h = b.Height;
+        // GetPixels fills a managed array (CopyPixelsToBuffer on a wrapped array writes to a Java-side copy).
+        var px = new int[w * h];
+        b.GetPixels(px, 0, w, 0, 0, w, h);
+        var bytes = new byte[px.Length * 4];
+        Buffer.BlockCopy(px, 0, bytes, 0, bytes.Length); // little-endian ARGB ints = B,G,R,A bytes
+        using var bgra = new Emgu.CV.Mat(h, w, Emgu.CV.CvEnum.DepthType.Cv8U, 4);
+        System.Runtime.InteropServices.Marshal.Copy(bytes, 0, bgra.DataPointer, bytes.Length);
+        var gray = new Emgu.CV.Mat();
+        Emgu.CV.CvInvoke.CvtColor(bgra, gray, Emgu.CV.CvEnum.ColorConversion.Bgra2Gray);
+        return gray;
+    }
+
+    static void Match(int x, int y, int w, int h)
+    {
+        using var bmp = CopyLastShot("MATCH");
+        if (bmp == null) return;
+        try
+        {
+            if (!_emguInit) { Emgu.CV.CvInvokeAndroid.Init(); _emguInit = true; }
+            x = Math.Min(Math.Max(x, 0), bmp.Width - 1); y = Math.Min(Math.Max(y, 0), bmp.Height - 1);
+            w = Math.Min(Math.Max(w, 1), bmp.Width - x); h = Math.Min(Math.Max(h, 1), bmp.Height - y);
+            var sw = Stopwatch.StartNew();
+            using var gray = ToGray(bmp);
+            using var templ = new Emgu.CV.Mat(gray, new System.Drawing.Rectangle(x, y, w, h)).Clone();
+            using var res = new Emgu.CV.Mat();
+            Emgu.CV.CvInvoke.MatchTemplate(gray, templ, res, Emgu.CV.CvEnum.TemplateMatchingType.CcoeffNormed);
+            double min = 0, max = 0; System.Drawing.Point minLoc = default, maxLoc = default;
+            Emgu.CV.CvInvoke.MinMaxLoc(res, ref min, ref max, ref minLoc, ref maxLoc);
+            sw.Stop();
+            Log.Info(Tag, $"match score={max:F4} at {maxLoc.X},{maxLoc.Y} ms={sw.ElapsedMilliseconds} box={x},{y},{w},{h}");
+        }
+        catch (Exception ex) { Log.Error(Tag, $"MATCH failed: {ex}"); }
     }
 
     /// <summary>Joystick as a continued stroke: gesture 1 holds it (willContinue), gesture 2 continues it and adds the tap.</summary>
@@ -333,7 +436,7 @@ public class SpikeService : AccessibilityService
 public class SpikeReceiver : BroadcastReceiver
 {
     /// <summary>Action suffixes this receiver listens for. Add new ones here and handle them in <see cref="OnReceive"/>.</summary>
-    public static readonly string[] Actions = { "PING", "SHOT", "SHOTMP", "TAP", "MULTIC", "WALK", "SWIPE", "PINCH", "MULTI" };
+    public static readonly string[] Actions = { "PING", "SHOT", "SHOTMP", "TAP", "MULTIC", "WALK", "SWIPE", "PINCH", "MULTI", "OCR", "MATCH" };
 
     readonly SpikeService _service;
 
