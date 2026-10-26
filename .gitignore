@@ -5,3 +5,4 @@ dist/
 *.user
 *.suo
 .claude/settings.local.json
+spikes/.out/

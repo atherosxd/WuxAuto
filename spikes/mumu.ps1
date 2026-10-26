@@ -3,7 +3,6 @@ $script:Adb = 'C:\Program Files\Netease\MuMuPlayerARM\shell\adb.exe'
 $script:Device = '10.0.2.95:5555'
 $script:Pkg = 'io.github.atherosxd.wuxauto.spike'
 $script:Here = $PSScriptRoot
-$script:Out = 'C:\Users\cliof\AppData\Local\Temp\claude\C--Projects-personal-auto-wux\ce7934d6-9877-4c85-ae76-8e4413b6acc6\scratchpad\mumu'
 
 function Invoke-Adb { & $script:Adb -s $script:Device @args }
 
@@ -33,6 +32,8 @@ function Send-Spike {
 }
 
 function Get-SpikeFiles {
-    New-Item -ItemType Directory -Force $script:Out | Out-Null
-    Invoke-Adb pull "/sdcard/Android/data/$script:Pkg/files/shots/." $script:Out
+    # Default destination is spikes/.out (ignored by version control).
+    param([string]$Dest = (Join-Path $script:Here '.out'))
+    New-Item -ItemType Directory -Force $Dest | Out-Null
+    Invoke-Adb pull "/sdcard/Android/data/$script:Pkg/files/shots/." $Dest
 }
