@@ -88,7 +88,8 @@ public class SpikeService : AccessibilityService
                 float dx = Cl(I("dx"), -10000, 10000), dy = Cl(I("dy"), -10000, 10000);
                 var len = MathF.Sqrt(dx * dx + dy * dy);
                 if (len < 1) { Log.Warn(Tag, "WALK needs dx/dy"); return Task.CompletedTask; }
-                var path = Line(JoyX, JoyY, JoyX + dx / len * JoyR, JoyY + dy / len * JoyR);
+                float jx = I("jx", (int)JoyX), jy = I("jy", (int)JoyY), jr = Cl(I("jr", (int)JoyR), 10, 400);
+                var path = Line(jx, jy, jx + dx / len * jr, jy + dy / len * jr);
                 return GestureAsync("WALK", new[] { Stroke(path, 0, Ms(2000)) });
             }
             case "SWIPE":
@@ -109,10 +110,11 @@ public class SpikeService : AccessibilityService
             case "MULTI":
             {
                 int ms = Ms(2500);
-                var joy = Line(JoyX, JoyY, JoyX, JoyY - JoyR);
-                var tap = new APath(); tap.MoveTo(X("tx"), Y("ty"));
+                float jx = I("jx", (int)JoyX), jy = I("jy", (int)JoyY), jr = Cl(I("jr", (int)JoyR), 10, 400);
+                var joy = Line(jx, jy, jx, jy - jr);
+                var tap = new APath(); tap.MoveTo(X("tx"), Y("ty")); tap.LineTo(X("tx") + 1, Y("ty"));
                 // Joystick held the whole time; the tap lands half-way, in the same gesture.
-                return GestureAsync("MULTI", new[] { Stroke(joy, 0, ms), Stroke(tap, ms / 2, 60) });
+                return GestureAsync("MULTI", new[] { Stroke(joy, 0, ms), Stroke(tap, ms / 2, 100) });
             }
         }
         return Task.CompletedTask;
