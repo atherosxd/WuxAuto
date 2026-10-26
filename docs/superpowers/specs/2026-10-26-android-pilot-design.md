@@ -87,6 +87,7 @@ Anti-goals (failure even if the phone app works)
   a much wider screen than MuMu, so every region and the floating control must hold at both aspect
   ratios. adb to the phone over USB or wireless debugging is to be arranged with the user when M4
   reaches it; the "share debug bundle" button covers the gap until then.
+  *After M0:* MuMu now runs 1920×1080, not 1600×900 (see `docs/superpowers/notes/2026-10-26-m0-gate-results.md`).
 
 ## 4. What exploration found (MuMu, 2026-10-26)
 
@@ -100,6 +101,7 @@ which the desktop pilot captures from the screen **(my call)**. adb:
 `...\MuMuPlayerARM\vms\vm0.gmadoa\setting.json`, `AdbHost`/`AdbPort`). Android 12 (SDK 32),
 arm64-v8a, 900×1600 physical = **1600×900 landscape**, density 240. Game package
 `com.wuxen.wuxen2`, activity `com.wuxen.gxd.GXDPlayerActivity`.
+*After M0:* MuMu now runs 1920×1080 (see `docs/superpowers/notes/2026-10-26-m0-gate-results.md`).
 
 Verified by hand (adb `screencap` / `input`), in Piercing City:
 - **Screenshots are not blocked** (no secure flag): full game frame captured.
@@ -137,8 +139,7 @@ their account: WASD joystick centre 220,682 (radius 0.055 w); J → 128,823; O (
 I → 59,625; C → 83,565; Alt+S → 120,535. Nothing is mapped for Tab, the skills or loot. These are one
 player's slots — the app must **find shortcuts by icon**, not by position.
 
-Frames from the session: `C:\Users\cliof\AppData\Local\Temp\claude\C--Projects-personal-auto-wux\
-ce7934d6-9877-4c85-ae76-8e4413b6acc6\scratchpad\mumu\` (temporary; recapture as needed).
+Frames from the exploration stay in a local scratchpad, not in git; recapture as needed.
 
 ## 5. Architecture
 
@@ -249,10 +250,12 @@ Settings) **(my call, agreed in conversation)**:
   time-based (0.3–2 s), so that should do; **MediaProjection** (up to 30 fps, one consent prompt per
   start) is the fallback if 3 fps proves too slow — decide in M0 **(my call)**. Hardware bitmap →
   software ARGB copy → Emgu `Mat` (BGRA).
+  *After M0:* capture is MediaProjection, with a consent prompt per session; accessibility capture was black on MuMu (to re-check on the Xiaomi). See `docs/superpowers/notes/2026-10-26-m0-gate-results.md`.
 - **Touches:** `dispatchGesture`. **A new gesture cancels the one in flight**, so all touches go
   through one scheduler that merges simultaneous needs (joystick held + a tap) into one multi-stroke
   `GestureDescription`, and uses continued strokes (`willContinue`) to keep the joystick finger down
   across direction changes. Stop / panic cancels everything.
+  *After M0:* touches are serialised. A tap inside a held-joystick gesture is not delivered, so the scheduler ends the joystick step, taps, then resumes (see `docs/superpowers/notes/2026-10-26-m0-gate-results.md`).
 - **Floating control** (user: "like the screen recording"): drawn as an accessibility overlay
   (`TYPE_ACCESSIBILITY_OVERLAY`, no extra "draw over other apps" permission) **(my call)**. Collapsed:
   a small round button, draggable, snaps to the screen edge, colour = state (idle / running / error),
@@ -348,6 +351,7 @@ move is mechanical and goes first so later conflicts stay small **(my call)**.
   gestures or capture, stop and go back to the user with the options (e.g. Shizuku / wireless-debugging
   `input`, which must be re-paired after every reboot) — no fallback is built without their OK
   **(my call)**.
+  *After M0:* gate results and go/no-go recommendation are in `docs/superpowers/notes/2026-10-26-m0-gate-results.md`; the choices (MediaProjection, serialised touches, ML Kit) override the wording above.
 - **M1 — shared core, move only:** create `WuxAuto.Core` and move the pilot, vision, settings and
   engine loop into it with the smallest seams needed to compile without Windows types (OCR, input,
   capture, paths, alerts behind interfaces; desktop implementations are today's classes). Still on

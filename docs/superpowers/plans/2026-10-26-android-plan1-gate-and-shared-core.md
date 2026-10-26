@@ -118,10 +118,10 @@ git commit -m "Spike: MAUI Android app with an Accessibility service for the M0 
 - [ ] **Step 3: Run the checks in town** (MuMu account stopped and in town first, spec §4)
 
 Run, each followed by an adb `screencap` pulled to the scratchpad:
-`Send-Spike SHOT --ei count 20`; `Send-Spike WALK --ei dx 0 --ei dy -100 --ei ms 2500`;
-`Send-Spike SWIPE --ei x1 1100 --ei y1 320 --ei x2 900 --ei y2 320 --ei ms 600`;
-`Send-Spike PINCH --ei cx 800 --ei cy 400 --ei from 300 --ei to 80 --ei ms 600`;
-`Send-Spike MULTI --ei ms 2500 --ei tx 1530 --ei ty 553` (the right-hand AUTO BUFF button).
+`Send-Spike SHOT -Extras '--ei','count','20'`; `Send-Spike WALK -Extras '--ei','dx','0','--ei','dy','-100','--ei','ms','2500'`;
+`Send-Spike SWIPE -Extras '--ei','x1','1100','--ei','y1','320','--ei','x2','900','--ei','y2','320','--ei','ms','600'`;
+`Send-Spike PINCH -Extras '--ei','cx','800','--ei','cy','400','--ei','from','300','--ei','to','80','--ei','ms','600'`;
+`Send-Spike MULTI -Extras '--ei','ms','2500','--ei','tx','1530','--ei','ty','553'` (the right-hand AUTO BUFF button).
 Expected: `fps` ≥ 2.0 with every shot showing the game (not black); minimap coordinates move ≥ 50
 units after `WALK`; the minimap beam turns after `SWIPE`; the view zooms out after `PINCH` (compare the
 character's size); after `MULTI` the coordinates moved **and** a buff icon / "+1" appeared.
@@ -140,7 +140,7 @@ character's size); after `MULTI` the coordinates moved **and** a buff icon / "+1
 - [ ] **Step 2: Implement `MATCH`**
 - [ ] **Step 3: Run**
 
-`Send-Spike SHOT --ei count 1`; `Send-Spike OCR`; `Send-Spike MATCH --ei x 1490 --ei y 50 --ei w 60 --ei h 50` (the minimap map icon).
+`Send-Spike SHOT -Extras '--ei','count','1'`; `Send-Spike OCR`; `Send-Spike MATCH -Extras '--ei','x','1490','--ei','y','50','--ei','w','60','--ei','h','50'` (the minimap map icon).
 Expected: an OCR line containing `Piercing City` and a line matching the desktop's coordinate pattern
 `(\d{3,6})(?:\s+,\s*|\s*,\s+)(\d{3,6})|(\d{4,6})\s*\.\s*(\d{4,6})`; `match score` ≥ 0.99 at 1490,50.
 

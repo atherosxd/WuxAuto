@@ -108,7 +108,7 @@ public class SpikeService : AccessibilityService
                 float dx = Cl(I("dx"), -10000, 10000), dy = Cl(I("dy"), -10000, 10000);
                 var len = MathF.Sqrt(dx * dx + dy * dy);
                 if (len < 1) { Log.Warn(Tag, "WALK needs dx/dy"); return Task.CompletedTask; }
-                float jx = I("jx", (int)JoyX), jy = I("jy", (int)JoyY), jr = Cl(I("jr", (int)JoyR), 10, 400);
+                float jx = Cl(I("jx", (int)JoyX), 0, W - 1), jy = Cl(I("jy", (int)JoyY), 0, H - 1), jr = Cl(I("jr", (int)JoyR), 10, 400);
                 var path = Line(jx, jy, jx + dx / len * jr, jy + dy / len * jr);
                 return GestureAsync("WALK", new[] { Stroke(path, 0, Ms(2000)) });
             }
@@ -130,7 +130,7 @@ public class SpikeService : AccessibilityService
             case "MULTI":
             {
                 int ms = Ms(2500);
-                float jx = I("jx", (int)JoyX), jy = I("jy", (int)JoyY), jr = Cl(I("jr", (int)JoyR), 10, 400);
+                float jx = Cl(I("jx", (int)JoyX), 0, W - 1), jy = Cl(I("jy", (int)JoyY), 0, H - 1), jr = Cl(I("jr", (int)JoyR), 10, 400);
                 float dx = I("dx", 0), dy = I("dy", -100), len = Math.Max(1f, MathF.Sqrt(dx * dx + dy * dy));
                 var joy = Line(jx, jy, jx + dx / len * jr, jy + dy / len * jr);
                 var tap = new APath(); tap.MoveTo(X("tx"), Y("ty")); tap.LineTo(X("tx") + 1, Y("ty"));
@@ -268,7 +268,7 @@ public class SpikeService : AccessibilityService
     {
         int I(string k, int d = 0) => i.GetIntExtra(k, d);
         var ms = Math.Min(Math.Max(I("ms", 2500), 50), 10000);
-        float jx = I("jx", (int)JoyX), jy = I("jy", (int)JoyY), jr = Math.Min(Math.Max(I("jr", (int)JoyR), 10), 400);
+        float jx = Math.Min(Math.Max(I("jx", (int)JoyX), 0), W - 1), jy = Math.Min(Math.Max(I("jy", (int)JoyY), 0), H - 1), jr = Math.Min(Math.Max(I("jr", (int)JoyR), 10), 400);
         float dx = I("dx", 0), dy = I("dy", -100), len = Math.Max(1f, MathF.Sqrt(dx * dx + dy * dy));
         float ex = jx + dx / len * jr, ey = jy + dy / len * jr;
         int tx = Math.Min(Math.Max(I("tx"), 0), W - 1), ty = Math.Min(Math.Max(I("ty"), 0), H - 1);

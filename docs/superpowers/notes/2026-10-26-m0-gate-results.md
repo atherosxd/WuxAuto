@@ -1,14 +1,14 @@
 # M0 gate results (2026-10-26)
 
 M0 asked one question: can an app on the phone capture the game, send touches, read text and match
-pictures? This note holds the measurements and three decisions. The decisions are the controller's
+pictures? This note holds the measurements and three decisions. The decisions are Claude's
 **recommendations**. The user accepts or changes them.
 
 ## Verdict in three lines
 
 - By the plan's rule this is a no-go as written: the accessibility screenshot (`takeScreenshot`) and the one-gesture joystick plus tap both failed.
 - The screen-recording fallback (MediaProjection) passed, and tapping between joystick steps passed (2 of 2 runs).
-- The controller recommends GO with those two changes. The user decides.
+- Claude recommends GO with those two changes. The user decides.
 
 ## Setup
 
@@ -34,8 +34,8 @@ pictures? This note holds the measurements and three decisions. The decisions ar
 | MULTI | One gesture: joystick held 2.5 s plus a tap on WORLD at the half-way point | Joystick moved 285 units. Tap not delivered (WORLD not highlighted). | FAIL | `n_tabs.png`, `n_coords.png` |
 | MULTIC | Continued stroke (`willContinue`) for the joystick plus a tap in the second gesture | Joystick moved 354 units. Tap not delivered. (The continued stroke is a 1 px move, close to a hold.) | FAIL | `q_tabs.png`, `q_coords.png` |
 | OCR title | ML Kit Latin on the full 1920x1080 frame | `[Piercing Cityl` at 1671,65. 353 ms (first call includes model load). | PASS | `t3_ocr_match_run2.txt` |
-| OCR coordinates | Same, full frame, then a x2 crop of the minimap (1560,55,340x70) | Full frame: `10158,13589`. The digits are right but ML Kit drops the spaces around the comma, so the desktop's pattern fails. Crop x2: `10158, 13589` in 78 ms. | PASS (crop only) | `t3_ocr_match_run2.txt` |
-| Serialised touch (walk, tap, walk) | Three separate gestures: WALK 1.5 s, TAP on WORLD (803,876), WALK 1.5 s, then TAP on GENERAL to restore | Run 1: walked, WORLD highlighted, walked again (10158,13589 to 10165,13345). Run 2: same (10165,13345 to 10136,13668). A diagnostic run showed each walk moved on its own (-179, then -144). The tap gesture takes about 102 ms. In the app the pause is estimated at 150-250 ms, not measured without the adb sleeps. | PASS (2 of 2) | `ser1.png`, `ser2.png`, `ser3.png` |
+| OCR coordinates | Same, full frame, then a x2 crop of the minimap (1560,55,340x70) | Full frame: `10158,13589`. The digits are right but ML Kit drops the spaces around the comma, so the desktop's pattern fails on the full frame. Crop x2: `10158, 13589` in 78 ms, which already matches the desktop's existing pattern. | PASS (crop only) | `t3_ocr_match_run2.txt` |
+| Serialised touch (walk, tap, walk) | Three separate gestures: WALK 1.5 s, TAP on WORLD (803,876), WALK 1.5 s, then TAP on GENERAL to restore | Run 1: walked, WORLD highlighted, walked again (10158,13589 to 10165,13345). Run 2: same (10165,13345 to 10136,13668). A diagnostic run showed each walk moved on its own (-179, then -144). The tap gesture takes about 102 ms. That test slept about 1.9 s between walk and tap (adb round trips), so the real gap between a joystick release and the next tap, and back, is **not measured**. A no-sleep re-run (WALK, TAP WORLD, WALK, TAP GENERAL back to back, gaps from logcat) is pending: the character was on the server-select screen when it was tried, so it was not run. Whether a tap right after the joystick release is delivered is therefore unproven; a settle delay may be needed. | PASS (2 of 2) | `ser1.png`, `ser2.png`, `ser3.png` |
 | MATCH | Emgu CV `MatchTemplate` on the device, template cut from the same frame (58x50 at 1790,62) | Score 1.0000 at 1790,62 in about 90 ms. Logged as `selfmatch=path-check`, template std 74.4. | PASS as a path check | log line `match selfmatch=path-check ...` |
 
 Notes on the results:
@@ -60,7 +60,7 @@ Notes on the results:
 
 - Accessibility capture is black on MuMu in most frames, and the CPU-side read is black too, so it is
   not a copy problem in our code. It is also capped near 3 fps by the platform.
-- MediaProjection gives real game frames at about 23 fps.
+- MediaProjection gives real game frames: 13-23 fps measured in short runs (sustained rate not measured); either way far above the ~3 fps of the accessibility route.
 - Cost: the consent dialog appears once per capture session and backgrounds the game, so the app
   must bring the game back to the front (`am start` in the spike) and wait.
 - Before discarding the accessibility route for good, check it again on the user's Xiaomi 17 Pro Max
@@ -72,8 +72,7 @@ Notes on the results:
 **Recommendation: ML Kit. Tesseract is not needed.**
 
 - It read the zone title on the full frame and the coordinates on the minimap crop, both quickly.
-- Plan 2 note: ML Kit drops the spaces around the comma in the coordinates. Use the minimap crop
-  (the desktop also reads a crop) and relax the pattern to `\d{3,6}\s*,\s*\d{3,6}`.
+- Plan 2 note: ML Kit drops the spaces around the comma on the full frame. Read the minimap crop (the desktop also reads a crop): the crop read matches the existing pattern. Any relaxation of the pattern must be phone-only (a platform profile) or pass the parity probe, because that code becomes shared with the desktop.
 
 ## Decision 3: gestures accepted
 
@@ -83,7 +82,7 @@ Notes on the results:
 - The gesture scheduler therefore serialises touches: end the joystick step, tap, resume. This was
   measured: walk, tap, walk worked 2 of 2 times, and each walk moved the character on its own. The
   pilot already walks in discrete steps, so this fits. In LOD, the Tab press during a walk becomes a
-  tap between two steps. The estimated cost is 150-250 ms of paused walking per tap.
+  tap between two steps. The cost per tap is unmeasured: the earlier test slept about 1.9 s between walk and tap, so no gap figure exists. A no-sleep re-run is pending (see the serialised-touch row). If a tap right after the joystick release is not delivered, the scheduler needs a settle delay, which matters for the GO recommendation.
 - Spec section 5.4 assumed "joystick held plus a tap" in one gesture. That assumption is dropped.
 
 ## Go / no-go
@@ -106,9 +105,20 @@ If the user picks no-go, the spec (section 7, M0) names the alternatives: Shizuk
 - A content check on frames. A launcher frame is not black (lit 0.188) and passes a "not black" test.
   The zone title read is the guard.
 - Serialise touches in the gesture scheduler (no joystick plus tap in one gesture).
-- OCR on crops, with the relaxed comma pattern.
+- OCR on crops, using the existing comma pattern (any relaxation phone-only or parity-probed).
 - Positions measured per resolution, never hardcoded. MuMu changed from 1600x900 to 1920x1080
   mid-spike, and the user's phone is 2608x1200.
 - Re-check accessibility capture on the Xiaomi 17 Pro Max before dropping it there.
 - Measure template robustness (shift, scale) with real mobile templates. MATCH here was a self-match.
 - Test the `DUMP` permission lock from an ordinary app (only the adb side was verified).
+- MuMu is Android 12, the Xiaomi is Android 16. From Android 14 a capture token is single-use, consent is per session, and 14 QPR2 adds app-only sharing.
+- The service's `Resources.DisplayMetrics` may report portrait or exclude system bars on a real phone, so use the real display size.
+- Teardown order: release the VirtualDisplay, then close the ImageReader, then stop the projection.
+
+## Side findings for spec section 10
+
+- #2: the combat log shows top-left on the phone ("Attack succeeded!Normal damage(+N) Attribution dam...", "Defense succeeded!").
+- #14: the shortcut ring has a free (+) slot.
+- #3: pinch works through accessibility gestures.
+- #4: a 240 px horizontal swipe turned the camera about 49 degrees (estimate).
+- Joystick centre 264,818, radius about 106 at 1920x1080.
