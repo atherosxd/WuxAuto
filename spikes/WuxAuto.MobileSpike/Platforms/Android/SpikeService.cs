@@ -185,10 +185,11 @@ public class SpikeService : AccessibilityService
             Log.Info(Tag, $"ocr crop {cx},{cy},{cw},{ch} x{scale}");
         }
         var sw = Stopwatch.StartNew();
+        Xamarin.Google.MLKit.Vision.Text.ITextRecognizer? client = null;
         try
         {
             var image = Xamarin.Google.MLKit.Vision.Common.InputImage.FromBitmap(bmp, 0)!;
-            var client = Xamarin.Google.MLKit.Vision.Text.TextRecognition.GetClient(
+            client = Xamarin.Google.MLKit.Vision.Text.TextRecognition.GetClient(
                 Xamarin.Google.MLKit.Vision.Text.Latin.TextRecognizerOptions.DefaultOptions!)!;
             var result = (Xamarin.Google.MLKit.Vision.Text.Text?)await client.Process(image)!.AsAsync<Java.Lang.Object>();
             sw.Stop();
@@ -203,10 +204,9 @@ public class SpikeService : AccessibilityService
                     if (CoordRx.IsMatch(text)) { coords = true; Log.Info(Tag, $"ocr coordinate line: \"{text}\""); }
                 }
             Log.Info(Tag, $"ocr ms={sw.ElapsedMilliseconds} frame={bmp.Width}x{bmp.Height} lit={LastShotLit:F3} piercing={title} coords={coords}");
-            client.Close();
         }
         catch (Exception ex) { Log.Error(Tag, $"OCR failed: {ex}"); }
-        finally { if (!ReferenceEquals(bmp, full)) bmp.Recycle(); }
+        finally { client?.Close(); if (!ReferenceEquals(bmp, full)) bmp.Recycle(); }
     }
 
     static bool _emguInit;
@@ -229,26 +229,40 @@ public class SpikeService : AccessibilityService
 
     static void Match(int x, int y, int w, int h)
     {
+        if (w < 8 || h < 8) { Log.Error(Tag, $"match refused: MATCH needs --ei w and --ei h of at least 8 (got w={w} h={h})"); return; }
         using var bmp = CopyLastShot("MATCH");
         if (bmp == null) return;
         try
         {
             if (!_emguInit) { Emgu.CV.CvInvokeAndroid.Init(); _emguInit = true; }
             x = Math.Min(Math.Max(x, 0), bmp.Width - 1); y = Math.Min(Math.Max(y, 0), bmp.Height - 1);
-            w = Math.Min(Math.Max(w, 1), bmp.Width - x); h = Math.Min(Math.Max(h, 1), bmp.Height - y);
+            w = Math.Min(w, bmp.Width - x); h = Math.Min(h, bmp.Height - y);
+            if (w < 8 || h < 8) { Log.Error(Tag, $"match refused: box clipped to {w}x{h} at {x},{y}"); return; }
             var sw = Stopwatch.StartNew();
             using var gray = ToGray(bmp);
-            using var templ = new Emgu.CV.Mat(gray, new System.Drawing.Rectangle(x, y, w, h)).Clone();
+            using var roi = new Emgu.CV.Mat(gray, new System.Drawing.Rectangle(x, y, w, h));
+            using var templ = roi.Clone();
+            var stdT = Std(templ); var stdF = Std(gray);
+            if (stdT < 2.0) { Log.Error(Tag, $"match refused: flat template (std={stdT:F2})"); return; }
+            if (stdF < 2.0) { Log.Error(Tag, $"match refused: flat frame (std={stdF:F2})"); return; }
             using var res = new Emgu.CV.Mat();
             Emgu.CV.CvInvoke.MatchTemplate(gray, templ, res, Emgu.CV.CvEnum.TemplateMatchingType.CcoeffNormed);
             double min = 0, max = 0; System.Drawing.Point minLoc = default, maxLoc = default;
             Emgu.CV.CvInvoke.MinMaxLoc(res, ref min, ref max, ref minLoc, ref maxLoc);
             sw.Stop();
-            Log.Info(Tag, $"match score={max:F4} at {maxLoc.X},{maxLoc.Y} ms={sw.ElapsedMilliseconds} box={x},{y},{w},{h}");
+            Log.Info(Tag, $"match selfmatch=path-check score={max:F4} at {maxLoc.X},{maxLoc.Y} ms={sw.ElapsedMilliseconds} box={x},{y},{w},{h} templStd={stdT:F1} frameStd={stdF:F1}");
         }
         catch (Exception ex) { Log.Error(Tag, $"MATCH failed: {ex}"); }
     }
 
+    static double Std(Emgu.CV.Mat gray)
+    {
+        using var mean = new Emgu.CV.Mat(); using var std = new Emgu.CV.Mat();
+        Emgu.CV.CvInvoke.MeanStdDev(gray, mean, std);
+        var d = new double[1];
+        System.Runtime.InteropServices.Marshal.Copy(std.DataPointer, d, 0, 1); // 1x1 CV_64F
+        return d[0];
+    }
     /// <summary>Joystick as a continued stroke: gesture 1 holds it (willContinue), gesture 2 continues it and adds the tap.</summary>
     async Task MultiContinuedAsync(Intent i, int W, int H)
     {
