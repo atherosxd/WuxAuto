@@ -9,6 +9,9 @@ using WuxAuto.Vision;
 // compass detector. Everything runs against a synthetic frame, so no game (and no input) is
 // involved. Run with:  dotnet run --project tests\WuxAuto.SelfTest [assetsFolder]
 
+// OCR text can be non-ASCII; piped stdout would otherwise use the OEM code page and mangle it.
+Console.OutputEncoding = System.Text.Encoding.UTF8;
+
 if (args.Contains("--dxgi"))
 {
     DxgiProbe.Run();
