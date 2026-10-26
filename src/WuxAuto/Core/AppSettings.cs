@@ -513,6 +513,13 @@ public sealed class SequenceSettings
     /// <summary>Combat-log line printed when the autohunt turns off.</summary>
     public string AutohuntEndedText { get; set; } = "Auto hunt ended";
 
+    /// <summary>
+    /// The other "autohunt off" line, printed in town: "Auto hunt stopped; Smart Farm journey
+    /// cancelled." (2026-10-27, autohunt_unread frame at 1440x900 - J in town starts a Smart Farm
+    /// journey back to the hunting ground, the second J cancels it). Matched by its start.
+    /// </summary>
+    public string AutohuntStoppedText { get; set; } = "Auto hunt stopped";
+
     /// <summary>Text on the destination row to click (OCR, fuzzy matching).</summary>
     public string DestinationText { get; set; } = "Labyrinth";
 

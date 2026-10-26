@@ -970,7 +970,7 @@ public sealed partial class AutomationPilot
         {
             if (trustVisibleLine)
             {
-                bool? visible = AutohuntLog.NewState([], lines, seq.AutohuntStartedText, seq.AutohuntEndedText, out string? last);
+                bool? visible = AutohuntLog.NewState([], lines, seq.AutohuntStartedText, seq.AutohuntEndedText, out string? last, seq.AutohuntStoppedText);
                 if (visible == false)
                 {
                     Log?.Invoke(LogLevel.Success, $"Autohunt is off {where} (the combat log's newest autohunt line reads '{last}').");
@@ -990,7 +990,7 @@ public sealed partial class AutomationPilot
             return false;
         }
 
-        bool? on = AutohuntLog.NewState(_huntOffBaseline, lines, seq.AutohuntStartedText, seq.AutohuntEndedText, out string? line);
+        bool? on = AutohuntLog.NewState(_huntOffBaseline, lines, seq.AutohuntStartedText, seq.AutohuntEndedText, out string? line, seq.AutohuntStoppedText);
         if (on == false)
         {
             Log?.Invoke(LogLevel.Success, $"Autohunt is off {where} ('{line}' after '{key}' x{_huntOffPresses}).");
