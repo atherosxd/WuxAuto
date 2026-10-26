@@ -94,6 +94,7 @@ public sealed partial class AutomationPilot
     private bool _noPathLogged;
     private int _rowSnapshots;
     private bool _chevronClicked;
+    private int _rowNameMisses;              // AdvanceStage: ticks with the map open but the row name unread
     private int _gatePolls;
     private bool _gateWarned;
     private bool _tabPressed;
@@ -161,6 +162,7 @@ public sealed partial class AutomationPilot
     private int _manualRounds;               // stage 5: rounds of ManualAttacks presses that ended without ring + attack line
     private bool _clickSelect;               // stage 5: after such a round, selecting the boss with the centre clicks (autohunt off)
     private int _noRingShots;                // noring_s5 snapshots this Start (<= 3)
+    private int _ringShots;                  // ring_s5 snapshots this Start (<= 3): the frame that let the autohunt on
     private bool _finalHuntOffChecked;       // stage 5: the autohunt was read off in the combat log on this arrival
     private bool _westDone;
     private double _headingBase;
@@ -410,6 +412,7 @@ public sealed partial class AutomationPilot
         _huntOffPressedAt = 0;
         _huntOffBaseline = [];
         _noRingShots = 0;
+        _ringShots = 0;
         _finalHuntOffChecked = false;
         _compassAnchored = false;
         _bestFlashlightScore = 0;
@@ -2449,14 +2452,24 @@ public sealed partial class AutomationPilot
     }
 
     /// <summary>
-    /// True when the map window is on screen. The monster list always shows a column of '>'
-    /// chevrons, which is a cheap check that does not depend on OCR of the boss names.
+    /// True when the map window is on screen: the list's "Spawns" header reads in
+    /// <c>Regions.MapScroll</c> (the paging anchor; similarity &gt;= 0.90) and at least one row '>'
+    /// matches in <c>Regions.MapBossList</c>. Until 2026-10-26 two chevron hits at 0.50 were enough,
+    /// and the 'x' of "Drop rate x 2 Event", the ')' of the item list's "(time(s))" lines and the
+    /// boss's patterned body passed for them: the pilot then clicked the list positions in the game
+    /// world (user: their own mouse move / click while the map opened had left it shut). Over the
+    /// 429 saved frames: all 219 with the map open read "Spawns" (0.93-1.00, 12 ms median), none of
+    /// the others; three or more chevrons in one column alone had 38 false columns (--mapopen probe).
     /// </summary>
-    private bool MapWindowVisible(Mat frame)
+    private async Task<bool> MapWindowVisibleAsync(Mat frame)
     {
-        var roi = _settings.Regions.MapBossList.ToPixels(frame.Width, frame.Height);
-        var hits = _analyzer.FindIcons(frame, "rightchevron", roi, 0.50, 6);
-        return hits.Count >= 2;
+        var scrollRoi = _settings.Regions.MapScroll.ToPixels(frame.Width, frame.Height);
+        var (spawns, _, _) = await _analyzer.FindTextAsync(frame, scrollRoi, "Spawns");
+        if (spawns == null || spawns.Similarity < 0.90)
+            return false;
+
+        var listRoi = _settings.Regions.MapBossList.ToPixels(frame.Width, frame.Height);
+        return _analyzer.FindIcons(frame, "rightchevron", listRoi, 0.55, 3).Count >= 1;
     }
 
     private async Task TickClickMapAsync(Mat frame)
@@ -2524,7 +2537,7 @@ public sealed partial class AutomationPilot
 
         // The map button click can be swallowed (the game is still busy after the kill). If the
         // window is not there at all, click the button again instead of scrolling a dead frame.
-        if (!MapWindowVisible(frame))
+        if (!await MapWindowVisibleAsync(frame))
         {
             // One confirmation poll first: clicking the button twice would toggle the map shut.
             if (++_mapVisibleMisses < 2)
@@ -2544,20 +2557,11 @@ public sealed partial class AutomationPilot
                 return;
             }
 
-            // Last check before giving up: the chevron template may simply not match this UI
-            // skin, while the boss name is perfectly readable.
-            var (late, _, _) = await _analyzer.FindTextAsync(frame, roi, expected);
-            if (late != null)
-            {
-                Log?.Invoke(LogLevel.Warning,
-                    "The map's row chevrons were not detected, but the boss name is readable - carrying on.");
-            }
-            else
-            {
-                Fail(frame, "The map window never opened. Widen Regions.MapBossList or raise Dungeon.MapReopenRetries " +
-                            "- press F11 with the map open to check the region.");
-                return;
-            }
+            // No clicking without the map (user, 2026-10-26): a boss name read here with the map
+            // shut is the name tag in the game world, and a click on it walks the character.
+            Fail(frame, "The map window never opened. Widen Regions.MapBossList or raise Dungeon.MapReopenRetries " +
+                        "- press F11 with the map open to check the region.");
+            return;
         }
 
         _mapVisibleMisses = 0;
@@ -2710,6 +2714,7 @@ public sealed partial class AutomationPilot
 
             _lastClick = (x, y, Environment.TickCount64);
             _chevronClicked = false;
+            _rowNameMisses = 0;
             Log?.Invoke(LogLevel.Success, $"Selected the '{text}' row at {x},{y} - clicking its highlighted '>' next.");
             Advance(PilotPhase.AdvanceStage, _settings.Dungeon.BossNameClickDelayMs);
             return;
@@ -2853,6 +2858,9 @@ public sealed partial class AutomationPilot
         }
 
         _lastClick = (clickX, clickY, Environment.TickCount64);
+        // A '>' click (glyph or column) is expected to close the map; a click on the name is not.
+        _chevronClicked = glyph != null || hits.Count > 0;
+        _rowNameMisses = 0;
         Advance(PilotPhase.AdvanceStage, dungeon.BossNameClickDelayMs);
     }
 
@@ -2933,14 +2941,51 @@ public sealed partial class AutomationPilot
 
         var roi = _settings.Regions.MapBossList.ToPixels(frame.Width, frame.Height);
         var (stillThere, _, _) = await _analyzer.FindTextAsync(frame, roi, expected);
+        bool mapOpen = await MapWindowVisibleAsync(frame);
         // The list band also covers the item list on the right ("[Rage Elixir] 25 (min(s))"
         // reads as a partial "Ragesoul Heathen"), so only trust a full name with the map open.
-        if (stillThere != null && (!IsFullName(stillThere, expected) || !MapWindowVisible(frame)))
+        if (stillThere != null && (!IsFullName(stillThere, expected) || !mapOpen))
             stillThere = null;
 
         if (stillThere == null)
         {
-            Log?.Invoke(LogLevel.Info, "The map closed after the row click; waiting for the spawn.");
+            if (_chevronClicked)
+            {
+                Log?.Invoke(LogLevel.Info, "The map closed after the '>' click; waiting for the spawn.");
+                Advance(PilotPhase.WaitBoss, 300);
+                return;
+            }
+
+            // The name click only highlights the row - the '>' is what closes the map. The map gone
+            // before that click means something else shut it (user, 2026-10-26: a mouse move / click
+            // of their own while the pilot opened it); the old flow then waited for a boss that was
+            // never picked. Map still open but the name unread -> a few re-reads, then the list again.
+            if (mapOpen)
+            {
+                if (++_rowNameMisses <= 3)
+                {
+                    _detail = $"map open, '{expected}' not read ({_rowNameMisses}/3)";
+                    _waitUntil = Environment.TickCount64 + 500;
+                    return;
+                }
+
+                Log?.Invoke(LogLevel.Warning, $"'{expected}' is no longer read on the open map after the row click - reading the list again.");
+                _mapScrolls = 0;
+                Advance(PilotPhase.ReadStage, 300);
+                return;
+            }
+
+            if (_mapReopens < dungeon.MapReopenRetries)
+            {
+                _mapReopens++;
+                _mapVisibleMisses = 0;
+                Log?.Invoke(LogLevel.Warning,
+                    $"The map is gone before the '>' click (a stray click or mouse move?) - opening it again ({_mapReopens}/{dungeon.MapReopenRetries}).");
+                Advance(PilotPhase.ClickMap, 500);
+                return;
+            }
+
+            Log?.Invoke(LogLevel.Warning, $"The map is gone before the '>' click and was reopened {dungeon.MapReopenRetries}x already; waiting for the spawn anyway.");
             Advance(PilotPhase.WaitBoss, 300);
             return;
         }
@@ -3443,13 +3488,19 @@ public sealed partial class AutomationPilot
                 _overlays.Add(new OverlayItem(ringBox, "selected", OverlayColor.Green));
 
             bool attacking = _manualHit || !confirm;
-            if (ring == null || !attacking)
+            // Still targeted (name / target-bar icon), like the ring + name shortcut that starts the presses.
+            var named = await FindBossAsync(frame);
+            if (ring == null || !attacking || !named.Found)
             {
-                string missing = ring == null && !attacking
-                    ? $"No selection ring under the boss and no new '{dungeon.AttackConfirmText}'"
-                    : ring == null
-                        ? $"No selection ring under the boss (new '{dungeon.AttackConfirmText}' seen)"
-                        : $"Selection ring under the boss but no new '{dungeon.AttackConfirmText}'";
+                var lacking = new List<string>();
+                if (ring == null)
+                    lacking.Add("no selection ring under the boss");
+                if (!attacking)
+                    lacking.Add($"no new '{dungeon.AttackConfirmText}'");
+                if (!named.Found)
+                    lacking.Add($"'{dungeon.FinalBoss}' not targeted");
+                string missing = char.ToUpperInvariant(lacking[0][0]) + string.Join(", ", lacking)[1..]
+                    + (ring != null ? " (ring seen)" : "") + (attacking && confirm ? $" (new '{dungeon.AttackConfirmText}' seen)" : "");
 
                 if (++_manualRounds < maxRounds)
                 {
@@ -3484,6 +3535,11 @@ public sealed partial class AutomationPilot
 
         Log?.Invoke(_manualHit || !confirm ? LogLevel.Success : LogLevel.Warning,
             $"Attacked by hand {_manualPresses}x ({(_manualHit ? "hit" : confirm ? "no hit seen" : "no check")}){(IsFinalBoss ? " with the selection ring under the boss" : "")} - autohunt on.");
+
+        // The frame that passed the ring check, ring drawn (user, 2026-10-26: "the selection ring is
+        // not properly read") - --ring <dir> re-runs the detector over it.
+        if (IsFinalBoss && _ringShots++ < 3)
+            DebugArtifacts.SaveFrame(frame, _overlays, "ring_s5");
 
         // Stage 5 (user, 2026-10-26): the autohunt must show a new attack line within
         // AutohuntConfirmMs (2 s), or it is turned off again and the manual attacks repeat.

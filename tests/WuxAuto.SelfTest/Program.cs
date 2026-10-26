@@ -76,6 +76,14 @@ int shuraIndex = Array.IndexOf(args, "--shura");
 if (shuraIndex >= 0 && shuraIndex + 1 < args.Length)
     return FrameProbe.Shura(args[shuraIndex + 1]);
 
+int ringIndex = Array.IndexOf(args, "--ring");
+if (ringIndex >= 0 && ringIndex + 1 < args.Length)
+    return FrameProbe.Ring(args[ringIndex + 1]);
+
+int mapOpenIndex = Array.IndexOf(args, "--mapopen");
+if (mapOpenIndex >= 0 && mapOpenIndex + 1 < args.Length)
+    return await FrameProbe.MapOpenAsync(args[mapOpenIndex + 1]);
+
 int lodPartsIndex = Array.IndexOf(args, "--lodparts");
 if (lodPartsIndex >= 0 && lodPartsIndex + 1 < args.Length)
     return FrameProbe.LodParts(args[lodPartsIndex + 1]);

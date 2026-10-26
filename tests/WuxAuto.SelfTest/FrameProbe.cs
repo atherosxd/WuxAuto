@@ -71,6 +71,93 @@ internal static class FrameProbe
     }
 
     /// <summary>
+    /// The stage 5 selection ring (ScreenAnalyzer.FindSelectionRing: magenta on the floor under the
+    /// target) for every PNG in a folder; a crop round every hit lands in %TEMP%\wuxauto-ring\&lt;frame&gt;.png.
+    /// Run with: --ring &lt;dir&gt;
+    /// </summary>
+    public static int Ring(string dir)
+    {
+        var settings = SettingsStore.Load();
+        using var analyzer = new ScreenAnalyzer(settings);
+        string outDir = Path.Combine(Path.GetTempPath(), "wuxauto-ring");
+        Directory.CreateDirectory(outDir);
+        int found = 0, total = 0;
+        foreach (string path in Directory.GetFiles(dir, "*.png").Where(p => !p.EndsWith(".scan.png") && !p.EndsWith(".crop.png")).Order())
+        {
+            using var frame = Cv2.ImRead(path, ImreadModes.Color);
+            if (frame.Empty())
+                continue;
+
+            total++;
+            var ring = analyzer.FindSelectionRing(frame);
+            string where = "-";
+            if (ring is { } box)
+            {
+                found++;
+                where = $"{box.X},{box.Y} {box.Width}x{box.Height} (centre {box.CenterX},{box.CenterY})";
+                int pad = Math.Max(40, box.Width);
+                var crop = new Rect(Math.Max(0, box.X - pad), Math.Max(0, box.Y - pad),
+                    Math.Min(frame.Width - Math.Max(0, box.X - pad), box.Width + 2 * pad),
+                    Math.Min(frame.Height - Math.Max(0, box.Y - pad), box.Height + 2 * pad));
+                using var view = new Mat(frame, crop).Clone();
+                Cv2.Rectangle(view, new Rect(box.X - crop.X, box.Y - crop.Y, box.Width, box.Height), Scalar.Lime, 1);
+                Cv2.ImWrite(Path.Combine(outDir, Path.GetFileName(path)), view);
+            }
+
+            Console.WriteLine($"{Path.GetFileName(path)} {frame.Width}x{frame.Height} | ring {where}");
+        }
+
+        Console.WriteLine($"{found}/{total} frames with a ring; crops in {outDir}");
+        return 0;
+    }
+
+    /// <summary>
+    /// Map window open or not, for every PNG in a folder, as the pilot's MapWindowVisibleAsync judges
+    /// it ("Spawns" read in Regions.MapScroll at >= 0.90 and at least one rightchevron >= 0.55 in
+    /// Regions.MapBossList), next to the old test (2 chevrons at 0.50) and the chevron column count.
+    /// Run with: --mapopen &lt;dir&gt;
+    /// </summary>
+    public static async Task<int> MapOpenAsync(string dir)
+    {
+        var settings = SettingsStore.Load();
+        using var analyzer = new ScreenAnalyzer(settings);
+        int open = 0, shut = 0, differ = 0;
+        foreach (string path in Directory.GetFiles(dir, "*.png").Where(p => !p.EndsWith(".scan.png") && !p.EndsWith(".crop.png")).Order())
+        {
+            using var frame = Cv2.ImRead(path, ImreadModes.Color);
+            if (frame.Empty())
+                continue;
+
+            var roi = settings.Regions.MapBossList.ToPixels(frame.Width, frame.Height);
+            var hits = analyzer.FindIcons(frame, "rightchevron", roi, 0.55, 12);
+            int column = 0;
+            int columnX = 0;
+            if (hits.Count > 0)
+            {
+                var xs = hits.Select(m => m.Bounds.CenterX).OrderBy(v => v).ToArray();
+                columnX = xs[xs.Length / 2];
+                int slack = Math.Max(12, (int)(columnX * 0.02));
+                column = hits.Count(m => Math.Abs(m.Bounds.CenterX - columnX) <= slack);
+            }
+
+            bool chevrons = hits.Count >= 3 && column >= 3;
+            var scrollRoi = settings.Regions.MapScroll.ToPixels(frame.Width, frame.Height);
+            var sw = System.Diagnostics.Stopwatch.StartNew();
+            var (spawns, _, _) = await analyzer.FindTextAsync(frame, scrollRoi, "Spawns");
+            long ocrMs = sw.ElapsedMilliseconds;
+            bool now = spawns != null && spawns.Similarity >= 0.90 && hits.Count >= 1;
+            bool old = analyzer.FindIcons(frame, "rightchevron", roi, 0.50, 6).Count >= 2;
+            if (now) open++; else shut++;
+            if (now != old) differ++;
+            string ys = string.Join(",", hits.OrderBy(m => m.Bounds.CenterY).Select(m => $"{m.Bounds.CenterX}/{m.Bounds.CenterY}:{m.Score:0.00}"));
+            Console.WriteLine($"{Path.GetFileName(path)} {frame.Width}x{frame.Height} | hits {hits.Count} column {column} at x={columnX} | Spawns {(spawns == null ? "-" : $"'{spawns.Text}' {spawns.Similarity:0.00} at {spawns.Bounds.X},{spawns.Bounds.Y}")} ({ocrMs} ms) -> {(now ? "OPEN" : "shut")}{(now != old ? $" (old test: {(old ? "open" : "shut")})" : "")}{(chevrons != now ? " (chevron column alone disagrees)" : "")} [{ys}]");
+        }
+
+        Console.WriteLine($"{open} open, {shut} shut, {differ} differ from the old test");
+        return 0;
+    }
+
+    /// <summary>
     /// Fast check over a folder of saved frames: the Run skill icon on the skill bar and the gold
     /// ring round it (on / off), as the pilot judges it in town. A crop round every hit lands in
     /// %TEMP%\wuxauto-runskill\&lt;frame&gt;.png to check by eye. Run with: --runskill &lt;dir&gt;
