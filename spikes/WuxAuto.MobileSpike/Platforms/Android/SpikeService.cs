@@ -52,33 +52,53 @@ public class SpikeService : AccessibilityService
         // Tasks 2-3 add: SHOT, WALK, SWIPE, PINCH, MULTI, OCR, MATCH.
         foreach (var action in SpikeReceiver.Actions)
             filter.AddAction(ActionPrefix + action);
+        // Only holders of DUMP (the adb shell) may send these broadcasts; ordinary apps cannot.
         // The flags overload exists from Android 13; older versions register exported by default.
         if (OperatingSystem.IsAndroidVersionAtLeast(33))
-            RegisterReceiver(_receiver, filter, ReceiverFlags.Exported);
+            RegisterReceiver(_receiver, filter, BroadcastPermission, null, ReceiverFlags.Exported);
         else
-            RegisterReceiver(_receiver, filter);
+            RegisterReceiver(_receiver, filter, BroadcastPermission, null);
         Log.Info(Tag, "connected");
     }
 
+    const string BroadcastPermission = "android.permission.DUMP";
+
     internal Task RunAsync(string name, Intent i)
     {
+        var dm = Resources!.DisplayMetrics!;
+        int W = dm.WidthPixels, H = dm.HeightPixels;
+        static int Cl(int v, int lo, int hi) => Math.Min(Math.Max(v, lo), hi);
         int I(string k, int d = 0) => i.GetIntExtra(k, d);
+        int Count() => Cl(I("count", 1), 1, 100);
+        int Ms(int d) => Cl(I("ms", d), 50, 10000);
+        int X(string k) => Cl(I(k), 0, W - 1);
+        int Y(string k) => Cl(I(k), 0, H - 1);
         switch (name)
         {
-            case "SHOT": return ShotAsync(I("count", 1));
+            case "SHOT": return ShotAsync(Count());
+            case "SHOTMP":
+            {
+                var c = new Intent(this, typeof(ConsentActivity)).AddFlags(ActivityFlags.NewTask);
+                c.PutExtra("count", Count());
+                StartActivity(c);
+                return Task.CompletedTask;
+            }
             case "WALK":
             {
-                float dx = I("dx"), dy = I("dy");
+                float dx = Cl(I("dx"), -10000, 10000), dy = Cl(I("dy"), -10000, 10000);
                 var len = MathF.Sqrt(dx * dx + dy * dy);
                 if (len < 1) { Log.Warn(Tag, "WALK needs dx/dy"); return Task.CompletedTask; }
                 var path = Line(JoyX, JoyY, JoyX + dx / len * JoyR, JoyY + dy / len * JoyR);
-                return GestureAsync("WALK", new[] { Stroke(path, 0, I("ms", 2000)) });
+                return GestureAsync("WALK", new[] { Stroke(path, 0, Ms(2000)) });
             }
             case "SWIPE":
-                return GestureAsync("SWIPE", new[] { Stroke(Line(I("x1"), I("y1"), I("x2"), I("y2")), 0, I("ms", 600)) });
+                return GestureAsync("SWIPE", new[] { Stroke(Line(X("x1"), Y("y1"), X("x2"), Y("y2")), 0, Ms(600)) });
             case "PINCH":
             {
-                int cx = I("cx"), cy = I("cy"), from = I("from"), to = I("to"), ms = I("ms", 600);
+                int cx = X("cx"), cy = Y("cy"), from = Cl(I("from"), 0, W), to = Cl(I("to"), 0, W), ms = Ms(600);
+                // Keep both fingers on screen.
+                var reach = Math.Min(cx, W - 1 - cx);
+                from = Math.Min(from, reach); to = Math.Min(to, reach);
                 // Two fingers on a horizontal line through the centre, moving towards each other.
                 return GestureAsync("PINCH", new[]
                 {
@@ -88,9 +108,9 @@ public class SpikeService : AccessibilityService
             }
             case "MULTI":
             {
-                int ms = I("ms", 2500);
+                int ms = Ms(2500);
                 var joy = Line(JoyX, JoyY, JoyX, JoyY - JoyR);
-                var tap = new APath(); tap.MoveTo(I("tx"), I("ty"));
+                var tap = new APath(); tap.MoveTo(X("tx"), Y("ty"));
                 // Joystick held the whole time; the tap lands half-way, in the same gesture.
                 return GestureAsync("MULTI", new[] { Stroke(joy, 0, ms), Stroke(tap, ms / 2, 60) });
             }
@@ -144,19 +164,23 @@ public class SpikeService : AccessibilityService
             LastShot = bmp; // recycles the previous one
         }
         var secs = Math.Max(total.ElapsedMilliseconds, 1) / 1000.0;
-        var last = LastShot;
-        if (last != null)
-        {
-            var dir = GetExternalFilesDir("shots")!;
-            dir.Mkdirs();
-            using var fs = System.IO.File.Create(System.IO.Path.Combine(dir.AbsolutePath, "shot_last.png"));
-            last.Compress(Bitmap.CompressFormat.Png!, 100, fs);
-        }
+        SaveLast("shot_last.png");
         Log.Info(Tag, $"shots ok={ok} fail={fail} fps={ok / secs:F1}");
     }
 
+    /// <summary>Writes <see cref="LastShot"/> as a PNG into the app's external files "shots" folder.</summary>
+    internal static void SaveLast(string fileName)
+    {
+        var last = LastShot;
+        if (last == null) return;
+        var dir = Android.App.Application.Context.GetExternalFilesDir("shots")!;
+        dir.Mkdirs();
+        using var fs = System.IO.File.Create(System.IO.Path.Combine(dir.AbsolutePath, fileName));
+        last.Compress(Bitmap.CompressFormat.Png!, 100, fs);
+    }
+
     /// <summary>Fraction of sampled pixels that are not pure black (a quick "is it the game, not black" check).</summary>
-    static double LitFraction(Bitmap b)
+    internal static double LitFraction(Bitmap b)
     {
         int lit = 0, n = 0;
         for (var y = 10; y < b.Height; y += b.Height / 20)
@@ -184,11 +208,59 @@ public class SpikeService : AccessibilityService
             {
                 using var hw = Bitmap.WrapHardwareBuffer(r!.HardwareBuffer!, r.ColorSpace)!;
                 var copy = hw.Copy(Bitmap.Config.Argb8888!, false)!;
+                // Alternative: lock the buffer for CPU reads (AHardwareBuffer) instead of the GPU copy.
+                var cpu = CpuRead(r.HardwareBuffer!);
+                var gpuLit = LitFraction(copy);
+                var cpuLit = cpu == null ? -1 : LitFraction(cpu);
+                Log.Info(Tag, $"shot gpuLit={gpuLit:F3} cpuLit={cpuLit:F3}");
+                if (cpu != null && gpuLit == 0 && cpuLit > 0) { copy.Recycle(); copy = cpu; }
+                else cpu?.Recycle();
                 r.HardwareBuffer!.Close();
                 _tcs.TrySetResult(copy);
             }
             catch (Exception ex) { Log.Error(Tag, $"shot decode failed: {ex.Message}"); _tcs.TrySetResult(null); }
         }
+        [System.Runtime.InteropServices.DllImport("libandroid.so")]
+        static extern IntPtr AHardwareBuffer_fromHardwareBuffer(IntPtr env, IntPtr hardwareBuffer);
+        [System.Runtime.InteropServices.DllImport("libandroid.so")]
+        static extern void AHardwareBuffer_describe(IntPtr buffer, IntPtr desc);
+        [System.Runtime.InteropServices.DllImport("libandroid.so")]
+        static extern int AHardwareBuffer_lock(IntPtr buffer, ulong usage, int fence, IntPtr rect, out IntPtr address);
+        [System.Runtime.InteropServices.DllImport("libandroid.so")]
+        static extern int AHardwareBuffer_unlock(IntPtr buffer, IntPtr fence);
+
+        /// <summary>Reads an RGBA_8888 HardwareBuffer on the CPU. Returns null when it cannot be locked.</summary>
+        static Bitmap? CpuRead(HardwareBuffer hb)
+        {
+            var desc = System.Runtime.InteropServices.Marshal.AllocHGlobal(48);
+            try
+            {
+                var ab = AHardwareBuffer_fromHardwareBuffer(Android.Runtime.JNIEnv.Handle, hb.Handle);
+                if (ab == IntPtr.Zero) return null;
+                AHardwareBuffer_describe(ab, desc);
+                int w = System.Runtime.InteropServices.Marshal.ReadInt32(desc, 0);
+                int h = System.Runtime.InteropServices.Marshal.ReadInt32(desc, 4);
+                int format = System.Runtime.InteropServices.Marshal.ReadInt32(desc, 12);
+                int stride = System.Runtime.InteropServices.Marshal.ReadInt32(desc, 24);
+                var rc = AHardwareBuffer_lock(ab, 3 /* CPU_READ_OFTEN */, -1, IntPtr.Zero, out var addr);
+                if (rc != 0) { Log.Warn(Tag, $"cpu lock rc={rc} format={format}"); return null; }
+                try
+                {
+                    var bytes = new byte[stride * 4 * h];
+                    System.Runtime.InteropServices.Marshal.Copy(addr, bytes, 0, bytes.Length);
+                    var wide = Bitmap.CreateBitmap(stride, h, Bitmap.Config.Argb8888!)!;
+                    wide.CopyPixelsFromBuffer(Java.Nio.ByteBuffer.Wrap(bytes));
+                    if (stride == w) return wide;
+                    var crop = Bitmap.CreateBitmap(wide, 0, 0, w, h)!;
+                    wide.Recycle();
+                    return crop;
+                }
+                finally { AHardwareBuffer_unlock(ab, IntPtr.Zero); }
+            }
+            catch (Exception ex) { Log.Warn(Tag, $"cpu read failed: {ex.Message}"); return null; }
+            finally { System.Runtime.InteropServices.Marshal.FreeHGlobal(desc); }
+        }
+
         public void OnFailure(int errorCode)
         {
             LastError = errorCode;
@@ -216,7 +288,7 @@ public class SpikeService : AccessibilityService
 public class SpikeReceiver : BroadcastReceiver
 {
     /// <summary>Action suffixes this receiver listens for. Add new ones here and handle them in <see cref="OnReceive"/>.</summary>
-    public static readonly string[] Actions = { "PING", "SHOT", "WALK", "SWIPE", "PINCH", "MULTI" };
+    public static readonly string[] Actions = { "PING", "SHOT", "SHOTMP", "WALK", "SWIPE", "PINCH", "MULTI" };
 
     readonly SpikeService _service;
 
@@ -232,7 +304,15 @@ public class SpikeReceiver : BroadcastReceiver
         var pending = GoAsync();
         Task.Run(async () =>
         {
-            try { await _service.RunAsync(name, intent); }
+            try
+            {
+                // A broadcast gets ~10 s: release it after 8 s even if the work (e.g. 100 shots) runs on.
+                var work = _service.RunAsync(name, intent);
+                await Task.WhenAny(work, Task.Delay(8000));
+                pending?.Finish();
+                pending = null;
+                await work;
+            }
             catch (Exception ex) { Log.Error(SpikeService.Tag, $"{name} failed: {ex}"); }
             finally { pending?.Finish(); }
         });
