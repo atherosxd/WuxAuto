@@ -62,6 +62,12 @@ one when the pilot moves on - LOD after the 10 s loot (`..._looted`), Labyrinth 
 before the map or the inventory opens (`..._after`). The **Kill screenshots** button opens the folder.
 Only the newest 500 pictures are kept - copy any you want to keep somewhere else.
 
+**Kill chime:** when a boss dies (Labyrinth: every stage; LOD: after the 10 s loot) WuxAuto plays a
+chime and shows a Windows notification - a reminder to go and check the loot. The last one also
+shows under the status. **Test alert** (under Loop) plays it now so you can check the volume; the
+**Kill chime** / **Kill notification** boxes turn them off. Want another sound? Put a `chime.wav` in
+the templates folder (**Templates folder** button).
+
 ## Updates
 
 WuxAuto checks for a new version every time it starts (top of the window: version, **Check for

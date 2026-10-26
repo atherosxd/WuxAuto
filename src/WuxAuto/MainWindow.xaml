@@ -149,10 +149,21 @@
                             <CheckBox Content="Restart on error" IsChecked="{Binding Settings.Sequence.RestartOnError}"
                                       ToolTip="After an error start over from the top instead of stopping (at most 5 times in 30 minutes)." />
                         </WrapPanel>
+                        <WrapPanel>
+                            <CheckBox Content="Kill chime" IsChecked="{Binding Settings.Sequence.KillChime}" VerticalAlignment="Center"
+                                      ToolTip="A chime on this PC when a Labyrinth boss dies (every stage) and when an LOD kill's loot step ends - a reminder to check the loot. A chime.wav in the templates folder replaces the built-in sound." />
+                            <CheckBox Content="Kill notification" IsChecked="{Binding Settings.Sequence.KillNotification}" VerticalAlignment="Center"
+                                      ToolTip="A Windows notification at the same moments (it stays in the notification centre). Windows may hold it back while a game is in front." />
+                            <Button Content="Test alert" Command="{Binding TestKillAlertCommand}" Padding="10,4"
+                                    ToolTip="Plays the chime and shows the notification now (whichever is ticked), to check the sound on this PC." />
+                        </WrapPanel>
                         <Border Background="#0E1118" BorderBrush="{StaticResource CardBorder}" BorderThickness="1" CornerRadius="8" Padding="10,8" Margin="0,8,0,0">
                             <StackPanel>
                                 <TextBlock Text="{Binding StateText}" FontSize="13" TextWrapping="Wrap" />
                                 <TextBlock Text="{Binding StatText}" Style="{StaticResource Caption}" Margin="0,4,0,0" />
+                                <TextBlock Text="{Binding LastKillText, StringFormat='Last kill: {0}'}" Foreground="{StaticResource Success}" FontSize="12"
+                                           TextWrapping="Wrap" Margin="0,4,0,0"
+                                           Visibility="{Binding LastKillText, Converter={x:Static vm:BoolConverters.NotEmptyToVisibility}}" />
                             </StackPanel>
                         </Border>
                     </StackPanel>

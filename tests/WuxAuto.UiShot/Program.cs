@@ -63,6 +63,10 @@ internal static class Program
             viewModel.UpdateStatus = "Update v9.9.9 available.";
         }
 
+        // --kill-alert: show the last-kill line (main window status, mini window bottom row).
+        if (args.Contains("--kill-alert") && window.DataContext is WuxAuto.ViewModels.MainViewModel killModel)
+            killModel.LastKillText = "14:32:05 Stage 2: Spectral down - check the loot";
+
         if (args.Contains("--settings"))
         {
             var expander = Descendants<Expander>(window).FirstOrDefault();
@@ -82,12 +86,24 @@ internal static class Program
             window.UpdateLayout();
         }
 
-        var dpi = VisualTreeHelper.GetDpi(window);
-        int width = Math.Max(1, (int)Math.Round(window.ActualWidth * dpi.DpiScaleX));
-        int height = Math.Max(1, (int)Math.Round(window.ActualHeight * dpi.DpiScaleY));
+        // --mini: render the mini window instead of the main one.
+        Window shot = window;
+        MiniWindow? mini = null;
+        if (args.Contains("--mini"))
+        {
+            mini = new MiniWindow(window) { ShowActivated = false };
+            mini.Show();
+            mini.Dispatcher.Invoke(() => { }, DispatcherPriority.ApplicationIdle);
+            mini.UpdateLayout();
+            shot = mini;
+        }
+
+        var dpi = VisualTreeHelper.GetDpi(shot);
+        int width = Math.Max(1, (int)Math.Round(shot.ActualWidth * dpi.DpiScaleX));
+        int height = Math.Max(1, (int)Math.Round(shot.ActualHeight * dpi.DpiScaleY));
 
         var bitmap = new RenderTargetBitmap(width, height, 96 * dpi.DpiScaleX, 96 * dpi.DpiScaleY, PixelFormats.Pbgra32);
-        bitmap.Render(window);
+        bitmap.Render(shot);
 
         var encoder = new PngBitmapEncoder();
         encoder.Frames.Add(BitmapFrame.Create(bitmap));
@@ -96,6 +112,7 @@ internal static class Program
 
         Console.WriteLine($"{output} ({width}x{height}, dpi x{dpi.DpiScaleX:0.##})");
 
+        mini?.Close();
         window.Close();
         app.Shutdown();
 

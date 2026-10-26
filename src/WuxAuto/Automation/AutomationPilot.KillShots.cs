@@ -11,6 +11,8 @@ namespace WuxAuto.Automation;
 /// sees the boss die, and a second one when it moves on - the end of the LOD loot, or in the
 /// Labyrinth <see cref="KillShotAfterMs"/> later, or earlier, right before the map or the
 /// inventory opens over the view. Saved to <see cref="AppPaths.KillsFolder"/>.
+/// Kill alert (user, 2026-10-26): <see cref="BossKilled"/> at the same moments - a Labyrinth
+/// boss's death, the end of an LOD kill's loot step - for the chime and the Windows notification.
 /// </summary>
 public sealed partial class AutomationPilot
 {
@@ -19,6 +21,12 @@ public sealed partial class AutomationPilot
 
     private string? _killShotTag;
     private long _killShotDueAt;
+
+    /// <summary>
+    /// A boss died (Labyrinth, every stage) or an LOD kill's loot step ended - "Stage 2: Spectral
+    /// down". Raised on the loop thread.
+    /// </summary>
+    public event Action<string>? BossKilled;
 
     /// <summary>Screenshot of the kill now, and the second one (<paramref name="afterTag"/>) due in <paramref name="afterMs"/>.</summary>
     private void SaveKillShot(Mat frame, string tag, string afterTag, int afterMs = KillShotAfterMs)
@@ -30,10 +38,15 @@ public sealed partial class AutomationPilot
         _killShotDueAt = Environment.TickCount64 + afterMs;
     }
 
-    /// <summary>A Labyrinth boss died (gate banner, or its name gone): "laby_s2_Spectral", then "..._after".</summary>
-    private void SaveLabyKillShot(Mat frame)
+    /// <summary>
+    /// A Labyrinth boss died (gate banner, or its name gone): the kill alert, and the screenshots
+    /// "laby_s2_Spectral", then "..._after".
+    /// </summary>
+    private void OnLabyBossDead(Mat frame)
     {
-        string tag = $"laby_s{_stageIndex + 1}_{Sanitize(StageName(_stageIndex))}";
+        string name = StageName(_stageIndex);
+        BossKilled?.Invoke($"Stage {_stageIndex + 1}: {name} down");
+        string tag = $"laby_s{_stageIndex + 1}_{Sanitize(name)}";
         SaveKillShot(frame, tag, $"{tag}_after");
     }
 

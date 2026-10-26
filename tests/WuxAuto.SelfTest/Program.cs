@@ -64,6 +64,9 @@ if (updateInstallIndex >= 0)
     return UpdateProbe.Install(args[updateInstallIndex + 1], args[updateInstallIndex + 2]);
 }
 
+if (args.Contains("--alert"))
+    return await AlertProbe.RunAsync();
+
 int runSkillIndex = Array.IndexOf(args, "--runskill");
 if (runSkillIndex >= 0 && runSkillIndex + 1 < args.Length)
     return FrameProbe.RunSkill(args[runSkillIndex + 1]);
@@ -235,6 +238,10 @@ foreach (int visualAngle in new[] { 0, 40, 135, 200, 330 })
 
 // ---------------------------------------------------------------- updater (no network)
 foreach (var (name, ok, detail) in UpdateProbe.OfflineChecks())
+    Check(name, ok, detail);
+
+// ---------------------------------------------------------------- kill alert chime
+foreach (var (name, ok, detail) in AlertProbe.OfflineChecks())
     Check(name, ok, detail);
 
 // ---------------------------------------------------------------- high level scan

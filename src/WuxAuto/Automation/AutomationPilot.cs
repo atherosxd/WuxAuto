@@ -3717,7 +3717,7 @@ public sealed partial class AutomationPilot
         if (banner != null)
         {
             Log?.Invoke(LogLevel.Success, $"Boss for stage {_stageIndex + 1} is dead - gate open ({banner}).");
-            SaveLabyKillShot(frame);
+            OnLabyBossDead(frame);
             NextStageOrFinish(banner);
             return;
         }
@@ -3754,7 +3754,7 @@ public sealed partial class AutomationPilot
         {
             Log?.Invoke(LogLevel.Success,
                 $"Boss for stage {_stageIndex + 1} is gone ({missingMs / 1000:0}s without its name/marker, Tab pressed {_watchTabs}x).");
-            SaveLabyKillShot(frame);
+            OnLabyBossDead(frame);
             NextStageOrFinish();
             return;
         }

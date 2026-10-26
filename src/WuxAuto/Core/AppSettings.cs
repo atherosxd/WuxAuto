@@ -436,6 +436,17 @@ public sealed class SequenceSettings
     public string AutoConfirmButton { get; set; } = "OK";
 
     /// <summary>
+    /// Kill alert (user, 2026-10-26: friends run the pilot on a second PC and LOD does not always
+    /// pick up every drop - a reminder to check): a chime when a Labyrinth boss dies (every stage)
+    /// and when an LOD kill's loot step ends. <see cref="KillAlert.CustomChimeName"/> in the
+    /// templates folder replaces the built-in chime. Check box "Kill chime".
+    /// </summary>
+    public bool KillChime { get; set; } = true;
+
+    /// <summary>The same moments as <see cref="KillChime"/>, as a Windows notification. Check box "Kill notification".</summary>
+    public bool KillNotification { get; set; } = true;
+
+    /// <summary>
     /// On Start in town: Settings (Escape) -> VISUAL -> "Font size" is checked against
     /// <see cref="FontSizePercent"/> .. <see cref="FontSizeMaxPercent"/> (user: 110 - 120 % read well).
     /// Inside the range it is left alone; outside it is moved to the nearer end with the row's

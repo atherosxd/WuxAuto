@@ -386,6 +386,8 @@ public sealed partial class AutomationPilot
         {
             // The kill's second screenshot: what is left on the ground after looting.
             TakePendingKillShot(frame);
+            // The kill alert waits for the loot step (user: the reminder is to check what it left).
+            BossKilled?.Invoke($"{lod.BossName} down");
             Log?.Invoke(LogLevel.Info, $"Looted for {lod.LootMs / 1000}s - waiting for '{lod.BossName}' to respawn.");
             LeaveLodAttack();
             return;
