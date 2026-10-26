@@ -41,7 +41,7 @@ dotnet build .\WuxAuto.slnx
 ```
 
 Another PC: `.\publish.ps1` → `dist\WuxAuto-win-x64.zip` (self-contained, no .NET install; the
-unused `opencv_videoio_ffmpeg` DLL is dropped). `App.OnStartup` runs `Core/StartupCheck` before
+unused `opencv_videoio_ffmpeg` DLL is dropped). `App.OnStartup` runs `Core/StartupCheck` (desktop project) before
 the window: Media Foundation DLLs (imported by `OpenCvSharpExtern.dll` — missing on Windows N and
 trimmed "lite" builds such as Ghost Spectre; fatal), OpenCV load (fatal), English OCR and build
 ≥ 19041 (warnings). Report → `logs\startup_check_*.txt`, unhandled errors → `logs\crash_*.txt`.
@@ -54,7 +54,7 @@ HW intrinsics / concurrent GC off → `diagnose.txt`. Whichever attempt first ru
 
 **Repo + self-update (2026-10-24, user):** public GitHub repo `atherosxd/WuxAuto`; versions are git
 tags `vX.Y.Z` with a release carrying `WuxAuto-win-x64.zip`. `.\release.ps1 X.Y.Z "notes"` (main,
-clean, pushed) → `publish.ps1 -Version` → `gh release create --target <HEAD>` (GitHub makes the tag). `Core/UpdateService` reads
+clean, pushed) → `publish.ps1 -Version` → `gh release create --target <HEAD>` (GitHub makes the tag). `Core/UpdateService` (desktop) reads
 `releases/latest` on start (Yes/No with the notes) and on **Check for updates**; install = download to
 `%TEMP%\WuxAuto-update`, hidden `install_update.cmd` waits for the PID, `robocopy /E` over the app folder,
 restarts; log `logs\update_*.log`. Refused while running, from a build folder (no `coreclr.dll`) or a
@@ -111,6 +111,16 @@ dotnet run --project .\tests\WuxAuto.SelfTest -- --alert
 dotnet run --project .\tests\WuxAuto.SelfTest -- --confirm "$env:LOCALAPPDATA\WuxAuto\debug"
 ```
 
+Core tests and the refactor parity gate (M1, 2026-10-27):
+
+```powershell
+dotnet test tests\WuxAuto.Core.Tests        # xUnit, platform-free Core only
+# probe baseline: runs every SelfTest probe over %LOCALAPPDATA%\WuxAuto\parity-frames\ (a frozen,
+# local-only frame set, never committed) and writes normalised output; run it before and after a
+# refactor and diff the two - M1's move-only split matched the pre-M1 baseline at every step
+.\tests\probe-baseline.ps1
+```
+
 `--do` frames land in `%TEMP%\wuxauto-step<N>-<verb>.png`. Check the frame before every click: an
 Escape with a target selected only clears the target (no SETTINGS window), and the clicks meant for
 the window then walk the character (2026-10-24). `WuxAuto.slnx` does not build `tests\WuxAuto.SelfTest`
@@ -132,7 +142,7 @@ The app itself:
 | small screens | `MainWindow.FitToScreen`: the 1380×880 window shrinks to the work area, min 760×500 (user, 2026-10-23: it ran past a small screen and the title bar buttons were out of reach). Drop-downs: the `ComboBox` template draws its own box (border #3A4458) with the chevron in a right-hand column; the old one showed no box and the chevron on the left when narrow |
 | **Dry run (no input)** | full detection, zero input — a "nothing happens" run is often dry-run |
 | **Focus game**, **Reload templates**, **Templates folder**, **Debug snapshots**, **Save settings** | obvious |
-| **Kill screenshots** (user, 2026-10-24: "to check whether it looted or not") | opens `%LOCALAPPDATA%\WuxAuto\kills`. `AutomationPilot.KillShots.cs` + `Vision/KillScreenshots`: plain JPEG (q 90, no overlays, newest 500 kept) when the pilot sees a boss die — Laby `WatchBoss` (banner / name gone) → `laby_s<N>_<boss>`, LOD death text → `lod_kill<N>`, target gone 2 s → `lod_gone` — and a second one when it moves on: LOD at the end of `LodLoot` (`_looted`); Laby 3 s later (`_after`, only in a zone-guarded phase) or earlier, right before `ClickMap` / `OpenInventory` act (the final boss's return teleport opens the inventory ~1.6 s after). Restarts drop a pending shot (`ResetRunState`). Not yet seen live |
+| **Kill screenshots** (user, 2026-10-24: "to check whether it looted or not") | opens `%LOCALAPPDATA%\WuxAuto\kills`. `AutomationPilot.KillShots.cs` + `Vision/KillScreenshots` (both in WuxAuto.Core): plain JPEG (q 90, no overlays, newest 500 kept) when the pilot sees a boss die — Laby `WatchBoss` (banner / name gone) → `laby_s<N>_<boss>`, LOD death text → `lod_kill<N>`, target gone 2 s → `lod_gone` — and a second one when it moves on: LOD at the end of `LodLoot` (`_looted`); Laby 3 s later (`_after`, only in a zone-guarded phase) or earlier, right before `ClickMap` / `OpenInventory` act (the final boss's return teleport opens the inventory ~1.6 s after). Restarts drop a pending shot (`ResetRunState`). Not yet seen live |
 | **Kill chime / Kill notification / Test alert** (user, 2026-10-26: friends run the pilot on a second PC next to their main one and LOD does not always loot everything - "a reminder to recheck"; "do the same for Laby") | `AutomationPilot.BossKilled` (string, loop thread) → `WuxEngine.BossKilled` → `MainViewModel.OnBossKilled` (UI thread) → `Core/KillAlert`. Raised in `OnLabyBossDead` (both `WatchBoss` kill paths, every stage incl. 5: "Stage 2: Spectral down") and at the **end** of `TickLodLoot` ("Bai Gu Great down" - after the loot, the reminder is to check what it left; both LOD kill paths go through it). Chime: `templates\chime.wav` if present (a bad file → built-in + warning), else `KillAlert.GenerateChime` (A5-C#6-E6, 1.6 s, 16-bit mono) written to `%LOCALAPPDATA%\WuxAuto\chime-builtin.wav` - **played from a file on purpose**: `SoundPlayer` from a stream hands a managed buffer to async `PlaySound` (pinned only during the call). Notification: WinRT toast, silent, 2 h expiry, AUMID `atherosxd.WuxAuto` registered under `HKCU\Software\Classes\AppUserModelId` (DisplayName + `notify-icon.png` from the window icon) - an unpackaged app needs that; `ToastNotifier.Setting` throws "Element not found" here, so it is only read best-effort. `Sequence.KillChime` / `KillNotification` (on; check boxes under Loop). Status box + Mini window bottom row show `LastKillText`. A failure logs once per app start; **Test alert** always reports. Verified 2026-10-26 on this PC: chime plays, notification centre count for the AUMID 0 → 1, the button in the real app logs "chime OK" / "notification OK". Not yet seen during a live kill |
 | checkboxes | `Loop`, `Focus on start`, `Only while game is focused`, `Restore cursor` |
 
@@ -141,20 +151,36 @@ The app itself:
 ## 3. Repository map
 
 ```
-src/WuxAuto
+src/WuxAuto.Core            net10.0 class library, platform-free (M1, 2026-10-27: move-only split so an Android
+                            app can share the pilot). Holds everything that decides what to do:
+  Automation/          AutomationPilot (+ .Lod / .War / .KillShots partials) - the whole state machine,
+                       AutohuntLog
+  Core/                AppSettings (all tunables; positions reset per run), SettingsStore + AppPaths
+                       (load/save/migrate; `AppPaths.Configure(root, assetsFolder?)`), Geometry
+                       (NormRect/PixelRect), LogEntry
+  Platform/            the seams: IOcrEngine (desktop: OcrService), IGameInput (desktop: WindowInput),
+                       MouseButton. ScreenAnalyzer takes (and disposes) its IOcrEngine, the pilot takes
+                       an IGameInput; `AutomationPilot.TickAsync(Mat, CancellationToken)` gets only the frame
+  Vision/              TemplateMatcher, TemplateLibrary, ScreenAnalyzer, CompassDetector, OverlayRenderer,
+                       KillScreenshots, TextMatcher, VisionModels
+  RULE: Core must stay OS-free - no WPF, WinRT, Win32/P-Invoke, System.Windows.*, registry. Anything
+  that touches the OS goes behind a Platform/ interface and is implemented in the desktop project.
+src/WuxAuto                 WPF desktop app, references Core
   Assets/              shipped templates: teleportscroll, rightchevron, rightchevronfoc,
                        mapicon, flashlight, dungeongateopen, monstericon (.png)
-  Automation/          AutomationPilot.cs - the whole state machine (~1650 lines)
+  Automation/          AutoConfirm (Ctrl + right click dialog helper, ticked by the engine)
   Capture/             DesktopCaptureService - DXGI Desktop Duplication + frame pool
-  Core/                AppSettings (all tunables; positions reset per run), SettingsStore (load/save/migrate),
-                       Geometry (NormRect/PixelRect), LogEntry, paths
+  Converters/          WPF value converters (LogLevelBrushConverter: LogEntry level -> brush)
+  Core/                KillAlert, StartupCheck, UpdateService
   Engine/              WuxEngine - capture thread + vision loop + pilot tick
-  Input/               WindowInput - foreground-guarded SendInput, PostMessage mode, wheel
+  Input/               WindowInput (implements IGameInput) - foreground-guarded SendInput, PostMessage mode, wheel
   Interop/             NativeMethods, window enumeration, global hotkeys, process info
-  Vision/              TemplateMatcher, TemplateLibrary, ScreenAnalyzer, OcrService,
-                       CompassDetector, OverlayRenderer
+  Vision/              OcrService (Windows.Media.Ocr, implements IOcrEngine)
   ViewModels/, MainWindow.*   WPF UI
 tests/WuxAuto.SelfTest      offline probes (see above)
+tests/WuxAuto.Core.Tests    xUnit tests of Core (settings, geometry, text matching, ...); `dotnet test`
+tests/probe-baseline.ps1    runs every SelfTest probe over a frozen frame set and writes normalised
+                            output for before/after diffs (refactor parity check, section 2)
 tests/WuxAuto.UiShot        renders the window to a PNG
 branding/                   wuxen2-source.png + make_icon.py -> WuxAuto-logo.png (README) and
                             src/WuxAuto/WuxAuto.ico (exe + window icon; "AUTO" drawn over "ONLINE")
@@ -601,7 +627,7 @@ minutes, then it stops as before. Stop / F10 / a closed game window still stop f
 
 ### 4.7 Auto confirm (user, 2026-10-25, "to make it faster to sell")
 
-`Automation/AutoConfirm.cs`, ticked by `WuxEngine.VisionLoopAsync` on every frame **while the pilot is
+`src/WuxAuto/Automation/AutoConfirm.cs`, ticked by `WuxEngine.VisionLoopAsync` on every frame **while the pilot is
 not running** (the pilot handles its own dialogs; its Ctrl+clicks would arm it). `Sequence.AutoConfirmDialogs`
 (on, check box "Auto confirm (Ctrl + right click)"), `AutoConfirmText` "Confirm", `AutoConfirmButton` "OK".
 The player's gesture is polled per frame with `GetAsyncKeyState` (Ctrl down + right button edge, or the
@@ -623,7 +649,7 @@ would confirm the move instead.
 
 ## 6. Settings and persistence — read this before changing defaults
 
-* Path: `%LOCALAPPDATA%\WuxAuto\settings.json` (also written on close; **Save settings** writes it
+* Path: `%LOCALAPPDATA%\WuxAuto\settings.json` (settings, log, debug and kills paths all come from `AppPaths` in WuxAuto.Core and are unchanged by the M1 split; also written on close; **Save settings** writes it
   immediately).
 * **Screen positions are not persisted** (since 2026-10-20, `CurrentVersion = 3`):
   `AppSettings.Regions` and `DungeonSettings.MapWheelX/Y`, `MapRowChevronX`, `BossSelectX/Y`, `BossSelectStep` are

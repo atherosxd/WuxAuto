@@ -305,17 +305,20 @@ Notifications → one log warning.
 ## Repository layout
 
 ```
-src/WuxAuto                  the app
+src/WuxAuto.Core             platform-free logic shared by the app: pilot state machine,
+                             vision (template matcher, compass, overlays), settings, geometry, logging
+src/WuxAuto                  the Windows app
   Assets/                    shipped reference PNGs
-  Automation/                the teleport sequence state machine
+  Automation/                auto-confirm helper
   Capture/                   Desktop Duplication capture + frame pool
-  Core/                      settings, geometry, logging, paths
+  Core/                      kill alert, startup check, self-update
   Engine/                    capture + vision loop, bind/start/stop
   Input/                     focus-guarded SendInput / PostMessage
   Interop/                   Win32 bindings, window enumeration, hotkeys
-  Vision/                    template matcher, compass, OCR, overlays
+  Vision/                    Windows OCR
   ViewModels/, MainWindow.*  the UI
 tests/WuxAuto.SelfTest       offline vision checks (synthetic frame, no game needed)
+tests/WuxAuto.Core.Tests     unit tests of the shared library
 tests/WuxAuto.UiShot         renders MainWindow to a PNG (no desktop session needed)
 CLAUDE.md                    developer/handoff notes: architecture, measured UI facts,
                              current state, open items and debugging workflow
@@ -324,6 +327,9 @@ CLAUDE.md                    developer/handoff notes: architecture, measured UI 
 ## Development checks
 
 ```powershell
+# unit tests of the shared library
+dotnet test .\tests\WuxAuto.Core.Tests
+
 # template matching, OCR and compass against a synthetic frame
 dotnet run --project .\tests\WuxAuto.SelfTest            # add --verbose for per-angle scores
 
