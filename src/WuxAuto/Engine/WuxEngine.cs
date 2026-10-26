@@ -57,6 +57,7 @@ public sealed class WuxEngine : IAsyncDisposable
         _pilot.Log += (level, message) => EmitLog(level, message);
         _pilot.StateChanged += () => StateChanged?.Invoke();
         _pilot.ModeChanged += () => ModeChanged?.Invoke();
+        _pilot.BossKilled += what => BossKilled?.Invoke(what);
         _capture.StatusChanged += message => EmitLog(LogLevel.Info, message);
         _capture.Faulted += OnCaptureFaulted;
 
@@ -68,6 +69,9 @@ public sealed class WuxEngine : IAsyncDisposable
     public event Action? StateChanged;
     public event Action? ModeChanged;
     public event Action<string>? Faulted;
+
+    /// <summary>The pilot saw a boss die (see <see cref="AutomationPilot.BossKilled"/>); raised on the loop thread.</summary>
+    public event Action<string>? BossKilled;
 
     public TemplateLibrary Templates => _analyzer.Library;
     public AutomationPilot Pilot => _pilot;

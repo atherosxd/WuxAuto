@@ -36,8 +36,19 @@
                        Margin="0,8,0,0" TextWrapping="Wrap" TextTrimming="CharacterEllipsis"
                        Width="{Binding ActualWidth, ElementName=ButtonRow}" Height="44"
                        ToolTip="{Binding StateText}" />
-            <CheckBox Content="On top" HorizontalAlignment="Right" Margin="0,4,0,0"
-                      IsChecked="{Binding Topmost, RelativeSource={RelativeSource AncestorType=Window}}" />
+            <!-- The last kill alert shares the "On top" row, so the window keeps its size. -->
+            <Grid Margin="0,4,0,0" Width="{Binding ActualWidth, ElementName=ButtonRow}">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+                <TextBlock Grid.Column="0" Text="{Binding LastKillText}" Foreground="{StaticResource Success}" FontSize="11"
+                           VerticalAlignment="Center" TextTrimming="CharacterEllipsis" Margin="0,0,8,0"
+                           ToolTip="{Binding LastKillText}"
+                           Visibility="{Binding LastKillText, Converter={x:Static vm:BoolConverters.NotEmptyToVisibility}}" />
+                <CheckBox Grid.Column="1" Content="On top" Margin="0"
+                          IsChecked="{Binding Topmost, RelativeSource={RelativeSource AncestorType=Window}}" />
+            </Grid>
         </StackPanel>
     </Border>
 </Window>

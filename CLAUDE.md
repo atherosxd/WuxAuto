@@ -89,10 +89,10 @@ dotnet run --project .\tests\WuxAuto.SelfTest -- --do ctrlclick:960,400   # Ctrl
 dotnet run --project .\tests\WuxAuto.SelfTest -- --do ctrlring --do ctrlbelt   # LOD: Ctrl+click the boss ring / belt found live
 
 # stage 5 selection ring (FindSelectionRing) for every PNG in a folder; crops -> %TEMP%\wuxauto-ring
-dotnet run --project .	ests\WuxAuto.SelfTest -- --ring "$env:LOCALAPPDATA\WuxAuto\debug"
+dotnet run --project .\tests\WuxAuto.SelfTest -- --ring "$env:LOCALAPPDATA\WuxAuto\debug"
 
 # map window open / shut for every PNG in a folder (the pilot's MapWindowVisibleAsync test, next to the old one)
-dotnet run --project .	ests\WuxAuto.SelfTest -- --mapopen "$env:LOCALAPPDATA\WuxAuto\debug"
+dotnet run --project .\tests\WuxAuto.SelfTest -- --mapopen "$env:LOCALAPPDATA\WuxAuto\debug"
 
 # LOD boss ring + belt for every PNG in a folder (fast, no OCR)
 dotnet run --project .\tests\WuxAuto.SelfTest -- --lodparts "$env:LOCALAPPDATA\WuxAuto\debug"
@@ -102,6 +102,9 @@ dotnet run --project .\tests\WuxAuto.SelfTest -- --shura "$env:LOCALAPPDATA\WuxA
 
 # Run skill icon + its gold ring (on/off) on the skill bar for every PNG; crops -> %TEMP%\wuxauto-runskill
 dotnet run --project .\tests\WuxAuto.SelfTest -- --runskill "$env:LOCALAPPDATA\WuxAuto\debug"
+
+# kill alert: plays the chime, shows a test notification, checks the notification centre kept it
+dotnet run --project .\tests\WuxAuto.SelfTest -- --alert
 
 # auto-confirm dialog (message line + OK button) for every PNG (absolute path; tests\frames holds the user's crop)
 dotnet run --project .\tests\WuxAuto.SelfTest -- --confirm "$env:LOCALAPPDATA\WuxAuto\debug"
@@ -129,6 +132,7 @@ The app itself:
 | **Dry run (no input)** | full detection, zero input — a "nothing happens" run is often dry-run |
 | **Focus game**, **Reload templates**, **Templates folder**, **Debug snapshots**, **Save settings** | obvious |
 | **Kill screenshots** (user, 2026-10-24: "to check whether it looted or not") | opens `%LOCALAPPDATA%\WuxAuto\kills`. `AutomationPilot.KillShots.cs` + `Vision/KillScreenshots`: plain JPEG (q 90, no overlays, newest 500 kept) when the pilot sees a boss die — Laby `WatchBoss` (banner / name gone) → `laby_s<N>_<boss>`, LOD death text → `lod_kill<N>`, target gone 2 s → `lod_gone` — and a second one when it moves on: LOD at the end of `LodLoot` (`_looted`); Laby 3 s later (`_after`, only in a zone-guarded phase) or earlier, right before `ClickMap` / `OpenInventory` act (the final boss's return teleport opens the inventory ~1.6 s after). Restarts drop a pending shot (`ResetRunState`). Not yet seen live |
+| **Kill chime / Kill notification / Test alert** (user, 2026-10-26: friends run the pilot on a second PC next to their main one and LOD does not always loot everything - "a reminder to recheck"; "do the same for Laby") | `AutomationPilot.BossKilled` (string, loop thread) → `WuxEngine.BossKilled` → `MainViewModel.OnBossKilled` (UI thread) → `Core/KillAlert`. Raised in `OnLabyBossDead` (both `WatchBoss` kill paths, every stage incl. 5: "Stage 2: Spectral down") and at the **end** of `TickLodLoot` ("Bai Gu Great down" - after the loot, the reminder is to check what it left; both LOD kill paths go through it). Chime: `templates\chime.wav` if present (a bad file → built-in + warning), else `KillAlert.GenerateChime` (A5-C#6-E6, 1.6 s, 16-bit mono) written to `%LOCALAPPDATA%\WuxAuto\chime-builtin.wav` - **played from a file on purpose**: `SoundPlayer` from a stream hands a managed buffer to async `PlaySound` (pinned only during the call). Notification: WinRT toast, silent, 2 h expiry, AUMID `atherosxd.WuxAuto` registered under `HKCU\Software\Classes\AppUserModelId` (DisplayName + `notify-icon.png` from the window icon) - an unpackaged app needs that; `ToastNotifier.Setting` throws "Element not found" here, so it is only read best-effort. `Sequence.KillChime` / `KillNotification` (on; check boxes under Loop). Status box + Mini window bottom row show `LastKillText`. A failure logs once per app start; **Test alert** always reports. Verified 2026-10-26 on this PC: chime plays, notification centre count for the AUMID 0 → 1, the button in the real app logs "chime OK" / "notification OK". Not yet seen during a live kill |
 | checkboxes | `Loop`, `Focus on start`, `Only while game is focused`, `Restore cursor` |
 
 ---
@@ -631,7 +635,7 @@ would confirm the move instead.
 Key `DungeonSettings` defaults. The settings panel's **Dungeon** section (2026-10-21) edits Skill key,
 Autohunt key, Target key, Font size % and the switches Tab + skill at the last waypoint, Autohunt off
 for the run, Click the stage 5 gate, Auto reconnect, Hold skill (LOD), Walk up to the boss (LOD), TAB target: Default, Autohunt off in town, Run skill on in town (and the Run key field, default W); everything else only via `settings.json`.
-`tests/WuxAuto.UiShot -- <png> --settings --bottom` renders that panel; it restores `settings.json`
+`tests/WuxAuto.UiShot -- <png> --settings --bottom` renders that panel (`--mini` renders the Mini window instead, `--kill-alert` fills the last-kill line); it restores `settings.json`
 afterwards (it ticks check boxes for the picture and the window saves on close — that once switched
 Dry run on in the real settings).
 

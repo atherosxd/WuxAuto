@@ -23,6 +23,9 @@ public partial class MainViewModel : ObservableObject, IAsyncDisposable
     private readonly Dispatcher _dispatcher;
     private readonly WuxEngine _engine;
     private readonly DispatcherTimer _statusTimer;
+    private readonly KillAlert _killAlert = new();
+    private bool _chimeWarned;
+    private bool _notificationWarned;
 
     [ObservableProperty]
     private WindowInfo? _selectedWindow;
@@ -41,6 +44,10 @@ public partial class MainViewModel : ObservableObject, IAsyncDisposable
 
     [ObservableProperty]
     private string _statText = string.Empty;
+
+    /// <summary>The last kill alert ("14:32:05 Stage 2: Spectral down - check the loot"); empty before the first.</summary>
+    [ObservableProperty]
+    private string _lastKillText = string.Empty;
 
     [ObservableProperty]
     private bool _isBound;
@@ -69,6 +76,7 @@ public partial class MainViewModel : ObservableObject, IAsyncDisposable
         _engine.StateChanged += () => Post(SyncState);
         // The mode buttons bind through Settings: re-read them when the pilot switches the mode.
         _engine.ModeChanged += () => Post(() => OnPropertyChanged(nameof(Settings)));
+        _engine.BossKilled += what => Post(() => OnBossKilled(what));
         _engine.Faulted += message => Post(() =>
         {
             AppendLog(new LogEntry(LogLevel.Error, $"Capture faulted: {message}"));
@@ -305,6 +313,60 @@ public partial class MainViewModel : ObservableObject, IAsyncDisposable
         LogAppended?.Invoke();
     }
 
+    /// <summary>
+    /// Kill alert (user, 2026-10-26: a reminder to check the loot, for friends running the pilot
+    /// on a second PC): the chime and the Windows notification, each if ticked.
+    /// </summary>
+    private void OnBossKilled(string what)
+    {
+        var time = DateTime.Now;
+        LastKillText = $"{time:HH:mm:ss} {what} - check the loot";
+        Alert(what, time, test: false);
+    }
+
+    /// <summary>"Test alert": the chime and the notification as on a kill, so the sound can be checked on this PC.</summary>
+    [RelayCommand]
+    private void TestKillAlert()
+    {
+        var sequence = Settings.Sequence;
+        if (!sequence.KillChime && !sequence.KillNotification)
+        {
+            AppendLog(new LogEntry(LogLevel.Warning, "Kill alert test: 'Kill chime' and 'Kill notification' are both off."));
+            return;
+        }
+
+        Alert("Test", DateTime.Now, test: true);
+    }
+
+    private void Alert(string what, DateTime time, bool test)
+    {
+        var sequence = Settings.Sequence;
+        if (sequence.KillChime)
+            Report(_killAlert.PlayChime(), "chime", ref _chimeWarned, test);
+        if (sequence.KillNotification)
+            Report(_killAlert.Notify("WuxAuto: boss down", $"{what} - check the loot ({time:HH:mm})"), "notification", ref _notificationWarned, test);
+    }
+
+    /// <summary>
+    /// A failed alert is logged once per app start, not on every kill; the test button always
+    /// says how it went.
+    /// </summary>
+    private void Report(string error, string what, ref bool warned, bool test)
+    {
+        if (error.Length == 0)
+        {
+            if (test)
+                AppendLog(new LogEntry(LogLevel.Success, $"Kill alert test: {what} OK."));
+            return;
+        }
+
+        if (warned && !test)
+            return;
+
+        warned = true;
+        AppendLog(new LogEntry(LogLevel.Warning, $"Kill {what}: {error}"));
+    }
+
     [RelayCommand]
     private void RefreshWindows()
     {
@@ -504,5 +566,6 @@ public partial class MainViewModel : ObservableObject, IAsyncDisposable
         _statusTimer.Stop();
         SettingsStore.Save(Settings);
         await _engine.DisposeAsync();
+        _killAlert.Dispose();
     }
 }

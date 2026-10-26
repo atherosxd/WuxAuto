@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Windows;
 using System.Windows.Data;
 using WuxAuto.Core;
 
@@ -23,11 +24,23 @@ public sealed class EnumEqualsConverter : IValueConverter
         => value is true && parameter is string name ? Enum.Parse(targetType, name) : Binding.DoNothing;
 }
 
+/// <summary>Visible for a non-empty string, collapsed for null or empty.</summary>
+public sealed class NotEmptyToVisibilityConverter : IValueConverter
+{
+    public object Convert(object value, Type targetType, object parameter, CultureInfo culture)
+        => value is string { Length: > 0 } ? Visibility.Visible : Visibility.Collapsed;
+
+    public object ConvertBack(object value, Type targetType, object parameter, CultureInfo culture)
+        => Binding.DoNothing;
+}
+
 public static class BoolConverters
 {
     public static IValueConverter Inverse { get; } = new InverseBoolConverter();
 
     public static IValueConverter EnumEquals { get; } = new EnumEqualsConverter();
+
+    public static IValueConverter NotEmptyToVisibility { get; } = new NotEmptyToVisibilityConverter();
 }
 
 /// <summary>Enum choices for the combo boxes.</summary>
