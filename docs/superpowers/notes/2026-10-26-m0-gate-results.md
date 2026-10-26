@@ -4,6 +4,12 @@ M0 asked one question: can an app on the phone capture the game, send touches, r
 pictures? This note holds the measurements and three decisions. The decisions are the controller's
 **recommendations**. The user accepts or changes them.
 
+## Verdict in three lines
+
+- By the plan's rule this is a no-go as written: the accessibility screenshot (`takeScreenshot`) and the one-gesture joystick plus tap both failed.
+- The screen-recording fallback (MediaProjection) passed, and tapping between joystick steps passed (2 of 2 runs).
+- The controller recommends GO with those two changes. The user decides.
+
 ## Setup
 
 - Device: MuMu Player (ARM), Android 12.
@@ -19,23 +25,24 @@ pictures? This note holds the measurements and three decisions. The decisions ar
 
 | Check | What was run | Measured | Result | Evidence |
 |---|---|---|---|---|
-| SHOT | `AccessibilityService.takeScreenshot`, 20 shots (also with a CPU-side `HardwareBuffer` read) | About 2.3 fps. The platform allows one shot per ~333 ms (error 3 if faster). Most frames are pure black: 4 of 20 lit. The CPU read of the buffer is black too. `adb screencap` showed the game fine at the same time. Performance mode did not help. | FAIL | `b0.png`, `b1.png`, `shot_last.png` |
-| SHOTMP | MediaProjection into an ImageReader (RGBA_8888), 20 shots | About 22.7 fps. Shots 1-4 were the launcher (the consent dialog backgrounded the game). Shots 5-20 were game frames, 8-190 ms apart. | PASS | `d2.png`, log `mp shots ok=20 fail=0 fps=22.7` |
+| SHOT | `AccessibilityService.takeScreenshot`, 20 shots (also with a CPU-side `HardwareBuffer` read) | About 2.3 fps. The platform allows one shot per ~333 ms (error 3 if faster). Most frames are pure black: 4 of 20 lit. The CPU read of the buffer is black too. `adb screencap` showed the game fine at the same time. Performance mode did not help. Cause of the black frames not determined. | FAIL | `b0.png`, `b1.png`, `shot_last.png` |
+| SHOTMP | MediaProjection into an ImageReader (RGBA_8888), 20 shots | About 22.7 fps in this one 20-shot run. Shots 1-4 were the launcher (the consent dialog backgrounded the game). Shots 5-20 were game frames, 8-190 ms apart. Later 5-shot runs measured 12.6 and 13.4 fps (launcher frames included). Sustained fps is not measured. A first run with an 8 s delay got only launcher frames; the delay is now 15 s. | PASS | `d2.png`, log `mp shots ok=20 fail=0 fps=22.7` |
 | WALK | Joystick stroke up 2.5 s (centre 264,818, r 106) | 10362,13793 to 10157,13987 (about 282 units) | PASS | `c0.png`, `w_after.png` |
-| SWIPE | 1320,384 to 1080,384 in 600 ms | Camera turned. Minimap beam about -130 deg to -81 deg. | PASS | `s_before.png`, `s_after.png` |
+| SWIPE | 1320,384 to 1080,384 in 600 ms | Camera turned. Minimap beam about -130 deg to -81 deg (the implementer's own estimate from the beam glow). | PASS | `s_before.png`, `s_after.png` |
 | PINCH | Two fingers from 360 to 96 px apart, centre 960,480 | Character height about 160 px to about 110 px (zoomed out) | PASS | `p_before.png`, `p_after.png` |
 | TAP (control) | Tap-only gesture on the WORLD chat tab, then back to GENERAL | WORLD highlighted, then restored | PASS | `k_tabs.png` |
 | MULTI | One gesture: joystick held 2.5 s plus a tap on WORLD at the half-way point | Joystick moved 285 units. Tap not delivered (WORLD not highlighted). | FAIL | `n_tabs.png`, `n_coords.png` |
 | MULTIC | Continued stroke (`willContinue`) for the joystick plus a tap in the second gesture | Joystick moved 354 units. Tap not delivered. (The continued stroke is a 1 px move, close to a hold.) | FAIL | `q_tabs.png`, `q_coords.png` |
 | OCR title | ML Kit Latin on the full 1920x1080 frame | `[Piercing Cityl` at 1671,65. 353 ms (first call includes model load). | PASS | `t3_ocr_match_run2.txt` |
-| OCR coordinates | Same, full frame, then a x2 crop of the minimap (1560,55,340x70) | Full frame: `10158,13589`. The digits are right but ML Kit drops the spaces around the comma, so the desktop's pattern fails. Crop x2: `10158, 13589` in 78 ms. | PASS on the crop | `t3_ocr_match_run2.txt` |
+| OCR coordinates | Same, full frame, then a x2 crop of the minimap (1560,55,340x70) | Full frame: `10158,13589`. The digits are right but ML Kit drops the spaces around the comma, so the desktop's pattern fails. Crop x2: `10158, 13589` in 78 ms. | PASS (crop only) | `t3_ocr_match_run2.txt` |
+| Serialised touch (walk, tap, walk) | Three separate gestures: WALK 1.5 s, TAP on WORLD (803,876), WALK 1.5 s, then TAP on GENERAL to restore | Run 1: walked, WORLD highlighted, walked again (10158,13589 to 10165,13345). Run 2: same (10165,13345 to 10136,13668). A diagnostic run showed each walk moved on its own (-179, then -144). The tap gesture takes about 102 ms. In the app the pause is estimated at 150-250 ms, not measured without the adb sleeps. | PASS (2 of 2) | `ser1.png`, `ser2.png`, `ser3.png` |
 | MATCH | Emgu CV `MatchTemplate` on the device, template cut from the same frame (58x50 at 1790,62) | Score 1.0000 at 1790,62 in about 90 ms. Logged as `selfmatch=path-check`, template std 74.4. | PASS as a path check | log line `match selfmatch=path-check ...` |
 
 Notes on the results:
 
 - MULTI and MULTIC: two simultaneous strokes do work (PINCH zooms the camera), and a tap alone works.
-  So the game appears to ignore a UI-button tap while the joystick touch is held. It is not a
-  `dispatchGesture` limit.
+  So the game appears to ignore a UI-button tap while the joystick touch is held. This is an
+  inference. Other touch orders (for example a tap just before the joystick starts) were not tried.
 - The original MULTI target, Auto Buff, could not be used. It needs Force 90% or more ("Force 90%
   and over required") and the character is at 83%. A harmless target, the WORLD chat tab, was used
   instead.
@@ -73,18 +80,23 @@ Notes on the results:
 **Recommendation: yes for the joystick, swipe, pinch and single taps.**
 
 - A tap while the joystick is held is not delivered, in either form tried.
-- The gesture scheduler therefore serialises touches: end the joystick step, tap, resume. The pilot
-  already walks in discrete steps, so this fits. In LOD, the Tab press during a walk becomes a tap
-  between two steps. The cost is a little walking latency per tap.
+- The gesture scheduler therefore serialises touches: end the joystick step, tap, resume. This was
+  measured: walk, tap, walk worked 2 of 2 times, and each walk moved the character on its own. The
+  pilot already walks in discrete steps, so this fits. In LOD, the Tab press during a walk becomes a
+  tap between two steps. The estimated cost is 150-250 ms of paused walking per tap.
 - Spec section 5.4 assumed "joystick held plus a tap" in one gesture. That assumption is dropped.
 
 ## Go / no-go
 
-The plan treats screenshot, walk or multi failing as a no-go. Screenshot passes through the
-MediaProjection fallback and walk passes. MULTI fails as specified but has a workaround. So the
+The plan treats screenshot, walk or multi failing as a no-go. The screenshot check as specified
+(`takeScreenshot`) failed; the MediaProjection fallback passed. Walk passed. MULTI failed as
+specified, but walk, tap, walk passed. So by the plan's rule this is a no-go as written, and the
 call is the user's.
 
 **Recommendation: GO, with the two changes above (MediaProjection capture, serialised touches).**
+
+If the user picks no-go, the spec (section 7, M0) names the alternatives: Shizuku, or wireless-debugging
+`input` (which must be re-paired after every reboot). Nothing like that is built without the user's OK.
 
 ## What Plan 2 must carry
 
