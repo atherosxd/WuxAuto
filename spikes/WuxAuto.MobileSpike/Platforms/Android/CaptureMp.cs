@@ -76,40 +76,49 @@ public class MpService : Service
     {
         var mpm = (MediaProjectionManager)GetSystemService(MediaProjectionService)!;
         var proj = mpm.GetMediaProjection(code, data)!;
-        proj.RegisterCallback(new ProjCb(), new Handler(Looper.MainLooper!));
-        var m = Resources!.DisplayMetrics!;
-        // The consent dialog and the launcher cover the game for a moment: let it come back to the front first.
-        await Task.Delay(8000);
-        int w = m.WidthPixels, h = m.HeightPixels;
-        using var reader = ImageReader.NewInstance(w, h, (ImageFormatType)1 /* RGBA_8888 */, 2)!;
-        var vd = proj.CreateVirtualDisplay("wuxspike", w, h, (int)m.DensityDpi,
-            (DisplayFlags)16 /* AUTO_MIRROR */, reader.Surface, null, null)!;
-        int ok = 0, fail = 0;
-        var total = Stopwatch.StartNew();
-        var prev = 0L;
-        for (var n = 1; n <= count; n++)
+        VirtualDisplay? vd = null;
+        try
         {
-            Bitmap? bmp = null;
-            var deadline = total.ElapsedMilliseconds + 3000;
-            while (bmp == null && total.ElapsedMilliseconds < deadline)
+            proj.RegisterCallback(new ProjCb(), new Handler(Looper.MainLooper!));
+            var m = Resources!.DisplayMetrics!;
+            // The consent dialog and the launcher cover the game for a moment: let it come back to the front first.
+            await Task.Delay(15000);
+            int w = m.WidthPixels, h = m.HeightPixels;
+            using var reader = ImageReader.NewInstance(w, h, (ImageFormatType)1 /* RGBA_8888 */, 2)!;
+            vd = proj.CreateVirtualDisplay("wuxspike", w, h, (int)m.DensityDpi,
+                (DisplayFlags)16 /* AUTO_MIRROR */, reader.Surface, null, null)!;
+            int ok = 0, fail = 0;
+            var total = Stopwatch.StartNew();
+            var prev = 0L;
+            for (var n = 1; n <= count; n++)
             {
-                var img = reader.AcquireLatestImage();
-                if (img == null) { await Task.Delay(15); continue; }
-                try { bmp = ToBitmap(img, w, h); }
-                finally { img.Close(); } // an unclosed Image counts against maxImages
+                Bitmap? bmp = null;
+                var deadline = total.ElapsedMilliseconds + 3000;
+                while (bmp == null && total.ElapsedMilliseconds < deadline)
+                {
+                    var img = reader.AcquireLatestImage();
+                    if (img == null) { await Task.Delay(15); continue; }
+                    try { bmp = ToBitmap(img, w, h); }
+                    finally { img.Close(); } // an unclosed Image counts against maxImages
+                }
+                var now = total.ElapsedMilliseconds;
+                if (bmp == null) { fail++; prev = now; continue; }
+                ok++;
+                var lit = SpikeService.LitFraction(bmp);
+                Log.Info(SpikeService.Tag, $"mp shot {n} {w}x{h} t={now - prev} lit={lit:F3}");
+                prev = now;
+                SpikeService.Offer(bmp, lit);
             }
-            var now = total.ElapsedMilliseconds;
-            if (bmp == null) { fail++; prev = now; continue; }
-            ok++;
-            Log.Info(SpikeService.Tag, $"mp shot {n} {w}x{h} t={now - prev} lit={SpikeService.LitFraction(bmp):F3}");
-            prev = now;
-            SpikeService.LastShot = bmp;
+            var secs = Math.Max(total.ElapsedMilliseconds, 1) / 1000.0;
+            SpikeService.SaveLast("shot_last_mp.png");
+            Log.Info(SpikeService.Tag, $"mp shots ok={ok} fail={fail} fps={ok / secs:F1} lastShotLit={SpikeService.LastShotLit:F3}");
         }
-        var secs = Math.Max(total.ElapsedMilliseconds, 1) / 1000.0;
-        SpikeService.SaveLast("shot_last_mp.png");
-        Log.Info(SpikeService.Tag, $"mp shots ok={ok} fail={fail} fps={ok / secs:F1}");
-        vd.Release();
-        proj.Stop();
+        finally
+        {
+            // Always release, even if capture threw after the display was created.
+            try { vd?.Release(); } catch (Exception) { }
+            try { proj.Stop(); } catch (Exception) { }
+        }
     }
 
     static Bitmap ToBitmap(AImage img, int w, int h)

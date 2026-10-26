@@ -36,6 +36,25 @@ public class SpikeService : AccessibilityService
     }
     static Bitmap? _lastShot;
 
+    /// <summary>Lit fraction (0..1) of <see cref="LastShot"/>; about 0.99 for a game frame. Task 3 should check this before OCR/MATCH.</summary>
+    public static double LastShotLit { get; private set; }
+
+    /// <summary>Frames darker than this are treated as black and never replace <see cref="LastShot"/>.</summary>
+    const double BlackLit = 0.05;
+
+    /// <summary>Stores <paramref name="bmp"/> as LastShot unless it is black (then it is recycled and the previous frame kept).</summary>
+    internal static void Offer(Bitmap bmp, double lit)
+    {
+        if (lit < BlackLit)
+        {
+            Log.Info(Tag, "black frame, kept previous LastShot");
+            bmp.Recycle();
+            return;
+        }
+        LastShot = bmp; // recycles the previous one
+        LastShotLit = lit;
+    }
+
     // Hardcoded for the 1600x900 MuMu layout (spec 4).
     const float JoyX = 220, JoyY = 682, JoyR = 88;
 
@@ -184,13 +203,14 @@ public class SpikeService : AccessibilityService
             var now = total.ElapsedMilliseconds;
             if (bmp == null) { fail++; prev = now; continue; }
             ok++;
-            Log.Info(Tag, $"shot {n} {bmp.Width}x{bmp.Height} t={now - prev} lit={LitFraction(bmp):F3}");
+            var lit = LitFraction(bmp);
+            Log.Info(Tag, $"shot {n} {bmp.Width}x{bmp.Height} t={now - prev} lit={lit:F3}");
             prev = now;
-            LastShot = bmp; // recycles the previous one
+            Offer(bmp, lit);
         }
         var secs = Math.Max(total.ElapsedMilliseconds, 1) / 1000.0;
         SaveLast("shot_last.png");
-        Log.Info(Tag, $"shots ok={ok} fail={fail} fps={ok / secs:F1}");
+        Log.Info(Tag, $"shots ok={ok} fail={fail} fps={ok / secs:F1} lastShotLit={LastShotLit:F3}");
     }
 
     /// <summary>Writes <see cref="LastShot"/> as a PNG into the app's external files "shots" folder.</summary>
