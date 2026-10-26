@@ -155,9 +155,11 @@ public sealed partial class AutomationPilot
     private bool _skillHit;
     private int _manualPresses = -1;    // -1 = not attacking by hand yet
     private bool _manualHit;
-    private bool _huntClicking;              // stage 5: autohunt on, now the centre clicks as on stages 1-4
+    private bool _huntOn;                    // stage 5: autohunt on, waiting for a new attack line within AutohuntConfirmMs
+    private long _huntOnAt;
     private long _lastManualPressAt;
-    private int _manualRounds;               // stage 5: rounds of ManualAttacks presses that ended without a selection ring
+    private int _manualRounds;               // stage 5: rounds of ManualAttacks presses that ended without ring + attack line
+    private bool _clickSelect;               // stage 5: after such a round, selecting the boss with the centre clicks (autohunt off)
     private int _noRingShots;                // noring_s5 snapshots this Start (<= 3)
     private bool _finalHuntOffChecked;       // stage 5: the autohunt was read off in the combat log on this arrival
     private bool _westDone;
@@ -428,7 +430,9 @@ public sealed partial class AutomationPilot
         _manualPresses = -1;
         _manualHit = false;
         _manualRounds = 0;
-        _huntClicking = false;
+        _clickSelect = false;
+        _huntOn = false;
+        _huntOnAt = 0;
         _nextBossCheckAt = 0;
         _lastWatchTabAt = 0;
         _watchTabs = 0;
@@ -3173,6 +3177,12 @@ public sealed partial class AutomationPilot
             _selectBaselineTaken = true;
         }
 
+        if (IsFinalBoss && _huntOn)
+        {
+            await TickAutohuntConfirmAsync(frame, msgRoi);
+            return;
+        }
+
         if (_manualPresses >= 0)
         {
             await TickManualAttackAsync(frame, msgRoi, confirm);
@@ -3181,7 +3191,9 @@ public sealed partial class AutomationPilot
 
         // Stage 5 only: selected = the magenta ring under a monster (user) while the boss's name
         // shows (the ring alone could be under a normal mob). The OCR only runs when there is a ring.
-        var ring = IsFinalBoss && !_huntClicking ? _analyzer.FindSelectionRing(frame) : null;
+        // Not while the centre clicks select the boss after a failed ring + attack-line check: there
+        // only a new attack line from a click counts, or the ring alone would loop back at once.
+        var ring = IsFinalBoss && !_clickSelect ? _analyzer.FindSelectionRing(frame) : null;
         if (ring is { } ringBox)
         {
             _overlays.Add(new OverlayItem(ringBox, "selected", OverlayColor.Green));
@@ -3196,7 +3208,7 @@ public sealed partial class AutomationPilot
         if (_selectClickedAt.HasValue)
         {
             string log = await ReadAttackLogAsync(frame, msgRoi, dungeon.AttackConfirmText);
-            if (log.Length > 0 && log != _attackLog && (!IsFinalBoss || _huntClicking))
+            if (log.Length > 0 && log != _attackLog && !IsFinalBoss)
             {
                 // Stages 1-4: the old flow (user) - autohunt is on already, just watch.
                 Log?.Invoke(LogLevel.Success,
@@ -3227,7 +3239,7 @@ public sealed partial class AutomationPilot
         {
             // Stage 5 before the autohunt: no hit from the clicks = not selected, and the autohunt
             // must not go on without the selection ring (user, 2026-10-26) - Tab for the boss again.
-            if (IsFinalBoss && !_huntClicking)
+            if (IsFinalBoss)
             {
                 Log?.Invoke(LogLevel.Warning,
                     $"No '{dungeon.AttackConfirmText}' after {_selectTries} click(s) around the centre - autohunt stays off; Tab for '{dungeon.FinalBoss}' again.");
@@ -3341,7 +3353,7 @@ public sealed partial class AutomationPilot
     {
         var dungeon = _settings.Dungeon;
         _manualPresses = 0;
-        _manualRounds = 0;
+        _clickSelect = false;
         Log?.Invoke(LogLevel.Success,
             $"Boss for stage {_stageIndex + 1} selected ({why}) - attacking with '{dungeon.SkillKey}' x{dungeon.ManualAttacks} ({dungeon.ManualAttackIntervalMs} ms apart) before the autohunt" +
             (IsFinalBoss ? ", which needs the selection ring under the boss." : "."));
@@ -3354,15 +3366,16 @@ public sealed partial class AutomationPilot
     /// WatchBoss (user: the autohunt alone did not attack a selected boss). Without a hit yet it keeps
     /// pressing, up to 3x as many times. Stage 5 (user, 2026-10-26): the autohunt only goes on with
     /// the magenta selection ring under the boss <b>and</b> a new attack line after the last press;
-    /// either missing -> Tab + another round of presses (3 rounds), then back to the Tab wait with the
-    /// autohunt still off (<c>noring_s5</c> snapshot).
+    /// either missing -> the stage 1-4 centre clicks select the boss (<c>_clickSelect</c>), a hit
+    /// starts another round of presses (3 rounds), then back to the Tab wait with the autohunt still
+    /// off (<c>noring_s5</c> snapshot).
     /// </summary>
     private async Task TickManualAttackAsync(Mat frame, PixelRect msgRoi, bool confirm)
     {
         var dungeon = _settings.Dungeon;
         long now = Environment.TickCount64;
         int wanted = string.IsNullOrWhiteSpace(dungeon.SkillKey) ? 0 : dungeon.ManualAttacks;
-        const int maxRounds = 3;
+        const int maxRounds = MaxManualRounds;
 
         // Read every tick, so the baseline is current when the last press goes out.
         if (confirm && _manualPresses > 0)
@@ -3419,7 +3432,9 @@ public sealed partial class AutomationPilot
         // Stage 5: the selection ring under the boss AND a new "Attack succeeded" line after the last
         // press, or no autohunt (user, 2026-10-26: it sat "on" next to the boss without attacking;
         // the ring alone was not enough - "couple the selection ring detection with attack succeeded
-        // log"). Either missing -> Tab and another round of presses; after 3 rounds back to the Tab
+        // log"). Either missing -> the character stands at the boss by now, so the centre clicks of
+        // stages 1-4 select it (user: "use the same click mechanic used in other bosses"); a click
+        // with a new attack line starts another round of presses. After 3 rounds back to the Tab
         // wait, autohunt still off.
         if (IsFinalBoss && wanted > 0)
         {
@@ -3438,19 +3453,17 @@ public sealed partial class AutomationPilot
 
                 if (++_manualRounds < maxRounds)
                 {
-                    if (!_input.KeyTap(dungeon.TabKey))
-                    {
-                        _manualRounds--;
-                        _detail = "tab key blocked - waiting for the game to be in front";
-                        _waitUntil = now + 300;
-                        return;
-                    }
-
                     Log?.Invoke(LogLevel.Warning,
-                        $"{missing} after {_manualPresses} press(es) of '{dungeon.SkillKey}' - '{dungeon.TabKey}' and another {wanted} press(es) (round {_manualRounds + 1}/{maxRounds}) before the autohunt.");
-                    _manualPresses = 0;
+                        $"{missing} after {_manualPresses} press(es) of '{dungeon.SkillKey}' - selecting the boss with the centre clicks (round {_manualRounds + 1}/{maxRounds}), autohunt still off.");
+                    _clickSelect = true;
+                    _manualPresses = -1;
                     _manualHit = false;
-                    _waitUntil = now + dungeon.TabSettleMs;
+                    _skillHit = true;
+                    _selectTries = 0;
+                    _selectClickedAt = null;
+                    if (confirm)
+                        _attackLog = await ReadAttackLogAsync(frame, msgRoi, dungeon.AttackConfirmText);
+                    _waitUntil = now + 300;
                     return;
                 }
 
@@ -3472,22 +3485,79 @@ public sealed partial class AutomationPilot
         Log?.Invoke(_manualHit || !confirm ? LogLevel.Success : LogLevel.Warning,
             $"Attacked by hand {_manualPresses}x ({(_manualHit ? "hit" : confirm ? "no hit seen" : "no check")}){(IsFinalBoss ? " with the selection ring under the boss" : "")} - autohunt on.");
 
-        // Stage 5: then the centre clicks of stages 1-4 until a new attack line (user) - the autohunt
-        // does not attack a boss that is not selected.
+        // Stage 5 (user, 2026-10-26): the autohunt must show a new attack line within
+        // AutohuntConfirmMs (2 s), or it is turned off again and the manual attacks repeat.
         if (IsFinalBoss && confirm)
         {
-            _huntClicking = true;
+            _huntOn = true;
+            _huntOnAt = Environment.TickCount64;
             _manualPresses = -1;
-            _skillHit = true;
-            _selectTries = 0;
-            _selectClickedAt = null;
             _attackLog = await ReadAttackLogAsync(frame, msgRoi, dungeon.AttackConfirmText);
-            Log?.Invoke(LogLevel.Info, "Clicking around the centre to select the boss for the autohunt.");
-            _waitUntil = now + 400;
+            _detail = $"autohunt on - waiting for a new '{dungeon.AttackConfirmText}' ({dungeon.AutohuntConfirmMs} ms)";
+            _waitUntil = now + 250;
             return;
         }
 
         Advance(PilotPhase.WatchBoss, 500);
+    }
+
+    /// <summary>Stage 5: the autohunt may select the boss and attack it by hand this many times in a row before the pilot goes back to the Tab wait.</summary>
+    private const int MaxManualRounds = 3;
+
+    /// <summary>
+    /// Stage 5, autohunt just turned on (user, 2026-10-26: "if autohunt is on and no attack succeeded
+    /// follows after 2s, turn off auto hunt then try to manually attack then autohunt"): a new attack
+    /// line within <c>AutohuntConfirmMs</c> -> WatchBoss. None -> J (off), another round of
+    /// ManualAttacks presses (then the ring + attack-line check and J again); after
+    /// <see cref="MaxManualRounds"/> rounds back to the Tab wait with the autohunt off.
+    /// </summary>
+    private async Task TickAutohuntConfirmAsync(Mat frame, PixelRect msgRoi)
+    {
+        var dungeon = _settings.Dungeon;
+        long now = Environment.TickCount64;
+
+        string log = await ReadAttackLogAsync(frame, msgRoi, dungeon.AttackConfirmText);
+        if (log.Length > 0 && log != _attackLog)
+        {
+            Log?.Invoke(LogLevel.Success,
+                $"'{dungeon.AttackConfirmText}' {now - _huntOnAt} ms after the autohunt went on - watching '{dungeon.FinalBoss}'.");
+            _huntOn = false;
+            Advance(PilotPhase.WatchBoss, 300);
+            return;
+        }
+
+        if (now - _huntOnAt < dungeon.AutohuntConfirmMs)
+        {
+            _detail = $"autohunt on - waiting for a new '{dungeon.AttackConfirmText}' ({now - _huntOnAt}/{dungeon.AutohuntConfirmMs} ms)";
+            _waitUntil = now + 250;
+            return;
+        }
+
+        // Autohunt off again (J is a toggle).
+        if (_autohuntPressed && !string.IsNullOrWhiteSpace(dungeon.AutohuntKey) && !_input.KeyTap(dungeon.AutohuntKey))
+        {
+            _detail = "autohunt key blocked - waiting for the game to be in front";
+            _waitUntil = now + 300;
+            return;
+        }
+
+        _autohuntPressed = false;
+        _huntOn = false;
+
+        if (++_manualRounds < MaxManualRounds)
+        {
+            Log?.Invoke(LogLevel.Warning,
+                $"No new '{dungeon.AttackConfirmText}' within {dungeon.AutohuntConfirmMs} ms of the autohunt - '{dungeon.AutohuntKey}' off, attacking by hand again (round {_manualRounds + 1}/{MaxManualRounds}).");
+            _manualHit = false;
+            StartManualAttack($"autohunt did not attack within {dungeon.AutohuntConfirmMs} ms");
+            return;
+        }
+
+        Log?.Invoke(LogLevel.Warning,
+            $"No new '{dungeon.AttackConfirmText}' within {dungeon.AutohuntConfirmMs} ms of the autohunt after {MaxManualRounds} rounds - autohunt off; Tab for '{dungeon.FinalBoss}' again.");
+        if (_noRingShots++ < 3)
+            DebugArtifacts.SaveFrame(frame, _overlays, "noring_s5");
+        ArriveAtFinalBoss();
     }
 
     /// <summary>Autohunt on (J is a toggle) unless it already is. False while the key is blocked.</summary>

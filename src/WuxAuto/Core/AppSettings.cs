@@ -785,6 +785,12 @@ public sealed class DungeonSettings
     /// <summary>After the last manual press: wait this long, then look for "Attack succeeded" (user: 500 ms).</summary>
     public int ManualAttackWaitMs { get; set; } = 500;
 
+    /// <summary>
+    /// Stage 5: a new "Attack succeeded" line must follow within this long of the autohunt going on,
+    /// or the autohunt is turned off again and the manual attacks repeat (user, 2026-10-26: 2 s).
+    /// </summary>
+    public int AutohuntConfirmMs { get; set; } = 2000;
+
     /// <summary>How far the right-drag moves the mouse upwards to tilt the camera (user: 60 px).</summary>
     [JsonIgnore]
     public int CameraTiltPx { get; set; } = 60;
