@@ -111,16 +111,6 @@ dotnet run --project .\tests\WuxAuto.SelfTest -- --alert
 dotnet run --project .\tests\WuxAuto.SelfTest -- --confirm "$env:LOCALAPPDATA\WuxAuto\debug"
 ```
 
-Core tests and the refactor parity gate (M1, 2026-10-27):
-
-```powershell
-dotnet test tests\WuxAuto.Core.Tests        # xUnit, platform-free Core only
-# probe baseline: runs every SelfTest probe over %LOCALAPPDATA%\WuxAuto\parity-frames\ (a frozen,
-# local-only frame set, never committed) and writes normalised output; run it before and after a
-# refactor and diff the two - M1's move-only split matched the pre-M1 baseline at every step
-.\tests\probe-baseline.ps1
-```
-
 `--do` frames land in `%TEMP%\wuxauto-step<N>-<verb>.png`. Check the frame before every click: an
 Escape with a target selected only clears the target (no SETTINGS window), and the clicks meant for
 the window then walk the character (2026-10-24). `WuxAuto.slnx` does not build `tests\WuxAuto.SelfTest`
@@ -128,6 +118,25 @@ the window then walk the character (2026-10-24). `WuxAuto.slnx` does not build `
 
 The frame probe prints, per template, the best score, box, learned scale and timing, plus OCR
 words and the map scroll-arrow result. `--crop` writes `<frame>.crop.png` next to the frame.
+
+Core tests and the refactor parity gate (M1, 2026-10-27):
+
+```powershell
+dotnet test tests\WuxAuto.Core.Tests        # xUnit, platform-free Core only
+# probe baseline: runs every SelfTest probe over a frozen, local-only frame set (never committed)
+# and writes normalised output; run it before and after a refactor and diff the two
+.\tests\probe-baseline.ps1 -Out <dir> [-Frames <dir>] [-SkipBuild] [-Only <probe,...>]
+git diff --no-index --stat <a> <b>          # compare two runs; empty = identical
+```
+
+* Default frames: `%LOCALAPPDATA%\WuxAuto\parity-frames`, a one-off copy of `debug\*.png` (517 frames
+  on 2026-10-26), never modified afterwards.
+* A full run takes ~12-14 min; the script exits 1 and prints `PROBE FAILURES` if a probe fails.
+* The probes read the live `settings.json` and any `templates\` overrides, so changes there show up as diffs.
+* M1's move-only split was checked against the pre-M1 baseline after the seam step (Task 7) and after
+  the move (Task 8), cumulatively; Task 6 had no run of its own.
+* The M1 baseline (`baseline-a`) lived only in a session scratchpad; regenerate it from main or v0.11.0
+  when M2 needs one.
 
 The app itself:
 
@@ -143,7 +152,7 @@ The app itself:
 | **Dry run (no input)** | full detection, zero input — a "nothing happens" run is often dry-run |
 | **Focus game**, **Reload templates**, **Templates folder**, **Debug snapshots**, **Save settings** | obvious |
 | **Kill screenshots** (user, 2026-10-24: "to check whether it looted or not") | opens `%LOCALAPPDATA%\WuxAuto\kills`. `AutomationPilot.KillShots.cs` + `Vision/KillScreenshots` (both in WuxAuto.Core): plain JPEG (q 90, no overlays, newest 500 kept) when the pilot sees a boss die — Laby `WatchBoss` (banner / name gone) → `laby_s<N>_<boss>`, LOD death text → `lod_kill<N>`, target gone 2 s → `lod_gone` — and a second one when it moves on: LOD at the end of `LodLoot` (`_looted`); Laby 3 s later (`_after`, only in a zone-guarded phase) or earlier, right before `ClickMap` / `OpenInventory` act (the final boss's return teleport opens the inventory ~1.6 s after). Restarts drop a pending shot (`ResetRunState`). Not yet seen live |
-| **Kill chime / Kill notification / Test alert** (user, 2026-10-26: friends run the pilot on a second PC next to their main one and LOD does not always loot everything - "a reminder to recheck"; "do the same for Laby") | `AutomationPilot.BossKilled` (string, loop thread) → `WuxEngine.BossKilled` → `MainViewModel.OnBossKilled` (UI thread) → `Core/KillAlert`. Raised in `OnLabyBossDead` (both `WatchBoss` kill paths, every stage incl. 5: "Stage 2: Spectral down") and at the **end** of `TickLodLoot` ("Bai Gu Great down" - after the loot, the reminder is to check what it left; both LOD kill paths go through it). Chime: `templates\chime.wav` if present (a bad file → built-in + warning), else `KillAlert.GenerateChime` (A5-C#6-E6, 1.6 s, 16-bit mono) written to `%LOCALAPPDATA%\WuxAuto\chime-builtin.wav` - **played from a file on purpose**: `SoundPlayer` from a stream hands a managed buffer to async `PlaySound` (pinned only during the call). Notification: WinRT toast, silent, 2 h expiry, AUMID `atherosxd.WuxAuto` registered under `HKCU\Software\Classes\AppUserModelId` (DisplayName + `notify-icon.png` from the window icon) - an unpackaged app needs that; `ToastNotifier.Setting` throws "Element not found" here, so it is only read best-effort. `Sequence.KillChime` / `KillNotification` (on; check boxes under Loop). Status box + Mini window bottom row show `LastKillText`. A failure logs once per app start; **Test alert** always reports. Verified 2026-10-26 on this PC: chime plays, notification centre count for the AUMID 0 → 1, the button in the real app logs "chime OK" / "notification OK". Not yet seen during a live kill |
+| **Kill chime / Kill notification / Test alert** (user, 2026-10-26: friends run the pilot on a second PC next to their main one and LOD does not always loot everything - "a reminder to recheck"; "do the same for Laby") | `AutomationPilot.BossKilled` (string, loop thread) → `WuxEngine.BossKilled` → `MainViewModel.OnBossKilled` (UI thread) → `Core/KillAlert` (desktop project, `src/WuxAuto/Core/`). Raised in `OnLabyBossDead` (both `WatchBoss` kill paths, every stage incl. 5: "Stage 2: Spectral down") and at the **end** of `TickLodLoot` ("Bai Gu Great down" - after the loot, the reminder is to check what it left; both LOD kill paths go through it). Chime: `templates\chime.wav` if present (a bad file → built-in + warning), else `KillAlert.GenerateChime` (A5-C#6-E6, 1.6 s, 16-bit mono) written to `%LOCALAPPDATA%\WuxAuto\chime-builtin.wav` - **played from a file on purpose**: `SoundPlayer` from a stream hands a managed buffer to async `PlaySound` (pinned only during the call). Notification: WinRT toast, silent, 2 h expiry, AUMID `atherosxd.WuxAuto` registered under `HKCU\Software\Classes\AppUserModelId` (DisplayName + `notify-icon.png` from the window icon) - an unpackaged app needs that; `ToastNotifier.Setting` throws "Element not found" here, so it is only read best-effort. `Sequence.KillChime` / `KillNotification` (on; check boxes under Loop). Status box + Mini window bottom row show `LastKillText`. A failure logs once per app start; **Test alert** always reports. Verified 2026-10-26 on this PC: chime plays, notification centre count for the AUMID 0 → 1, the button in the real app logs "chime OK" / "notification OK". Not yet seen during a live kill |
 | checkboxes | `Loop`, `Focus on start`, `Only while game is focused`, `Restore cursor` |
 
 ---
@@ -159,7 +168,8 @@ src/WuxAuto.Core            net10.0 class library, platform-free (M1, 2026-10-27
                        (load/save/migrate; `AppPaths.Configure(root, assetsFolder?)`), Geometry
                        (NormRect/PixelRect), LogEntry
   Platform/            the seams: IOcrEngine (desktop: OcrService), IGameInput (desktop: WindowInput),
-                       MouseButton. ScreenAnalyzer takes (and disposes) its IOcrEngine, the pilot takes
+                       MouseButton. IOcrEngine and IGameInput are in namespace `WuxAuto.Core`, MouseButton
+                       in `WuxAuto.Input`. ScreenAnalyzer takes (and disposes) its IOcrEngine, the pilot takes
                        an IGameInput; `AutomationPilot.TickAsync(Mat, CancellationToken)` gets only the frame
   Vision/              TemplateMatcher, TemplateLibrary, ScreenAnalyzer, CompassDetector, OverlayRenderer,
                        KillScreenshots, TextMatcher, VisionModels
@@ -178,7 +188,7 @@ src/WuxAuto                 WPF desktop app, references Core
   Vision/              OcrService (Windows.Media.Ocr, implements IOcrEngine)
   ViewModels/, MainWindow.*   WPF UI
 tests/WuxAuto.SelfTest      offline probes (see above)
-tests/WuxAuto.Core.Tests    xUnit tests of Core (settings, geometry, text matching, ...); `dotnet test`
+tests/WuxAuto.Core.Tests    xUnit tests of Core (AppPathsTests, which round-trips settings through SettingsStore; TextMatcherTests); `dotnet test`
 tests/probe-baseline.ps1    runs every SelfTest probe over a frozen frame set and writes normalised
                             output for before/after diffs (refactor parity check, section 2)
 tests/WuxAuto.UiShot        renders the window to a PNG

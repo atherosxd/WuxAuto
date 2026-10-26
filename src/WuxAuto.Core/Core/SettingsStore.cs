@@ -13,12 +13,13 @@ public static class AppPaths
     /// <summary>Shipped template images. Defaults to the Assets folder next to the executable.</summary>
     public static string AssetsFolder { get; private set; } = Path.Combine(AppContext.BaseDirectory, "Assets");
 
-    /// <summary>Points every folder at <paramref name="root"/>; the assets folder only changes when one is given.</summary>
+    /// <summary>Points every folder at <paramref name="root"/>; the assets folder is set to <paramref name="assetsFolder"/>, or reset to the default Assets folder next to the executable when none is given.</summary>
     public static void Configure(string root, string? assetsFolder = null)
     {
         Root = root;
         AssetsFolder = assetsFolder ?? Path.Combine(AppContext.BaseDirectory, "Assets");
     }
+
     public static string SettingsFile => Path.Combine(Root, "settings.json");
     public static string DebugFolder => Path.Combine(Root, "debug");
     public static string TemplateFolder => Path.Combine(Root, "templates");
