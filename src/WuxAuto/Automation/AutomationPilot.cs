@@ -3353,8 +3353,9 @@ public sealed partial class AutomationPilot
     /// the target and attacks), at least <c>ManualAttackIntervalMs</c> apart, then the autohunt on and
     /// WatchBoss (user: the autohunt alone did not attack a selected boss). Without a hit yet it keeps
     /// pressing, up to 3x as many times. Stage 5 (user, 2026-10-26): the autohunt only goes on with
-    /// the magenta selection ring under the boss; without it Tab + another round of presses (3 rounds),
-    /// then back to the Tab wait with the autohunt still off (<c>noring_s5</c> snapshot).
+    /// the magenta selection ring under the boss <b>and</b> a new attack line after the last press;
+    /// either missing -> Tab + another round of presses (3 rounds), then back to the Tab wait with the
+    /// autohunt still off (<c>noring_s5</c> snapshot).
     /// </summary>
     private async Task TickManualAttackAsync(Mat frame, PixelRect msgRoi, bool confirm)
     {
@@ -3415,37 +3416,46 @@ public sealed partial class AutomationPilot
             return;
         }
 
-        // Stage 5: the selection ring under the boss, or no autohunt (user, 2026-10-26: it sat "on"
-        // next to the boss without attacking). No ring -> Tab and another round of presses; after
-        // 3 rounds back to the Tab wait, autohunt still off.
+        // Stage 5: the selection ring under the boss AND a new "Attack succeeded" line after the last
+        // press, or no autohunt (user, 2026-10-26: it sat "on" next to the boss without attacking;
+        // the ring alone was not enough - "couple the selection ring detection with attack succeeded
+        // log"). Either missing -> Tab and another round of presses; after 3 rounds back to the Tab
+        // wait, autohunt still off.
         if (IsFinalBoss && wanted > 0)
         {
             var ring = _analyzer.FindSelectionRing(frame);
             if (ring is { } ringBox)
-            {
                 _overlays.Add(new OverlayItem(ringBox, "selected", OverlayColor.Green));
-            }
-            else if (++_manualRounds < maxRounds)
+
+            bool attacking = _manualHit || !confirm;
+            if (ring == null || !attacking)
             {
-                if (!_input.KeyTap(dungeon.TabKey))
+                string missing = ring == null && !attacking
+                    ? $"No selection ring under the boss and no new '{dungeon.AttackConfirmText}'"
+                    : ring == null
+                        ? $"No selection ring under the boss (new '{dungeon.AttackConfirmText}' seen)"
+                        : $"Selection ring under the boss but no new '{dungeon.AttackConfirmText}'";
+
+                if (++_manualRounds < maxRounds)
                 {
-                    _manualRounds--;
-                    _detail = "tab key blocked - waiting for the game to be in front";
-                    _waitUntil = now + 300;
+                    if (!_input.KeyTap(dungeon.TabKey))
+                    {
+                        _manualRounds--;
+                        _detail = "tab key blocked - waiting for the game to be in front";
+                        _waitUntil = now + 300;
+                        return;
+                    }
+
+                    Log?.Invoke(LogLevel.Warning,
+                        $"{missing} after {_manualPresses} press(es) of '{dungeon.SkillKey}' - '{dungeon.TabKey}' and another {wanted} press(es) (round {_manualRounds + 1}/{maxRounds}) before the autohunt.");
+                    _manualPresses = 0;
+                    _manualHit = false;
+                    _waitUntil = now + dungeon.TabSettleMs;
                     return;
                 }
 
                 Log?.Invoke(LogLevel.Warning,
-                    $"No selection ring under the boss after {_manualPresses} press(es) of '{dungeon.SkillKey}' ({(_manualHit ? "hit" : "no hit")}) - '{dungeon.TabKey}' and another {wanted} press(es) (round {_manualRounds + 1}/{maxRounds}) before the autohunt.");
-                _manualPresses = 0;
-                _manualHit = false;
-                _waitUntil = now + dungeon.TabSettleMs;
-                return;
-            }
-            else
-            {
-                Log?.Invoke(LogLevel.Warning,
-                    $"No selection ring under the boss after {maxRounds} rounds of '{dungeon.SkillKey}' x{wanted} - autohunt stays off; Tab for '{dungeon.FinalBoss}' again.");
+                    $"{missing} after {maxRounds} rounds of '{dungeon.SkillKey}' x{wanted} - autohunt stays off; Tab for '{dungeon.FinalBoss}' again.");
                 if (_noRingShots++ < 3)
                     DebugArtifacts.SaveFrame(frame, _overlays, "noring_s5");
                 ArriveAtFinalBoss();
@@ -3460,7 +3470,7 @@ public sealed partial class AutomationPilot
         }
 
         Log?.Invoke(_manualHit || !confirm ? LogLevel.Success : LogLevel.Warning,
-            $"Attacked by hand {_manualPresses}x ({(_manualHit ? "hit" : confirm ? "no hit seen" : "no check")}){(IsFinalBoss ? ", selection ring under the boss" : "")} - autohunt on.");
+            $"Attacked by hand {_manualPresses}x ({(_manualHit ? "hit" : confirm ? "no hit seen" : "no check")}){(IsFinalBoss ? " with the selection ring under the boss" : "")} - autohunt on.");
 
         // Stage 5: then the centre clicks of stages 1-4 until a new attack line (user) - the autohunt
         // does not attack a boss that is not selected.
