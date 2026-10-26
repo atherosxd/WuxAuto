@@ -243,6 +243,7 @@ public static class SettingsStore
         s.Dungeon.ManualAttacks = Math.Clamp(s.Dungeon.ManualAttacks, 0, 100);
         s.Dungeon.ManualAttackIntervalMs = Math.Clamp(s.Dungeon.ManualAttackIntervalMs, 100, 5000);
         s.Dungeon.ManualAttackWaitMs = Math.Clamp(s.Dungeon.ManualAttackWaitMs, 0, 10000);
+        s.Dungeon.AutohuntConfirmMs = Math.Clamp(s.Dungeon.AutohuntConfirmMs, 500, 30000);
         s.Lod.LootAfterMissingMs = Math.Clamp(s.Lod.LootAfterMissingMs, 1000, 120000);
         s.Lod.StopAttackPresses = Math.Clamp(s.Lod.StopAttackPresses, 0, 20);
         s.Lod.ShuraMatchScore = Math.Clamp(s.Lod.ShuraMatchScore, 0.3, 1.0);
