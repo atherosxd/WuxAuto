@@ -20,7 +20,8 @@ Everything it does is drawn on its preview and written to its log.
 
 * In the game: a
   **teleport scroll** in the inventory with The Labyrinth (Adept) available, and **skill 1** on the
-  key `1` (used to attack the last boss).
+  key `1` (used to attack the last boss). Every attack press is `1` followed by `Ctrl+1` (setting
+  "Ctrl + skill key too", on by default; untick it for the plain key only).
 * Tick **Remember me** on the login screen: after a disconnect the pilot logs back in by clicking
   through the screens, it never types a password.
 * Start in your **home town** - Piercing City, Molten City or Wandering City (or in the Labyrinth with a boss targeted - it picks up from there).

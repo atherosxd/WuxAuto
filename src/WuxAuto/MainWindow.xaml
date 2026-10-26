@@ -371,6 +371,8 @@
                                           ToolTip="At 3603,1973: Tab until the last boss shows, then spam the skill key. Off = walk to the boss coordinates." />
                                 <CheckBox Content="Autohunt off for the run" IsChecked="{Binding Settings.Dungeon.FinalBossPressAutohunt}"
                                           ToolTip="Autohunt off after stage 4, on again at the last boss." />
+                                <CheckBox Content="Ctrl + skill key too" IsChecked="{Binding Settings.Dungeon.CtrlSkill}"
+                                          ToolTip="Manual attacks (Laby stage 5 and the LOD skill spam): every skill press sends the skill key and then Ctrl + skill key, e.g. 1 then Ctrl+1. With Hold skill (LOD) the held key is let go for a Ctrl + skill tap every 0.3 s." />
                             </WrapPanel>
                             <WrapPanel Grid.Row="6" Grid.Column="0" Grid.ColumnSpan="4">
                                 <CheckBox Content="Click the stage 5 gate" IsChecked="{Binding Settings.Dungeon.AimGate}"

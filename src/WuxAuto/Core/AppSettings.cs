@@ -778,6 +778,15 @@ public sealed class DungeonSettings
     public string SkillKey { get; set; } = "1";
 
     /// <summary>
+    /// Every manual skill press - Laby stage 5 (the skill spam and the manual attacks) and the LOD
+    /// skill spam - sends <see cref="SkillKey"/> and then Ctrl + <see cref="SkillKey"/>, e.g. 1 then
+    /// Ctrl+1 (user, 2026-10-26: "when manually attacking couple it with ctrl + skill key"). With
+    /// <see cref="LodSettings.HoldSkill"/> the held key is let go for a Ctrl + skill tap every
+    /// <see cref="LodSettings.SkillEveryMs"/>. UI "Ctrl + skill key too".
+    /// </summary>
+    public bool CtrlSkill { get; set; } = true;
+
+    /// <summary>
     /// At the last waypoint no boss name 15 s after the gate banner (60 s without one): walk on to
     /// TargetX/Y. Off (user, 2026-10-22): keep pressing Tab until the boss shows, never walk west.
     /// </summary>
