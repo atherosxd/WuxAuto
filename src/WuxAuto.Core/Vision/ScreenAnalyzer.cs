@@ -18,6 +18,7 @@ public sealed class ScreenAnalyzer : IDisposable
 {
     private readonly AppSettings _settings;
 
+    /// <remarks>Takes ownership of <paramref name="ocr"/> and disposes it when the analyzer is disposed.</remarks>
     public ScreenAnalyzer(AppSettings settings, IOcrEngine ocr)
     {
         _settings = settings;

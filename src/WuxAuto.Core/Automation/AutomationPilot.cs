@@ -1,6 +1,5 @@
 using System.Diagnostics;
 using OpenCvSharp;
-using WuxAuto.Capture;
 using WuxAuto.Core;
 using WuxAuto.Input;
 using WuxAuto.Vision;
