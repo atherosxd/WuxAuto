@@ -64,7 +64,10 @@ Package for someone else (self-contained, no .NET needed; `src/WuxAuto/Assets/Qu
 the zip's top-level `README.md`):
 
 ```powershell
-.\publish.ps1     # -> dist\WuxAuto\ and dist\WuxAuto-win-x64.zip (~93 MB)
+.\publish.ps1     # -> dist\build\WuxAuto\ (the build), dist\WuxAuto-win-x64.zip (~93 MB) and dist\WuxAuto\
+                  # (refreshed from the build only while no WuxAuto.exe runs from it - the user's live
+                  # copy lives there and updates itself from the release; 2026-10-27 a release died on
+                  # "Access to the path '...\dist\WuxAuto\Accessibility.dll' is denied" mid-run)
 ```
 
 Offline checks (no game needed):
