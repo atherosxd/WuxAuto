@@ -12,7 +12,7 @@ namespace WuxAuto.Vision;
 /// In-process OCR through the Windows OCR engine (Windows.Media.Ocr). No external runtime
 /// to deploy and typical latency for a UI-sized crop is in the tens of milliseconds.
 /// </summary>
-public sealed class OcrService : IDisposable
+public sealed class OcrService : IOcrEngine, IDisposable
 {
     private readonly object _gate = new();
     private OcrEngine? _engine;

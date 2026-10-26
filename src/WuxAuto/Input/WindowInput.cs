@@ -6,19 +6,12 @@ using InputMode = WuxAuto.Core.InputMode;
 
 namespace WuxAuto.Input;
 
-public enum MouseButton
-{
-    Left,
-    Right,
-    Middle,
-}
-
 /// <summary>
 /// Sends keyboard/mouse input to exactly one window. In the default mode it refuses to
 /// fire unless the bound HWND is the foreground window, which is what keeps stray
 /// keystrokes from landing in Discord/Chrome/whatever else may be open.
 /// </summary>
-public sealed class WindowInput
+public sealed class WindowInput : IGameInput
 {
     private const int VkLeftCtrl = 0xA2;
 

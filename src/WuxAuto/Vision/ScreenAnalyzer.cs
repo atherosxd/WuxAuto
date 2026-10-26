@@ -18,19 +18,19 @@ public sealed class ScreenAnalyzer : IDisposable
 {
     private readonly AppSettings _settings;
 
-    public ScreenAnalyzer(AppSettings settings)
+    public ScreenAnalyzer(AppSettings settings, IOcrEngine ocr)
     {
         _settings = settings;
         Library = new TemplateLibrary();
         Matcher = new TemplateMatcher(Library);
         Compass = new CompassDetector(Library);
-        Ocr = new OcrService();
+        Ocr = ocr;
     }
 
     public TemplateLibrary Library { get; }
     public TemplateMatcher Matcher { get; }
     public CompassDetector Compass { get; }
-    public OcrService Ocr { get; }
+    public IOcrEngine Ocr { get; }
 
     /// <summary>
     /// Learned template scale per template name, keyed by client height. The PNGs may have been
@@ -1113,6 +1113,6 @@ public sealed class ScreenAnalyzer : IDisposable
         Compass.Dispose();
         Matcher.Dispose();
         Library.Dispose();
-        Ocr.Dispose();
+        (Ocr as IDisposable)?.Dispose();
     }
 }

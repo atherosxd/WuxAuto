@@ -53,7 +53,7 @@ public sealed partial class AutomationPilot
 {
     private readonly AppSettings _settings;
     private readonly ScreenAnalyzer _analyzer;
-    private readonly WindowInput _input;
+    private readonly IGameInput _input;
     private readonly List<OverlayItem> _overlays = new();
 
     private PilotPhase _phase = PilotPhase.Idle;
@@ -229,7 +229,7 @@ public sealed partial class AutomationPilot
     private int _refineGained;
     private bool _refinePending;
 
-    public AutomationPilot(AppSettings settings, ScreenAnalyzer analyzer, WindowInput input)
+    public AutomationPilot(AppSettings settings, ScreenAnalyzer analyzer, IGameInput input)
     {
         _settings = settings;
         _analyzer = analyzer;
@@ -443,7 +443,7 @@ public sealed partial class AutomationPilot
         _watchGateLines = -1;
     }
 
-    public async Task TickAsync(Mat frame, CaptureFrame capture, CancellationToken cancellationToken)
+    public async Task TickAsync(Mat frame, CancellationToken cancellationToken)
     {
         if (!IsRunning)
             return;

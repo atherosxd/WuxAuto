@@ -9,6 +9,10 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <PackageReference Include="OpenCvSharp4" Version="4.13.0.20260627" />
+  </ItemGroup>
+
+  <ItemGroup>
     <InternalsVisibleTo Include="WuxAuto" />
     <InternalsVisibleTo Include="WuxAuto.SelfTest" />
     <InternalsVisibleTo Include="WuxAuto.Core.Tests" />

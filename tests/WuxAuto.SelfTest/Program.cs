@@ -248,7 +248,7 @@ foreach (var (name, ok, detail) in AlertProbe.OfflineChecks())
     Check(name, ok, detail);
 
 // ---------------------------------------------------------------- high level scan
-using var analyzer = new ScreenAnalyzer(new AppSettings());
+using var analyzer = new ScreenAnalyzer(new AppSettings(), new OcrService());
 var report = await analyzer.TestScanAsync(frame);
 Check("analyzer scan", report.Overlays.Count > 0, $"{report.Overlays.Count} overlay(s)");
 if (verbose)
