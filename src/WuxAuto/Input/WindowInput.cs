@@ -20,6 +20,8 @@ public enum MouseButton
 /// </summary>
 public sealed class WindowInput
 {
+    private const int VkLeftCtrl = 0xA2;
+
     private readonly AppSettings _settings;
     private readonly Dictionary<string, (int VirtualKey, int ScanCode)> _keyCache = new(StringComparer.OrdinalIgnoreCase);
     private long _lastSuppressionLog;
@@ -144,20 +146,40 @@ public sealed class WindowInput
     /// what is under the cursor (LOD: walk up to the boss, user 2026-10-24). Verified with the default
     /// foreground input; posted messages carry no Ctrl state, so background mode may just click.
     /// </summary>
-    public bool CtrlClick(int clientX, int clientY)
+    public bool CtrlClick(int clientX, int clientY) => WithCtrl(() => Click(clientX, clientY));
+
+    /// <summary>
+    /// Tap of <paramref name="keyName"/> with Ctrl held, e.g. Ctrl+1 (manual attacks send the skill
+    /// key and then Ctrl + skill key, user 2026-10-26). False when the key itself was blocked.
+    /// </summary>
+    public bool CtrlKeyTap(string keyName) => WithCtrl(() => KeyTap(keyName));
+
+    /// <summary>Mouse wheel with Ctrl held: the game only zooms the camera with Ctrl (user).</summary>
+    public bool CtrlWheel(int clientX, int clientY, int notches) => WithCtrl(() => Wheel(clientX, clientY, notches));
+
+    /// <summary>
+    /// Runs <paramref name="action"/> with the left Ctrl key down and always lets go of it. Foreground
+    /// input is global, so the release goes out even when F10 unbinds the window (UI thread) or Dry run
+    /// is ticked meanwhile - a Ctrl left down would stick for every program.
+    /// </summary>
+    private bool WithCtrl(Func<bool> action)
     {
         if (!KeyDown("LeftCtrl"))
             return false;
 
+        bool global = !IsDryRun && _settings.Input.Mode != InputMode.BackgroundMessages;
         try
         {
             Thread.Sleep(40);
-            return Click(clientX, clientY);
+            return action();
         }
         finally
         {
             Thread.Sleep(40);
-            KeyUp("LeftCtrl");
+            if (global)
+                SendKeyboard(VkLeftCtrl, (int)NativeMethods.MapVirtualKey(VkLeftCtrl, NativeMethods.MAPVK_VK_TO_VSC), down: false);
+            else
+                KeyUp("LeftCtrl");
         }
     }
 

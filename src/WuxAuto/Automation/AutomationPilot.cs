@@ -2250,23 +2250,7 @@ public sealed partial class AutomationPilot
             // The game zooms with Ctrl + wheel (user); wheel down = out.
             int x = frame.Width / 2;
             int y = (int)(frame.Height * 0.40);
-            if (!_input.KeyDown("LeftCtrl"))
-            {
-                _waitUntil = Environment.TickCount64 + 300;
-                return;
-            }
-
-            bool scrolled;
-            try
-            {
-                scrolled = _input.Wheel(x, y, -dungeon.ZoomOutNotches);
-            }
-            finally
-            {
-                _input.KeyUp("LeftCtrl");
-            }
-
-            if (!scrolled)
+            if (!_input.CtrlWheel(x, y, -dungeon.ZoomOutNotches))
             {
                 _waitUntil = Environment.TickCount64 + 300;
                 return;
@@ -3342,7 +3326,7 @@ public sealed partial class AutomationPilot
                 return;
             }
 
-            if (!_input.KeyTap(dungeon.SkillKey))
+            if (!TapSkill(dungeon.SkillKey))
             {
                 _detail = "skill key blocked - waiting for the game to be in front";
                 _waitUntil = now + 300;
@@ -3350,7 +3334,7 @@ public sealed partial class AutomationPilot
             }
 
             if (_skillPresses++ == 0)
-                Log?.Invoke(LogLevel.Info, $"Spamming skill '{dungeon.SkillKey}' on '{dungeon.FinalBoss}' (15s or until '{dungeon.AttackConfirmText}').");
+                Log?.Invoke(LogLevel.Info, $"Spamming skill {SkillText(dungeon.SkillKey)} on '{dungeon.FinalBoss}' (15s or until '{dungeon.AttackConfirmText}').");
             _detail = $"skill '{dungeon.SkillKey}' x{_skillPresses} ({(now - _skillStartedAt.Value) / 1000}s)";
             _waitUntil = Environment.TickCount64 + dungeon.ManualAttackIntervalMs;
             return;
@@ -3400,10 +3384,36 @@ public sealed partial class AutomationPilot
         _manualPresses = 0;
         _clickSelect = false;
         Log?.Invoke(LogLevel.Success,
-            $"Boss for stage {_stageIndex + 1} selected ({why}) - attacking with '{dungeon.SkillKey}' x{dungeon.ManualAttacks} ({dungeon.ManualAttackIntervalMs} ms apart) before the autohunt" +
+            $"Boss for stage {_stageIndex + 1} selected ({why}) - attacking with {SkillText(dungeon.SkillKey)} x{dungeon.ManualAttacks} ({dungeon.ManualAttackIntervalMs} ms apart) before the autohunt" +
             (IsFinalBoss ? ", which needs the selection ring under the boss." : "."));
         _waitUntil = Environment.TickCount64 + 200;
     }
+
+    /// <summary>
+    /// One manual attack press: the skill key, then Ctrl + skill key with
+    /// <see cref="DungeonSettings.CtrlSkill"/> (user, 2026-10-26: "when manually attacking couple it
+    /// with ctrl + skill key"). False only when the plain key was blocked; a blocked Ctrl tap after it
+    /// still counts as the press.
+    /// </summary>
+    private bool TapSkill(string key)
+    {
+        if (!_input.KeyTap(key))
+            return false;
+
+        if (_settings.Dungeon.CtrlSkill)
+        {
+            // Let the game see the plain key go up before the same key goes down with Ctrl.
+            Thread.Sleep(CtrlSkillGapMs);
+            _input.CtrlKeyTap(key);
+        }
+
+        return true;
+    }
+
+    private const int CtrlSkillGapMs = 60;
+
+    /// <summary>A skill press for the log: '1', or '1' + Ctrl+1 with CtrlSkill.</summary>
+    private string SkillText(string key) => _settings.Dungeon.CtrlSkill ? $"'{key}' + Ctrl+{key}" : $"'{key}'";
 
     /// <summary>
     /// The boss is selected: press the skill key <c>ManualAttacks</c> times (the character walks to
@@ -3460,7 +3470,7 @@ public sealed partial class AutomationPilot
             if (_manualPresses >= wanted - 1)
                 _manualHit = false;
 
-            if (!_input.KeyTap(dungeon.SkillKey))
+            if (!TapSkill(dungeon.SkillKey))
             {
                 _detail = "skill key blocked - waiting for the game to be in front";
                 _waitUntil = now + 300;

@@ -10,9 +10,10 @@ namespace WuxAuto.SelfTest;
 
 /// <summary>
 /// Scripted input exploration: sends keys/clicks to the game and saves a frame after every step,
-/// so the UI flow can be mapped without the pilot. Steps are given as --do key:I, --do click:661,285,
-/// --do rclick:800,450, --do wheel:960,600,-5 (negative = down), --do wait:500, --do ctrlclick:960,400
-/// (Ctrl+left click), --do ctrlring / --do ctrlbelt (LOD: Ctrl+click the boss ring / belt on the last frame).
+/// so the UI flow can be mapped without the pilot. Steps are given as --do key:I, --do ctrlkey:1 (Ctrl+1),
+/// --do click:661,285, --do rclick:800,450, --do wheel:960,600,-5 (negative = down), --do wait:500,
+/// --do ctrlclick:960,400 (Ctrl+left click), --do ctrlring / --do ctrlbelt (LOD: Ctrl+click the boss ring /
+/// belt on the last frame).
 /// </summary>
 internal static class ActionProbe
 {
@@ -67,6 +68,9 @@ internal static class ActionProbe
                 {
                     case "key":
                         input.KeyTap(argument);
+                        break;
+                    case "ctrlkey": // Ctrl + key tap, e.g. ctrlkey:1 (the manual attacks' Ctrl + skill key)
+                        input.CtrlKeyTap(argument);
                         break;
                     case "click":
                         input.Click(int.Parse(parts[0]), int.Parse(parts[1]));

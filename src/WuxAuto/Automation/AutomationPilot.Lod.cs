@@ -368,7 +368,7 @@ public sealed partial class AutomationPilot
         _faceSouth = false;
         _lodHeadingUnknown = true;
         BeginLodFight();
-        Log?.Invoke(LogLevel.Success, $"'{boss.Text}' in view while turning - stopped the turn, spamming skill '{_settings.Dungeon.SkillKey}'.");
+        Log?.Invoke(LogLevel.Success, $"'{boss.Text}' in view while turning - stopped the turn, spamming skill {SkillText(_settings.Dungeon.SkillKey)}.");
         Advance(PilotPhase.LodAttack, 0);
         return true;
     }
@@ -459,7 +459,7 @@ public sealed partial class AutomationPilot
         var boss = await FindLodBossAsync(frame);
         if (boss != null)
         {
-            Log?.Invoke(LogLevel.Success, $"'{boss.Text}' targeted - spamming skill '{_settings.Dungeon.SkillKey}' ({_lodKills} kill(s) so far).");
+            Log?.Invoke(LogLevel.Success, $"'{boss.Text}' targeted - spamming skill {SkillText(_settings.Dungeon.SkillKey)} ({_lodKills} kill(s) so far).");
             BeginLodFight();
             Advance(PilotPhase.LodAttack, 0);
             return;
@@ -574,11 +574,23 @@ public sealed partial class AutomationPilot
         {
             if (lod.HoldSkill)
             {
-                // Held down for the whole fight; ReleaseHeldSkill lets go on every way out.
+                // Held down for the whole fight; ReleaseHeldSkill lets go on every way out. With
+                // CtrlSkill it is let go every SkillEveryMs for a Ctrl + skill tap, then held again.
+                if (_heldSkill != null && _settings.Dungeon.CtrlSkill && now - _lodSkillAt >= lod.SkillEveryMs)
+                {
+                    ReleaseHeldSkill();
+                    Thread.Sleep(CtrlSkillGapMs);
+                    _input.CtrlKeyTap(skill);
+                    Thread.Sleep(CtrlSkillGapMs);
+                }
+
                 if (_heldSkill == null && _input.KeyDown(skill))
+                {
                     _heldSkill = skill;
+                    _lodSkillAt = now;
+                }
             }
-            else if (now - _lodSkillAt >= lod.SkillEveryMs && _input.KeyTap(skill))
+            else if (now - _lodSkillAt >= lod.SkillEveryMs && TapSkill(skill))
             {
                 _lodSkillAt = now;
             }
