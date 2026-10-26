@@ -1,0 +1,124 @@
+# M0 gate results (2026-10-26)
+
+M0 asked one question: can an app on the phone capture the game, send touches, read text and match
+pictures? This note holds the measurements and three decisions. The decisions are Claude's
+**recommendations**. The user accepts or changes them.
+
+## Verdict in three lines
+
+- By the plan's rule this is a no-go as written: the accessibility screenshot (`takeScreenshot`) and the one-gesture joystick plus tap both failed.
+- The screen-recording fallback (MediaProjection) passed, and tapping between joystick steps passed (2 of 2 runs).
+- Claude recommends GO with those two changes. The user decides.
+
+## Setup
+
+- Device: MuMu Player (ARM), Android 12.
+- Resolution: 1600x900 at first. The user restarted MuMu (performance mode high), after which it ran
+  at 1920x1080. All results below are from 1920x1080, except the first SHOT runs.
+- Character: Piercing City, autohunt off, at 10362,13793 before the walk.
+- Spike app: `spikes/WuxAuto.MobileSpike` (accessibility service plus a MediaProjection service).
+  Actions are sent over adb as broadcasts.
+- Security: the spike's broadcast receiver needs the `DUMP` permission (adb has it, ordinary apps do
+  not) and clamps its inputs. The "ordinary app is refused" side was not tested.
+
+## Results
+
+| Check | What was run | Measured | Result | Evidence |
+|---|---|---|---|---|
+| SHOT | `AccessibilityService.takeScreenshot`, 20 shots (also with a CPU-side `HardwareBuffer` read) | About 2.3 fps. The platform allows one shot per ~333 ms (error 3 if faster). Most frames are pure black: 4 of 20 lit. The CPU read of the buffer is black too. `adb screencap` showed the game fine at the same time. Performance mode did not help. Cause of the black frames not determined. | FAIL | `b0.png`, `b1.png`, `shot_last.png` |
+| SHOTMP | MediaProjection into an ImageReader (RGBA_8888), 20 shots | About 22.7 fps in this one 20-shot run. Shots 1-4 were the launcher (the consent dialog backgrounded the game). Shots 5-20 were game frames, 8-190 ms apart. Later 5-shot runs measured 12.6 fps (Task 2, review fix round 1) and 13.4 fps (Task 3 capture run, 10:22:36, `mp shots ok=5 fail=0 fps=13.4`), launcher frames included. Sustained fps is not measured. A first run with an 8 s delay got only launcher frames; the delay is now 15 s. | PASS | `d2.png`, log `mp shots ok=20 fail=0 fps=22.7` |
+| WALK | Joystick stroke up 2.5 s (centre 264,818, r 106) | 10362,13793 to 10157,13987 (about 282 units) | PASS | `c0.png`, `w_after.png` |
+| SWIPE | 1320,384 to 1080,384 in 600 ms | Camera turned. Minimap beam about -130 deg to -81 deg (the implementer's own estimate from the beam glow). | PASS | `s_before.png`, `s_after.png` |
+| PINCH | Two fingers from 360 to 96 px apart, centre 960,480 | Character height about 160 px to about 110 px (zoomed out) | PASS | `p_before.png`, `p_after.png` |
+| TAP (control) | Tap-only gesture on the WORLD chat tab, then back to GENERAL | WORLD highlighted, then restored | PASS | `k_tabs.png` |
+| MULTI | One gesture: joystick held 2.5 s plus a tap on WORLD at the half-way point | Joystick moved 285 units. Tap not delivered (WORLD not highlighted). | FAIL | `n_tabs.png`, `n_coords.png` |
+| MULTIC | Continued stroke (`willContinue`) for the joystick plus a tap in the second gesture | Joystick moved 354 units. Tap not delivered. (The continued stroke is a 1 px move, close to a hold.) | FAIL | `q_tabs.png`, `q_coords.png` |
+| OCR title | ML Kit Latin on the full 1920x1080 frame | `[Piercing Cityl` at 1671,65. 353 ms (first call includes model load). | PASS | `t3_ocr_match_run2.txt` |
+| OCR coordinates | Same, full frame, then a x2 crop of the minimap (1560,55,340x70) | Full frame: `10158,13589`. The digits are right but ML Kit drops the spaces around the comma, so the desktop's pattern fails on the full frame. Crop x2: `10158, 13589` in 78 ms, which already matches the desktop's existing pattern. | PASS (crop only) | `t3_ocr_match_run2.txt` |
+| Serialised touch (walk, tap, walk) | Three separate gestures: WALK 1.5 s, TAP on WORLD (803,876), WALK 1.5 s, then TAP on GENERAL to restore | Run 1: walked, WORLD highlighted, walked again (10158,13589 to 10165,13345). Run 2: same (10165,13345 to 10136,13668). A diagnostic run showed each walk moved on its own (-179, then -144). The tap gesture takes about 102 ms. That test slept about 1.9 s between walk and tap (adb round trips), so the real gap between a joystick release and the next tap, and back, is **not measured**. A no-sleep re-run (WALK, TAP WORLD, WALK, TAP GENERAL back to back, gaps from logcat) is pending: the character was on the server-select screen when it was tried, so it was not run. Whether a tap right after the joystick release is delivered is therefore unproven; a settle delay may be needed. | PASS (2 of 2) | `ser1.png`, `ser2.png`, `ser3.png` |
+| MATCH | Emgu CV `MatchTemplate` on the device, template cut from the same frame (58x50 at 1790,62) | Score 1.0000 at 1790,62 in about 90 ms. Logged as `selfmatch=path-check`, template std 74.4. | PASS as a path check | log line `match selfmatch=path-check ...` |
+
+Notes on the results:
+
+- MULTI and MULTIC: two simultaneous strokes do work (PINCH zooms the camera), and a tap alone works.
+  So the game appears to ignore a UI-button tap while the joystick touch is held. This is an
+  inference. Other touch orders (for example a tap just before the joystick starts) were not tried.
+- The original MULTI target, Auto Buff, could not be used. It needs Force 90% or more ("Force 90%
+  and over required") and the character is at 83%. A harmless target, the WORLD chat tab, was used
+  instead.
+- MATCH matches the frame against itself. It proves Emgu loads and runs on the phone. It does not
+  show that a template survives a shift or a rescale. Plan 2 measures that on real templates.
+- SHOTMP needs a one-time consent dialog per capture session. That dialog sends the game to the
+  background, and it needed about 10 s plus an `am start` to come back to the front. Reinstalling
+  the app loses the session, so consent is needed again.
+- The two flat-template refusals in MATCH compile but were not triggered live.
+- Screenshots named above stay in the session scratchpad. They are not in git.
+
+## Decision 1: capture method
+
+**Recommendation: MediaProjection.**
+
+- Accessibility capture is black on MuMu in most frames, and the CPU-side read is black too, so it is
+  not a copy problem in our code. It is also capped near 3 fps by the platform.
+- MediaProjection gives real game frames: 13-23 fps measured in short runs (sustained rate not measured); either way far above the ~3 fps of the accessibility route.
+- Cost: the consent dialog appears once per capture session and backgrounds the game, so the app
+  must bring the game back to the front (`am start` in the spike) and wait.
+- Before discarding the accessibility route for good, check it again on the user's Xiaomi 17 Pro Max
+  (HyperOS 3, Android 16) in Plan 2. The black frames look like an emulator GPU-readback problem and
+  may not happen on a real phone. It is still capped near 3 fps.
+
+## Decision 2: OCR engine
+
+**Recommendation: ML Kit. Tesseract is not needed.**
+
+- It read the zone title on the full frame and the coordinates on the minimap crop, both quickly.
+- Plan 2 note: ML Kit drops the spaces around the comma on the full frame. Read the minimap crop (the desktop also reads a crop): the crop read matches the existing pattern. Any relaxation of the pattern must be phone-only (a platform profile) or pass the parity probe, because that code becomes shared with the desktop.
+
+## Decision 3: gestures accepted
+
+**Recommendation: yes for the joystick, swipe, pinch and single taps.**
+
+- A tap while the joystick is held is not delivered, in either form tried.
+- The gesture scheduler therefore serialises touches: end the joystick step, tap, resume. This was
+  measured: walk, tap, walk worked 2 of 2 times, and each walk moved the character on its own. The
+  pilot already walks in discrete steps, so this fits. In LOD, the Tab press during a walk becomes a
+  tap between two steps. The cost per tap is unmeasured: the earlier test slept about 1.9 s between walk and tap, so no gap figure exists. A no-sleep re-run is pending (see the serialised-touch row). If a tap right after the joystick release is not delivered, the scheduler needs a settle delay, which matters for the GO recommendation.
+- Spec section 5.4 assumed "joystick held plus a tap" in one gesture. That assumption is dropped.
+
+## Go / no-go
+
+The plan treats screenshot, walk or multi failing as a no-go. The screenshot check as specified
+(`takeScreenshot`) failed; the MediaProjection fallback passed. Walk passed. MULTI failed as
+specified, but walk, tap, walk passed. So by the plan's rule this is a no-go as written, and the
+call is the user's.
+
+**Recommendation: GO, with the two changes above (MediaProjection capture, serialised touches).**
+
+If the user picks no-go, the spec (section 7, M0) names the alternatives: Shizuku, or wireless-debugging
+`input` (which must be re-paired after every reboot). Nothing like that is built without the user's OK.
+
+## What Plan 2 must carry
+
+- Capture through MediaProjection: the consent flow, a foreground service of type `mediaProjection`
+  (permissions `FOREGROUND_SERVICE` and `FOREGROUND_SERVICE_MEDIA_PROJECTION`), and bringing the game
+  back to the front after the dialog.
+- A content check on frames. A launcher frame is not black (lit 0.188) and passes a "not black" test.
+  The zone title read is the guard.
+- Serialise touches in the gesture scheduler (no joystick plus tap in one gesture).
+- OCR on crops, using the existing comma pattern (any relaxation phone-only or parity-probed).
+- Positions measured per resolution, never hardcoded. MuMu changed from 1600x900 to 1920x1080
+  mid-spike, and the user's phone is 2608x1200.
+- Re-check accessibility capture on the Xiaomi 17 Pro Max before dropping it there.
+- Measure template robustness (shift, scale) with real mobile templates. MATCH here was a self-match.
+- Test the `DUMP` permission lock from an ordinary app (only the adb side was verified).
+- MuMu is Android 12, the Xiaomi is Android 16. From Android 14 a capture token is single-use, consent is per session, and 14 QPR2 adds app-only sharing.
+- The service's `Resources.DisplayMetrics` may report portrait or exclude system bars on a real phone, so use the real display size.
+- Teardown order: release the VirtualDisplay, then close the ImageReader, then stop the projection.
+
+## Side findings for spec section 10
+
+- #2: the combat log shows top-left on the phone ("Attack succeeded!Normal damage(+N) Attribution dam...", "Defense succeeded!").
+- #14: the shortcut ring has a free (+) slot.
+- #3: pinch works through accessibility gestures.
+- #4: a 240 px horizontal swipe turned the camera about 49 degrees (estimate).
+- Joystick centre 264,818, radius about 106 at 1920x1080.
