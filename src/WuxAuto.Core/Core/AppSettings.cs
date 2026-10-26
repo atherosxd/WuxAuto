@@ -513,6 +513,13 @@ public sealed class SequenceSettings
     /// <summary>Combat-log line printed when the autohunt turns off.</summary>
     public string AutohuntEndedText { get; set; } = "Auto hunt ended";
 
+    /// <summary>
+    /// The other "autohunt off" line, printed in town: "Auto hunt stopped; Smart Farm journey
+    /// cancelled." (2026-10-27, autohunt_unread frame at 1440x900 - J in town starts a Smart Farm
+    /// journey back to the hunting ground, the second J cancels it). Matched by its start.
+    /// </summary>
+    public string AutohuntStoppedText { get; set; } = "Auto hunt stopped";
+
     /// <summary>Text on the destination row to click (OCR, fuzzy matching).</summary>
     public string DestinationText { get; set; } = "Labyrinth";
 
@@ -810,6 +817,14 @@ public sealed class DungeonSettings
     /// or the autohunt is turned off again and the manual attacks repeat (user, 2026-10-26: 2 s).
     /// </summary>
     public int AutohuntConfirmMs { get; set; } = 2000;
+
+    /// <summary>
+    /// Stage 5, watching the boss with the autohunt on: no new "Attack succeeded" line for this long
+    /// while the boss is up = the autohunt is not attacking it -> J off, select and attack by hand
+    /// again (user, 2026-10-27: "goes directly below the boss with autohunt on but doesn't target or
+    /// attack it").
+    /// </summary>
+    public int AutohuntStallMs { get; set; } = 15000;
 
     /// <summary>How far the right-drag moves the mouse upwards to tilt the camera (user: 60 px).</summary>
     [JsonIgnore]
