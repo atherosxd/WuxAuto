@@ -811,6 +811,14 @@ public sealed class DungeonSettings
     /// </summary>
     public int AutohuntConfirmMs { get; set; } = 2000;
 
+    /// <summary>
+    /// Stage 5, watching the boss with the autohunt on: no new "Attack succeeded" line for this long
+    /// while the boss is up = the autohunt is not attacking it -> J off, select and attack by hand
+    /// again (user, 2026-10-27: "goes directly below the boss with autohunt on but doesn't target or
+    /// attack it").
+    /// </summary>
+    public int AutohuntStallMs { get; set; } = 15000;
+
     /// <summary>How far the right-drag moves the mouse upwards to tilt the camera (user: 60 px).</summary>
     [JsonIgnore]
     public int CameraTiltPx { get; set; } = 60;

@@ -158,6 +158,9 @@ public sealed partial class AutomationPilot
     private bool _manualHit;
     private bool _huntOn;                    // stage 5: autohunt on, waiting for a new attack line within AutohuntConfirmMs
     private long _huntOnAt;
+    private long? _huntBaselineAt;           // stage 5: the attack log re-read AutohuntSettleMs after J (the manual attacks' late hits are gone by then)
+    private string? _watchAttackLog;         // stage 5 WatchBoss: last combat-log state, for the "autohunt on but not attacking" watchdog
+    private long _watchAttackAt;
     private long _lastManualPressAt;
     private int _manualRounds;               // stage 5: rounds of ManualAttacks presses that ended without ring + attack line
     private bool _clickSelect;               // stage 5: after such a round, selecting the boss with the centre clicks (autohunt off)
@@ -436,6 +439,9 @@ public sealed partial class AutomationPilot
         _clickSelect = false;
         _huntOn = false;
         _huntOnAt = 0;
+        _huntBaselineAt = null;
+        _watchAttackLog = null;
+        _watchAttackAt = 0;
         _nextBossCheckAt = 0;
         _lastWatchTabAt = 0;
         _watchTabs = 0;
@@ -3498,17 +3504,19 @@ public sealed partial class AutomationPilot
                 _overlays.Add(new OverlayItem(ringBox, "selected", OverlayColor.Green));
 
             bool attacking = _manualHit || !confirm;
-            // Still targeted (name / target-bar icon), like the ring + name shortcut that starts the presses.
-            var named = await FindBossAsync(frame);
-            if (ring == null || !attacking || !named.Found)
+            // Still targeted: the name or the treasure icon in the target bar (top centre) - the name
+            // tag over the boss's head does not count (user, 2026-10-27: "goes directly below the boss
+            // with autohunt on but doesn't target or attack it").
+            var (targeted, how) = await IsFinalBossTargetedAsync(frame);
+            if (ring == null || !attacking || !targeted)
             {
                 var lacking = new List<string>();
                 if (ring == null)
                     lacking.Add("no selection ring under the boss");
                 if (!attacking)
                     lacking.Add($"no new '{dungeon.AttackConfirmText}'");
-                if (!named.Found)
-                    lacking.Add($"'{dungeon.FinalBoss}' not targeted");
+                if (!targeted)
+                    lacking.Add($"'{dungeon.FinalBoss}' not in the target bar ({how})");
                 string missing = char.ToUpperInvariant(lacking[0][0]) + string.Join(", ", lacking)[1..]
                     + (ring != null ? " (ring seen)" : "") + (attacking && confirm ? $" (new '{dungeon.AttackConfirmText}' seen)" : "");
 
@@ -3570,6 +3578,37 @@ public sealed partial class AutomationPilot
     /// <summary>Stage 5: the autohunt may select the boss and attack it by hand this many times in a row before the pilot goes back to the Tab wait.</summary>
     private const int MaxManualRounds = 3;
 
+    /// <summary>Stage 5: after J, attack lines this old are the manual attacks' own late hits, not the autohunt's.</summary>
+    private const int AutohuntSettleMs = 1000;
+
+    /// <summary>
+    /// Stage 5: the boss in the <b>target bar</b> (top centre: its name, or the treasure icon) - not
+    /// its name tag over its head, which <see cref="FindBossAsync"/> also reads (whole client).
+    /// </summary>
+    private async Task<(bool Targeted, string How)> IsFinalBossTargetedAsync(Mat frame)
+    {
+        var dungeon = _settings.Dungeon;
+        var bar = new NormRect(0.25, 0, 0.50, 0.16).ToPixels(frame.Width, frame.Height);
+        var chest = _analyzer.FindIcon(frame, "monstericon", bar, 0.80);
+        if (chest != null)
+        {
+            _overlays.Add(new OverlayItem(chest.Bounds, $"target {chest.Score:0.00}", OverlayColor.Green));
+            return (true, $"treasure icon {chest.Score:0.00}");
+        }
+
+        if (string.IsNullOrWhiteSpace(dungeon.FinalBoss))
+            return (false, "no boss name set");
+
+        var (hit, _, _) = await _analyzer.FindTextAsync(frame, bar, dungeon.FinalBoss);
+        if (hit != null && IsFullName(hit, dungeon.FinalBoss))
+        {
+            _overlays.Add(new OverlayItem(hit.Bounds, $"target '{hit.Text}'", OverlayColor.Green));
+            return (true, $"'{hit.Text}' in the target bar");
+        }
+
+        return (false, "no name or treasure icon in the target bar");
+    }
+
     /// <summary>
     /// Stage 5, autohunt just turned on (user, 2026-10-26: "if autohunt is on and no attack succeeded
     /// follows after 2s, turn off auto hunt then try to manually attack then autohunt"): a new attack
@@ -3582,19 +3621,40 @@ public sealed partial class AutomationPilot
         var dungeon = _settings.Dungeon;
         long now = Environment.TickCount64;
 
+        // The manual attacks' last skill animations still print "Attack succeeded" for a moment
+        // after J, so a line right after J proves nothing (user, 2026-10-27: v0.9.3 still ended
+        // under the boss with the autohunt on and no attack). The log is read again AutohuntSettleMs
+        // after J and only lines newer than that count, within AutohuntConfirmMs.
+        if (now - _huntOnAt < AutohuntSettleMs)
+        {
+            _detail = $"autohunt on - letting the manual attacks' hits settle ({now - _huntOnAt}/{AutohuntSettleMs} ms)";
+            _waitUntil = _huntOnAt + AutohuntSettleMs;
+            return;
+        }
+
         string log = await ReadAttackLogAsync(frame, msgRoi, dungeon.AttackConfirmText);
+        if (_huntBaselineAt == null)
+        {
+            _attackLog = log;
+            _huntBaselineAt = now;
+            _detail = $"autohunt on - waiting for a new '{dungeon.AttackConfirmText}' (0/{dungeon.AutohuntConfirmMs} ms)";
+            _waitUntil = now + 250;
+            return;
+        }
+
         if (log.Length > 0 && log != _attackLog)
         {
             Log?.Invoke(LogLevel.Success,
-                $"'{dungeon.AttackConfirmText}' {now - _huntOnAt} ms after the autohunt went on - watching '{dungeon.FinalBoss}'.");
+                $"'{dungeon.AttackConfirmText}' {now - _huntOnAt} ms after the autohunt went on ({now - _huntBaselineAt.Value} ms after the settle) - watching '{dungeon.FinalBoss}'.");
             _huntOn = false;
+            _huntBaselineAt = null;
             Advance(PilotPhase.WatchBoss, 300);
             return;
         }
 
-        if (now - _huntOnAt < dungeon.AutohuntConfirmMs)
+        if (now - _huntBaselineAt.Value < dungeon.AutohuntConfirmMs)
         {
-            _detail = $"autohunt on - waiting for a new '{dungeon.AttackConfirmText}' ({now - _huntOnAt}/{dungeon.AutohuntConfirmMs} ms)";
+            _detail = $"autohunt on - waiting for a new '{dungeon.AttackConfirmText}' ({now - _huntBaselineAt.Value}/{dungeon.AutohuntConfirmMs} ms)";
             _waitUntil = now + 250;
             return;
         }
@@ -3609,11 +3669,12 @@ public sealed partial class AutomationPilot
 
         _autohuntPressed = false;
         _huntOn = false;
+        _huntBaselineAt = null;
 
         if (++_manualRounds < MaxManualRounds)
         {
             Log?.Invoke(LogLevel.Warning,
-                $"No new '{dungeon.AttackConfirmText}' within {dungeon.AutohuntConfirmMs} ms of the autohunt - '{dungeon.AutohuntKey}' off, attacking by hand again (round {_manualRounds + 1}/{MaxManualRounds}).");
+                $"No new '{dungeon.AttackConfirmText}' within {dungeon.AutohuntConfirmMs} ms of the autohunt (after a {AutohuntSettleMs} ms settle) - '{dungeon.AutohuntKey}' off, attacking by hand again (round {_manualRounds + 1}/{MaxManualRounds}).");
             _manualHit = false;
             StartManualAttack($"autohunt did not attack within {dungeon.AutohuntConfirmMs} ms");
             return;
@@ -3746,6 +3807,37 @@ public sealed partial class AutomationPilot
                 Log?.Invoke(LogLevel.Info, $"Boss for stage {_stageIndex + 1} is still up after Tab ({seen.Text}).");
             _bossMissingSince = null;
             _watchTabs = 0;
+
+            // Stage 5 watchdog (user, 2026-10-27: "goes directly below the boss with autohunt on but
+            // doesn't target or attack it"): the boss up, the autohunt on, but no new attack line for
+            // AutohuntStallMs -> J off, Tab / select / attack by hand again (ArriveAtFinalBoss).
+            if (IsFinalBoss && _autohuntPressed && !string.IsNullOrWhiteSpace(dungeon.AttackConfirmText))
+            {
+                var msgRoi = _settings.Regions.AttackMessage.ToPixels(frame.Width, frame.Height);
+                string log = await ReadAttackLogAsync(frame, msgRoi, dungeon.AttackConfirmText);
+                if (_watchAttackLog == null || (log.Length > 0 && log != _watchAttackLog))
+                {
+                    _watchAttackLog = log;
+                    _watchAttackAt = now;
+                }
+                else if (now - _watchAttackAt >= dungeon.AutohuntStallMs)
+                {
+                    if (!string.IsNullOrWhiteSpace(dungeon.AutohuntKey) && !_input.KeyTap(dungeon.AutohuntKey))
+                    {
+                        _detail = "autohunt key blocked - waiting for the game to be in front";
+                        _waitUntil = now + 300;
+                        return;
+                    }
+
+                    _autohuntPressed = false;
+                    Log?.Invoke(LogLevel.Warning,
+                        $"Autohunt on but no new '{dungeon.AttackConfirmText}' for {(now - _watchAttackAt) / 1000:0}s with {seen.Text} up - '{dungeon.AutohuntKey}' off, selecting and attacking by hand again.");
+                    if (_noRingShots++ < 3)
+                        DebugArtifacts.SaveFrame(frame, _overlays, "stall_s5");
+                    ArriveAtFinalBoss();
+                    return;
+                }
+            }
             // No time limit: a slow kill is fine, the dungeon stays open until the boss dies (user,
             // 2026-10-24 - a 15 min limit moved on with the stage 1 boss at 1 %).
             _detail = $"boss up: {seen.Text} ({elapsed / 1000:0}s)";
