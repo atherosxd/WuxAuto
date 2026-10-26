@@ -111,13 +111,36 @@ public class SpikeService : AccessibilityService
             {
                 int ms = Ms(2500);
                 float jx = I("jx", (int)JoyX), jy = I("jy", (int)JoyY), jr = Cl(I("jr", (int)JoyR), 10, 400);
-                var joy = Line(jx, jy, jx, jy - jr);
+                float dx = I("dx", 0), dy = I("dy", -100), len = Math.Max(1f, MathF.Sqrt(dx * dx + dy * dy));
+                var joy = Line(jx, jy, jx + dx / len * jr, jy + dy / len * jr);
                 var tap = new APath(); tap.MoveTo(X("tx"), Y("ty")); tap.LineTo(X("tx") + 1, Y("ty"));
                 // Joystick held the whole time; the tap lands half-way, in the same gesture.
                 return GestureAsync("MULTI", new[] { Stroke(joy, 0, ms), Stroke(tap, ms / 2, 100) });
             }
+            case "TAP":
+            {
+                var tap = new APath(); tap.MoveTo(X("x"), Y("y")); tap.LineTo(X("x") + 1, Y("y"));
+                return GestureAsync("TAP", new[] { Stroke(tap, 0, 100) });
+            }
+            case "MULTIC": return MultiContinuedAsync(i, W, H);
         }
         return Task.CompletedTask;
+    }
+
+    /// <summary>Joystick as a continued stroke: gesture 1 holds it (willContinue), gesture 2 continues it and adds the tap.</summary>
+    async Task MultiContinuedAsync(Intent i, int W, int H)
+    {
+        int I(string k, int d = 0) => i.GetIntExtra(k, d);
+        var ms = Math.Min(Math.Max(I("ms", 2500), 50), 10000);
+        float jx = I("jx", (int)JoyX), jy = I("jy", (int)JoyY), jr = Math.Min(Math.Max(I("jr", (int)JoyR), 10), 400);
+        float dx = I("dx", 0), dy = I("dy", -100), len = Math.Max(1f, MathF.Sqrt(dx * dx + dy * dy));
+        float ex = jx + dx / len * jr, ey = jy + dy / len * jr;
+        int tx = Math.Min(Math.Max(I("tx"), 0), W - 1), ty = Math.Min(Math.Max(I("ty"), 0), H - 1);
+        var first = new GestureDescription.StrokeDescription(Line(jx, jy, ex, ey), 0, ms / 2, true);
+        await GestureAsync("MULTIC-1", new[] { first });
+        var tap = new APath(); tap.MoveTo(tx, ty); tap.LineTo(tx + 1, ty);
+        var second = first.ContinueStroke(Line(ex, ey, ex, ey + 1), 0, ms / 2, false)!;
+        await GestureAsync("MULTIC-2", new[] { second, Stroke(tap, 50, 100) });
     }
 
     static APath Line(float x1, float y1, float x2, float y2)
@@ -290,7 +313,7 @@ public class SpikeService : AccessibilityService
 public class SpikeReceiver : BroadcastReceiver
 {
     /// <summary>Action suffixes this receiver listens for. Add new ones here and handle them in <see cref="OnReceive"/>.</summary>
-    public static readonly string[] Actions = { "PING", "SHOT", "SHOTMP", "WALK", "SWIPE", "PINCH", "MULTI" };
+    public static readonly string[] Actions = { "PING", "SHOT", "SHOTMP", "TAP", "MULTIC", "WALK", "SWIPE", "PINCH", "MULTI" };
 
     readonly SpikeService _service;
 
