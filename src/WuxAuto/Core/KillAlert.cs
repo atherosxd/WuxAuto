@@ -14,7 +14,7 @@ namespace WuxAuto.Core;
 /// Boss-kill alert (user, 2026-10-26: friends run the pilot on a second PC next to their main one,
 /// and LOD does not always pick up every drop - a reminder to go and check). A chime on this PC's
 /// speakers and a Windows notification. The chime is the sound file picked in the UI
-/// (<c>Sequence.KillSound</c>, MP3 or WAV, user 2026-10-27), else <see cref="CustomChimeName"/> from
+/// (<c>Sequence.KillSound</c>, MP3 or WAV, user 2026-10-27; a picked OGG is kept as a WAV), else <see cref="CustomChimeName"/> from
 /// the templates folder when that file exists, else <see cref="GenerateChime"/> (written to
 /// <see cref="BuiltInChimeFile"/>: a sound played in the background must come from a file - from
 /// memory Windows keeps reading a buffer that .NET only holds still during the call). Sound files
@@ -73,13 +73,15 @@ public sealed class KillAlert : IDisposable
 
     /// <summary>
     /// Copies a picked sound file into <see cref="AppPaths.SoundsFolder"/> (so it keeps playing after
-    /// the original is moved or deleted) and checks that it opens and has sound. A file of the same
-    /// name with other contents is kept: the copy gets a free name ("name-2.mp3"). A file that does
-    /// not play is not kept.
+    /// the original is moved or deleted) and checks that it opens and has sound. An OGG file is
+    /// decoded into a WAV of the same name (<see cref="OggToWav"/>; Windows cannot play OGG). A file
+    /// of the same name with other contents is kept: the copy gets a free name ("name-2.mp3"). A file
+    /// that does not play is not kept.
     /// </summary>
     /// <returns>The copy and its length, or what went wrong (then <c>File</c> is empty).</returns>
     public static async Task<(string File, TimeSpan Length, string Error)> ImportSoundAsync(string source)
     {
+        string? converted = null;
         try
         {
             if (!File.Exists(source))
@@ -88,9 +90,23 @@ public sealed class KillAlert : IDisposable
             Directory.CreateDirectory(AppPaths.SoundsFolder);
             string target = Path.GetFullPath(source);
             bool copied = false;
-            if (!IsInSoundsFolder(target))
+            if (OggToWav.IsOgg(source))
             {
-                target = FreeTarget(source);
+                converted = Path.Combine(Path.GetTempPath(), $"wuxauto-ogg-{Guid.NewGuid():N}.wav");
+                string decodeError = await Task.Run(() => OggToWav.Convert(source, converted));
+                if (decodeError.Length > 0)
+                    return (string.Empty, TimeSpan.Zero, decodeError);
+
+                target = FreeTarget(Path.ChangeExtension(Path.GetFileName(source), ".wav"), converted);
+                if (!File.Exists(target))
+                {
+                    File.Move(converted, target);
+                    copied = true;
+                }
+            }
+            else if (!IsInSoundsFolder(target))
+            {
+                target = FreeTarget(Path.GetFileName(source), source);
                 if (!File.Exists(target))
                 {
                     File.Copy(source, target);
@@ -109,6 +125,11 @@ public sealed class KillAlert : IDisposable
         catch (Exception ex)
         {
             return (string.Empty, TimeSpan.Zero, ex.Message);
+        }
+        finally
+        {
+            if (converted != null && File.Exists(converted))
+                TryDelete(converted);
         }
     }
 
@@ -315,20 +336,20 @@ public sealed class KillAlert : IDisposable
             StringComparison.OrdinalIgnoreCase);
 
     /// <summary>
-    /// Where the copy of <paramref name="source"/> goes: its own name in the sounds folder, or
-    /// "name-2.ext", "name-3.ext", ... when another file of that name is there. A file with the same
-    /// contents is reused.
+    /// Where a copy of <paramref name="contents"/> named <paramref name="fileName"/> goes: that name in
+    /// the sounds folder, or "name-2.ext", "name-3.ext", ... when another file of that name is there.
+    /// A file with the same contents is reused.
     /// </summary>
-    private static string FreeTarget(string source)
+    private static string FreeTarget(string fileName, string contents)
     {
-        string name = Path.GetFileNameWithoutExtension(source);
+        string name = Path.GetFileNameWithoutExtension(fileName);
         if (name.Length == 0)
             name = "sound";
-        string extension = Path.GetExtension(source);
+        string extension = Path.GetExtension(fileName);
         for (int n = 1; n < 1000; n++)
         {
             string candidate = Path.Combine(AppPaths.SoundsFolder, n == 1 ? name + extension : $"{name}-{n}{extension}");
-            if (!File.Exists(candidate) || SameContents(source, candidate))
+            if (!File.Exists(candidate) || SameContents(contents, candidate))
                 return candidate;
         }
 

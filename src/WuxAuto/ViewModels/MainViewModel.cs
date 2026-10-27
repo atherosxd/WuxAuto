@@ -385,9 +385,9 @@ public partial class MainViewModel : ObservableObject, IAsyncDisposable
     public bool HasKillSound => !string.IsNullOrEmpty(Settings.Sequence.KillSound);
 
     /// <summary>
-    /// "Choose...": an MP3 or WAV for the kill chime (user, 2026-10-27). It is copied into the
-    /// sounds folder, checked, saved in the settings at once and played once so it can be heard.
-    /// A file that does not play leaves the current sound as it was.
+    /// "Choose...": an MP3, WAV or OGG for the kill chime (user, 2026-10-27). It is copied into the
+    /// sounds folder (an OGG as a WAV), checked, saved in the settings at once and played once so it
+    /// can be heard. A file that does not play leaves the current sound as it was.
     /// </summary>
     [RelayCommand]
     private async Task ChooseKillSound()
@@ -395,7 +395,7 @@ public partial class MainViewModel : ObservableObject, IAsyncDisposable
         var dialog = new Microsoft.Win32.OpenFileDialog
         {
             Title = "Kill chime sound",
-            Filter = "Sound files (*.mp3;*.wav)|*.mp3;*.wav",
+            Filter = "Sound files (*.mp3;*.wav;*.ogg)|*.mp3;*.wav;*.ogg",
         };
         if (dialog.ShowDialog() != true)
             return;
@@ -410,7 +410,8 @@ public partial class MainViewModel : ObservableObject, IAsyncDisposable
 
         KillSound = file;
         SettingsStore.Save(Settings);
-        AppendLog(new LogEntry(LogLevel.Success, $"Kill chime sound: {Path.GetFileName(file)} ({length.TotalSeconds:0.0} s), kept in {AppPaths.SoundsFolder}."));
+        string from = OggToWav.IsOgg(picked) ? $", converted from {picked}" : string.Empty;
+        AppendLog(new LogEntry(LogLevel.Success, $"Kill chime sound: {Path.GetFileName(file)} ({length.TotalSeconds:0.0} s{from}), kept in {AppPaths.SoundsFolder}."));
         if (length > TimeSpan.FromSeconds(10))
             AppendLog(new LogEntry(LogLevel.Info, $"It plays in full on every kill ({length.TotalSeconds:0} s) - a short sound works best."));
 

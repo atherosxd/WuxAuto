@@ -15,4 +15,9 @@
     <ProjectReference Include="..\..\src\WuxAuto\WuxAuto.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <!-- 1 s Ogg Vorbis, 48 kHz stereo (440 Hz left, 880 Hz right; ffmpeg sine + libvorbis) for the OGG import check. -->
+    <None Update="Sounds\*.ogg" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
 </Project>

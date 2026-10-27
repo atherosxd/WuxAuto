@@ -445,7 +445,7 @@ public sealed class SequenceSettings
     public bool KillChime { get; set; } = true;
 
     /// <summary>
-    /// The kill chime's sound file, MP3 or WAV (user, 2026-10-27). Empty = the built-in chime.
+    /// The kill chime's sound file, MP3 or WAV (user, 2026-10-27; a picked OGG is kept as a WAV). Empty = the built-in chime.
     /// Set with the "Choose..." button next to the check box, which copies the file into
     /// <c>%LOCALAPPDATA%\WuxAuto\sounds</c> first, so it keeps playing after the original is moved.
     /// </summary>

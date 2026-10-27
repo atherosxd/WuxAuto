@@ -67,7 +67,7 @@ Only the newest 500 pictures are kept - copy any you want to keep somewhere else
 chime and shows a Windows notification - a reminder to go and check the loot. The last one also
 shows under the status. **Test alert** (under Loop) plays it now so you can check the volume; the
 **Kill chime** / **Kill notification** boxes turn them off. Want another sound? **Choose...** next to
-*Sound:* picks any MP3 or WAV file (keep it short - it plays in full on every kill); **Default** goes
+*Sound:* picks any MP3, WAV or OGG file (keep it short - it plays in full on every kill); **Default** goes
 back to the built-in chime.
 
 ## Updates
