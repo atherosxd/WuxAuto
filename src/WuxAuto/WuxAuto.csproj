@@ -19,6 +19,10 @@
     <Description>Process-scoped automation pilot for Wuxen2</Description>
     <!-- English UI only: keeps the self-contained package (publish.ps1) smaller. -->
     <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
+    <!-- Emgu CV's native runtime brings the MSVC runtime DLLs in packages that only have .NET
+         Framework build targets (a native-file copy); their runtimes\win-x64\native files are
+         used as they are, so NuGet's NU1701 fallback warning is expected. -->
+    <NoWarn>$(NoWarn);NU1701</NoWarn>
   </PropertyGroup>
 
   <ItemGroup>
@@ -27,8 +31,8 @@
 
   <ItemGroup>
     <PackageReference Include="CommunityToolkit.Mvvm" Version="8.4.2" />
-    <PackageReference Include="OpenCvSharp4" Version="4.13.0.20260627" />
-    <PackageReference Include="OpenCvSharp4.runtime.win" Version="4.13.0.20260627" />
+    <!-- OpenCV for Core's vision: Emgu CV's native Windows build (brings the managed Emgu.CV too). -->
+    <PackageReference Include="Emgu.CV.runtime.mini.windows" Version="5.0.0.6584" />
     <PackageReference Include="Vortice.Direct3D11" Version="3.8.3" />
     <PackageReference Include="Vortice.DXGI" Version="3.8.3" />
   </ItemGroup>

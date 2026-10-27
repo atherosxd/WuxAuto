@@ -59,8 +59,8 @@ internal static class CaptureProbe
 
             string output = System.IO.Path.Combine(
                 System.IO.Path.GetTempPath(), $"wuxauto-capture-{frames}.png");
-            using (var mat = OpenCvSharp.Mat.FromPixelData(frame.Height, frame.Width, OpenCvSharp.MatType.CV_8UC4, frame.Buffer))
-                OpenCvSharp.Cv2.ImWrite(output, mat);
+            using (var mat = CaptureMats.Copy(frame))
+                WuxAuto.Vision.ImageFile.Write(output, mat);
             Console.WriteLine($"    saved {output}");
 
             if (frames >= 2)

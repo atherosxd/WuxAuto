@@ -1,6 +1,6 @@
-using System.Runtime.InteropServices;
 using System.Security.Cryptography;
-using OpenCvSharp;
+using Emgu.CV;
+using Emgu.CV.CvEnum;
 using WuxAuto.Core;
 using WuxAuto.Vision;
 
@@ -8,8 +8,9 @@ namespace WuxAuto.SelfTest;
 
 /// <summary>
 /// The --parity probe's new side: Core's vision (src/WuxAuto.Core) with the desktop OCR engine, as
-/// the app builds it. Decodes its own frames; nothing image-typed leaves this class. This is the
-/// only probe file that changes when Core's imaging library does.
+/// the app builds it. Decodes its own frames (Emgu CV, as Core's ImageFile reads PNGs); nothing
+/// image-typed leaves this class. This is the only probe file that changes when Core's imaging
+/// library does.
 /// </summary>
 internal sealed class CoreSide : IVisionSide
 {
@@ -22,21 +23,21 @@ internal sealed class CoreSide : IVisionSide
     {
         _frame?.Dispose();
         _frame = null;
-        using var source = Cv2.ImRead(path, ImreadModes.Unchanged);
-        if (source.Empty())
+        using var source = ImageFile.Read(path, ImreadModes.Unchanged);
+        if (source.IsEmpty)
             return null;
 
         var frame = new Mat();
-        switch (source.Channels())
+        switch (source.NumberOfChannels)
         {
             case 4:
                 source.CopyTo(frame);
                 break;
             case 3:
-                Cv2.CvtColor(source, frame, ColorConversionCodes.BGR2BGRA);
+                CvInvoke.CvtColor(source, frame, ColorConversion.Bgr2Bgra);
                 break;
             case 1:
-                Cv2.CvtColor(source, frame, ColorConversionCodes.GRAY2BGRA);
+                CvInvoke.CvtColor(source, frame, ColorConversion.Gray2Bgra);
                 break;
             default:
                 frame.Dispose();
@@ -44,14 +45,9 @@ internal sealed class CoreSide : IVisionSide
         }
 
         _frame = frame;
+        // The rows one after the other, as the legacy side hashes them row by row.
         using var hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
-        int height = frame.Height;
-        var row = new byte[frame.Width * frame.ElemSize()];
-        for (int y = 0; y < height; y++)
-        {
-            Marshal.Copy(frame.Ptr(y), row, 0, row.Length);
-            hash.AppendData(row);
-        }
+        hash.AppendData(CvHelpers.Bytes(frame));
 
         return new FrameInfo(frame.Width, frame.Height, Convert.ToHexString(hash.GetHashAndReset())[..16]);
     }

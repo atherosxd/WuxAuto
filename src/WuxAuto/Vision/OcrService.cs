@@ -1,10 +1,13 @@
 using System.Runtime.InteropServices;
 using System.Runtime.InteropServices.WindowsRuntime;
-using OpenCvSharp;
+using Emgu.CV;
+using Emgu.CV.CvEnum;
 using WuxAuto.Core;
 using Windows.Graphics.Imaging;
 using Windows.Media.Ocr;
 using WinOcrWord = Windows.Media.Ocr.OcrWord;
+using Rectangle = System.Drawing.Rectangle;
+using Size = System.Drawing.Size;
 
 namespace WuxAuto.Vision;
 
@@ -79,23 +82,23 @@ public sealed class OcrService : IOcrEngine, IDisposable
 
         try
         {
-            using var view = new Mat(bgra, new Rect(area.X, area.Y, area.Width, area.Height));
+            using var view = new Mat(bgra, new Rectangle(area.X, area.Y, area.Width, area.Height));
 
             Mat source = view;
             if (Math.Abs(upscale - 1.0) > 0.01)
             {
                 resized = new Mat();
-                Cv2.Resize(view, resized, new Size(0, 0), upscale, upscale, InterpolationFlags.Cubic);
+                CvInvoke.Resize(view, resized, new Size(0, 0), upscale, upscale, Inter.Cubic);
                 source = resized;
             }
 
-            if (source.Channels() != 4)
+            if (source.NumberOfChannels != 4)
             {
                 converted = new Mat();
-                if (source.Channels() == 3)
-                    Cv2.CvtColor(source, converted, ColorConversionCodes.BGR2BGRA);
+                if (source.NumberOfChannels == 3)
+                    CvInvoke.CvtColor(source, converted, ColorConversion.Bgr2Bgra);
                 else
-                    Cv2.CvtColor(source, converted, ColorConversionCodes.GRAY2BGRA);
+                    CvInvoke.CvtColor(source, converted, ColorConversion.Gray2Bgra);
                 source = converted;
             }
 
@@ -104,15 +107,16 @@ public sealed class OcrService : IOcrEngine, IDisposable
             int stride = width * 4;
             var bytes = new byte[stride * height];
 
-            if (source.IsContinuous())
+            // Read out of the Mat (never written into through managed code, CLAUDE.md section 10).
+            if (source.IsContinuous)
             {
-                Marshal.Copy(source.Data, bytes, 0, bytes.Length);
+                Marshal.Copy(source.DataPointer, bytes, 0, bytes.Length);
             }
             else
             {
                 for (int y = 0; y < height; y++)
                 {
-                    IntPtr row = source.Data + y * (int)source.Step();
+                    IntPtr row = source.DataPointer + y * source.Step;
                     Marshal.Copy(row, bytes, y * stride, stride);
                 }
             }

@@ -1,7 +1,12 @@
 using System.IO;
 using System.Numerics;
-using OpenCvSharp;
+using Emgu.CV;
+using Emgu.CV.CvEnum;
+using Emgu.CV.Structure;
 using WuxAuto.Core;
+using Point = System.Drawing.Point;
+using Rectangle = System.Drawing.Rectangle;
+using Size = System.Drawing.Size;
 
 namespace WuxAuto.Vision;
 
@@ -16,13 +21,14 @@ public static class FrameSignature
 
         using var gray = TemplateMatcher.ToGray(frameBgra, area);
         using var small = new Mat();
-        Cv2.Resize(gray, small, new Size(8, 8), 0, 0, InterpolationFlags.Area);
+        CvInvoke.Resize(gray, small, new Size(8, 8), 0, 0, Inter.Area);
+        byte[] pixels = CvHelpers.Bytes(small);
 
         double sum = 0;
         for (int y = 0; y < 8; y++)
         {
             for (int x = 0; x < 8; x++)
-                sum += small.At<byte>(y, x);
+                sum += pixels[y * 8 + x];
         }
 
         double mean = sum / 64.0;
@@ -32,7 +38,7 @@ public static class FrameSignature
         {
             for (int x = 0; x < 8; x++)
             {
-                if (small.At<byte>(y, x) > mean)
+                if (pixels[y * 8 + x] > mean)
                     hash |= 1UL << bit;
                 bit++;
             }
@@ -46,14 +52,14 @@ public static class FrameSignature
 
 public static class OverlayRenderer
 {
-    public static Scalar Color(OverlayColor color) => color switch
+    public static MCvScalar Color(OverlayColor color) => color switch
     {
-        OverlayColor.Green => new Scalar(80, 220, 90),
-        OverlayColor.Orange => new Scalar(60, 170, 255),
-        OverlayColor.Blue => new Scalar(255, 170, 70),
-        OverlayColor.Red => new Scalar(70, 70, 240),
-        OverlayColor.Yellow => new Scalar(60, 215, 245),
-        _ => new Scalar(180, 180, 180),
+        OverlayColor.Green => new MCvScalar(80, 220, 90),
+        OverlayColor.Orange => new MCvScalar(60, 170, 255),
+        OverlayColor.Blue => new MCvScalar(255, 170, 70),
+        OverlayColor.Red => new MCvScalar(70, 70, 240),
+        OverlayColor.Yellow => new MCvScalar(60, 215, 245),
+        _ => new MCvScalar(180, 180, 180),
     };
 
     public static void Draw(Mat bgra, IEnumerable<OverlayItem> overlays, (int X, int Y)? click = null, double scale = 1.0)
@@ -65,29 +71,30 @@ public static class OverlayRenderer
 
             var color = Color(overlay.Color);
             var bounds = Scale(overlay.Bounds, scale);
-            var rect = new Rect(bounds.X, bounds.Y, bounds.Width, bounds.Height);
-            Cv2.Rectangle(bgra, rect, color, 2, LineTypes.AntiAlias);
+            var rect = new Rectangle(bounds.X, bounds.Y, bounds.Width, bounds.Height);
+            CvHelpers.DrawRectangle(bgra, rect, color, 2, LineType.AntiAlias);
 
             if (overlay.LineTo.HasValue)
             {
-                Cv2.Line(
+                CvInvoke.Line(
                     bgra,
                     new Point(bounds.CenterX, bounds.CenterY),
                     new Point((int)Math.Round(overlay.LineTo.Value.X * scale), (int)Math.Round(overlay.LineTo.Value.Y * scale)),
                     color,
                     3,
-                    LineTypes.AntiAlias);
+                    LineType.AntiAlias);
             }
 
             if (!string.IsNullOrEmpty(overlay.Label))
             {
                 const double fontScale = 0.55;
-                var size = Cv2.GetTextSize(overlay.Label, HersheyFonts.HersheySimplex, fontScale, 1, out _);
+                int baseline = 0;
+                var size = CvInvoke.GetTextSize(overlay.Label, HersheyFonts.Simplex, fontScale, 1, ref baseline);
                 int textY = Math.Max(size.Height + 4, rect.Y - 4);
-                var boxRect = new Rect(rect.X, textY - size.Height - 4, size.Width + 8, size.Height + 6);
+                var boxRect = new Rectangle(rect.X, textY - size.Height - 4, size.Width + 8, size.Height + 6);
                 using var roi = new Mat(bgra, ClampRect(boxRect, bgra.Width, bgra.Height));
-                roi.SetTo(new Scalar(20, 20, 20));
-                Cv2.PutText(bgra, overlay.Label, new Point(rect.X + 4, textY - 3), HersheyFonts.HersheySimplex, fontScale, color, 1, LineTypes.AntiAlias);
+                roi.SetTo(new MCvScalar(20, 20, 20));
+                CvInvoke.PutText(bgra, overlay.Label, new Point(rect.X + 4, textY - 3), HersheyFonts.Simplex, fontScale, color, 1, LineType.AntiAlias);
             }
         }
 
@@ -95,8 +102,8 @@ public static class OverlayRenderer
         {
             var cross = Color(OverlayColor.Red);
             var point = new Point((int)Math.Round(click.Value.X * scale), (int)Math.Round(click.Value.Y * scale));
-            Cv2.DrawMarker(bgra, point, cross, MarkerTypes.Cross, 18, 2, LineTypes.AntiAlias);
-            Cv2.Circle(bgra, point, 14, cross, 2, LineTypes.AntiAlias);
+            CvInvoke.DrawMarker(bgra, point, cross, MarkerTypes.Cross, 18, 2, LineType.AntiAlias);
+            CvInvoke.Circle(bgra, point, 14, cross, 2, LineType.AntiAlias);
         }
     }
 
@@ -112,13 +119,13 @@ public static class OverlayRenderer
             Math.Max(3, (int)Math.Round(rect.Height * scale)));
     }
 
-    private static Rect ClampRect(Rect rect, int width, int height)
+    private static Rectangle ClampRect(Rectangle rect, int width, int height)
     {
         int x = Math.Clamp(rect.X, 0, Math.Max(0, width - 1));
         int y = Math.Clamp(rect.Y, 0, Math.Max(0, height - 1));
         int w = Math.Clamp(rect.Width, 1, width - x);
         int h = Math.Clamp(rect.Height, 1, height - y);
-        return new Rect(x, y, w, h);
+        return new Rectangle(x, y, w, h);
     }
 }
 
@@ -134,7 +141,7 @@ public static class DebugArtifacts
 
             string safeTag = string.Concat(tag.Select(c => char.IsLetterOrDigit(c) || c is '-' or '_' ? c : '_'));
             string file = Path.Combine(AppPaths.DebugFolder, $"{DateTime.Now:yyyyMMdd_HHmmss_fff}_{safeTag}.png");
-            Cv2.ImWrite(file, copy);
+            ImageFile.Write(file, copy);
             return file;
         }
         catch
