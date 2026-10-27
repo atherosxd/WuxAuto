@@ -39,7 +39,7 @@ public static class AppPaths
 public static class SettingsStore
 {
     /// <summary>Bump when an existing settings.json must be migrated (see <see cref="Migrate"/>).</summary>
-    private const int CurrentVersion = 20;
+    private const int CurrentVersion = 21;
 
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
@@ -167,6 +167,10 @@ public static class SettingsStore
         if (s.Version < 20 && s.Dungeon is { ManualAttacks: > 0 and < 15 })
             s.Dungeon.ManualAttacks = 15;
 
+        // v21: the stage 5 attack is one held press + 10 taps (user, 2026-10-27); the v20 15 becomes 10.
+        if (s.Version < 21 && s.Dungeon is { ManualAttacks: 15 })
+            s.Dungeon.ManualAttacks = 10;
+
         s.Version = CurrentVersion;
         return true;
     }
@@ -254,7 +258,7 @@ public static class SettingsStore
         s.Dungeon.ManualAttacks = Math.Clamp(s.Dungeon.ManualAttacks, 0, 100);
         s.Dungeon.ManualAttackIntervalMs = Math.Clamp(s.Dungeon.ManualAttackIntervalMs, 100, 5000);
         s.Dungeon.ManualAttackWaitMs = Math.Clamp(s.Dungeon.ManualAttackWaitMs, 0, 10000);
-        s.Dungeon.AutohuntConfirmMs = Math.Clamp(s.Dungeon.AutohuntConfirmMs, 500, 30000);
+        s.Dungeon.HoldSkillMs = Math.Clamp(s.Dungeon.HoldSkillMs, 0, 30000);
         s.Dungeon.AutohuntStallMs = Math.Clamp(s.Dungeon.AutohuntStallMs, 3000, 120000);
         s.Lod.LootAfterMissingMs = Math.Clamp(s.Lod.LootAfterMissingMs, 1000, 120000);
         s.Lod.StopAttackPresses = Math.Clamp(s.Lod.StopAttackPresses, 0, 20);
