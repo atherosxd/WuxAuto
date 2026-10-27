@@ -36,6 +36,9 @@ public sealed partial class AutomationPilot
     private int _lodApproachTries;
     private long _lodApproachClickAt;
     private int _lodApproachSnapshots;
+    private long _lodRingCheckAt;
+    private int _lodRingWalks;
+    private bool _lodApproachRingOnly;
 
     private bool IsLod => _settings.Sequence.Mode == RunMode.AutoLod;
 
@@ -415,6 +418,7 @@ public sealed partial class AutomationPilot
         _lodDeathLines = -1;
         _lodHitLines = null;
         _lodApproached = false;
+        _lodRingWalks = 0;
     }
 
     /// <summary>Back to finding the boss: Tab (and the walk with WalkToBossSpot), or the south turn first if the heading is unknown.</summary>
@@ -658,13 +662,28 @@ public sealed partial class AutomationPilot
                 }
                 else if (hitLines.FirstOrDefault(line => !_lodHitLines.Contains(line)) is { } hit)
                 {
-                    BeginLodApproach(hit);
+                    BeginLodApproach($"First hit on '{lod.BossName}' ({hit})");
                     return;
                 }
                 else
                 {
                     // Lines the OCR missed on one frame and reads on the next are not new hits.
                     _lodHitLines.UnionWith(hitLines);
+                }
+            }
+            // Keep to the ring (user, 2026-10-27: "try to go to the ring as much as possible, do a
+            // periodical check"): after the first walk up, look again every RingCheckEveryMs and walk
+            // back when the character has drifted off it. The ring only: out of view it is mostly the
+            // boss's body over the camera with the character under the boss (live, 23:20), where a
+            // "belt" read was a cyan patch at the boss's side.
+            else if (lod.ApproachBoss && lod.RingCheckEveryMs > 0 && now - _lodRingCheckAt >= lod.RingCheckEveryMs)
+            {
+                _lodRingCheckAt = now;
+                if (FindApproachSpot(frame, useBelt: false) is { } spot && spot.Away > lod.RingStayMax)
+                {
+                    _lodRingWalks++;
+                    BeginLodApproach($"Ring check {_lodRingWalks}: off the {spot.What} ({spot.Away:0.00} of its radius out)", ringOnly: true);
+                    return;
                 }
             }
         }
@@ -712,23 +731,63 @@ public sealed partial class AutomationPilot
         _waitUntil = now + Math.Min(lod.SkillEveryMs, 300);
     }
 
-    private void BeginLodApproach(string hit)
+    private void BeginLodApproach(string why, bool ringOnly = false)
     {
         _lodApproached = true;
+        _lodApproachRingOnly = ringOnly;
         _lodApproachStopped = false;
         _lodApproachTries = 0;
         _lodApproachClickAt = 0;
-        Log?.Invoke(LogLevel.Info, $"First hit on '{_settings.Lod.BossName}' ({hit}) - stopping the attack to walk up to it.");
+        Log?.Invoke(LogLevel.Info, $"{why} - stopping the attack to walk up to '{_settings.Lod.BossName}'.");
         Advance(PilotPhase.LodApproach, 0);
     }
 
     /// <summary>
-    /// After the first hit of a fight (user, 2026-10-24): stop attacking (Space) and Ctrl+click the
-    /// pink ring round the boss's feet - Ctrl+click walks there (live: 1183,1611 -> 1212,1775, at the
-    /// boss's feet, and the attack carried on by itself). No ring: just below the cyan belt, which is
-    /// where the feet are (a Ctrl+click on the belt itself is a floor spot behind the boss - live, it
-    /// walked ~190 units past it). Next to the boss after a click, nothing found, or ApproachTries
-    /// used up -> back to the attack.
+    /// Where the character should stand: the pink ring round the boss's feet, else the feet just below
+    /// its cyan belt (a Ctrl+click on the belt itself is a floor spot behind the boss - live, it walked
+    /// ~190 units past it). Away = how far out the character is: the camera follows it, so its feet are
+    /// at the middle of the client, a little low; in ring radii (<see cref="ScreenAnalyzer.DistanceFromRing"/>),
+    /// or in 8 % of the client height from the feet. Drawn on the preview. Null = neither in view
+    /// (<paramref name="useBelt"/> false: no ring).
+    /// </summary>
+    private (PixelRect Spot, string What, double Away)? FindApproachSpot(Mat frame, bool useBelt = true)
+    {
+        string what = "pink ring";
+        var spot = _analyzer.FindBossRing(frame);
+        bool ring = spot != null;
+        if (spot == null && useBelt && _analyzer.FindBossBelt(frame) is { } belt)
+        {
+            int feetY = belt.Bottom + (int)(frame.Height * 0.06);
+            spot = new PixelRect(belt.X, feetY - belt.Width / 2, belt.Width, belt.Width);
+            what = "boss's feet below its belt";
+            _overlays.Add(new OverlayItem(belt, "belt", OverlayColor.Blue));
+        }
+
+        if (spot is not { } found)
+            return null;
+
+        double away;
+        if (ring)
+        {
+            away = ScreenAnalyzer.DistanceFromRing(found, frame.Width, frame.Height);
+        }
+        else
+        {
+            double dx = frame.Width / 2.0 - found.CenterX, dy = frame.Height * 0.54 - found.CenterY;
+            away = Math.Sqrt(dx * dx + dy * dy) / (frame.Height * 0.08);
+        }
+
+        _overlays.Add(new OverlayItem(found, $"{what} {away:0.00}", OverlayColor.Green));
+        return (found, what, away);
+    }
+
+    /// <summary>
+    /// After the first hit of a fight (user, 2026-10-24), and whenever the ring check finds the
+    /// character off the ring (user, 2026-10-27): stop attacking (Shura) and Ctrl+click the pink ring
+    /// round the boss's feet - Ctrl+click walks there (live: 1183,1611 -> 1212,1775, at the boss's feet,
+    /// and the attack carried on by itself); no ring before the first click: just below the belt
+    /// (<see cref="FindApproachSpot"/>). Next to the boss after a click, no ring after a click (= under
+    /// the boss), nothing found, or ApproachTries used up -> back to the attack.
     /// </summary>
     private async Task TickLodApproachAsync(Mat frame)
     {
@@ -746,50 +805,40 @@ public sealed partial class AutomationPilot
         var (_, deathLines) = await ReadLodScreenAsync(frame);
         if (_lodDeathLines >= 0 && deathLines > _lodDeathLines)
         {
-            await ResumeLodAttackAsync(frame, "the death text showed while walking");
+            await ResumeLodAttackAsync(frame, "the death text showed while walking", reached: true);
             return;
         }
 
-        string what = "pink ring";
-        var spot = _analyzer.FindBossRing(frame);
-        bool ring = spot != null;
-        if (spot == null && _analyzer.FindBossBelt(frame) is { } belt)
-        {
-            int feetY = belt.Bottom + (int)(frame.Height * 0.06);
-            spot = new PixelRect(belt.X, feetY - belt.Width / 2, belt.Width, belt.Width);
-            what = "boss's feet below its belt";
-            _overlays.Add(new OverlayItem(belt, "belt", OverlayColor.Blue));
-        }
-
-        // The camera follows the character: its feet are at the middle of the client, a little low.
         // Next to the boss = the inner part of its ring, or right at the feet below the belt. The
         // first Ctrl+click always goes out (user: after the first hit, Ctrl+click the ring - the skill
         // stops the character on the ring at about half its radius); this only decides a retry.
-        int meX = frame.Width / 2, meY = (int)(frame.Height * 0.54);
-        double away = double.MaxValue;
-        if (spot is { } found)
+        // The belt only before the first click: after one, a missing ring is mostly the boss's body over
+        // the camera with the character under the boss, and a cyan patch at its side then read as the
+        // belt (live, 2026-10-27 23:20) - a click there would walk away from the boss.
+        var found = FindApproachSpot(frame, useBelt: !_lodApproachRingOnly && _lodApproachTries == 0);
+        if (found is { } near && _lodApproachTries > 0 && near.Away <= 0.6)
         {
-            _overlays.Add(new OverlayItem(found, what, OverlayColor.Green));
-            double dx = meX - found.CenterX, dy = meY - found.CenterY;
-            away = ring
-                ? Math.Sqrt(Math.Pow(dx / Math.Max(1, found.Width / 2.0), 2) + Math.Pow(dy / Math.Max(1, found.Height / 2.0), 2))
-                : Math.Sqrt(dx * dx + dy * dy) / (frame.Height * 0.08);
-            if (_lodApproachTries > 0 && away <= 0.6)
-            {
-                await ResumeLodAttackAsync(frame, $"next to it after {_lodApproachTries} Ctrl+click(s) ({what}, {away:0.00} of its radius)");
-                return;
-            }
+            await ResumeLodAttackAsync(frame, $"next to it after {_lodApproachTries} Ctrl+click(s) ({near.What}, {near.Away:0.00} of its radius)", reached: true);
+            return;
         }
 
-        if (spot == null || _lodApproachTries >= lod.ApproachTries)
+        if (found == null && _lodApproachTries > 0)
+        {
+            await ResumeLodAttackAsync(frame, $"no ring in view after {_lodApproachTries} Ctrl+click(s) - under the boss", reached: true);
+            return;
+        }
+
+        if (found is not { } target || _lodApproachTries >= lod.ApproachTries)
         {
             if (_lodApproachSnapshots++ < 3)
                 DebugArtifacts.SaveFrame(frame, _overlays, "lod_approach_miss");
-            await ResumeLodAttackAsync(frame, spot == null
+            await ResumeLodAttackAsync(frame, found == null
                 ? "no pink ring or belt in view - attacking from here"
-                : $"still not next to it after {_lodApproachTries} Ctrl+click(s) - attacking from here");
+                : $"still not next to it after {_lodApproachTries} Ctrl+click(s) - attacking from here", reached: false);
             return;
         }
+
+        var (spot, what, away) = target;
 
         // Stop attacking first (user: Shura, else Space), then take a fresh frame - the boss may move.
         if (!_lodApproachStopped)
@@ -810,8 +859,8 @@ public sealed partial class AutomationPilot
 
         // Inside the walk-click area, as the LodRun clicks: a ring low on the left would otherwise put
         // the click on the chat box, and the skill key would then type into the chat.
-        int clickX = Math.Clamp(spot.Value.CenterX, (int)(frame.Width * 0.25), (int)(frame.Width * RunClickRight));
-        int clickY = Math.Clamp(spot.Value.CenterY, (int)(frame.Height * RunClickTop), (int)(frame.Height * 0.78));
+        int clickX = Math.Clamp(spot.CenterX, (int)(frame.Width * 0.25), (int)(frame.Width * RunClickRight));
+        int clickY = Math.Clamp(spot.CenterY, (int)(frame.Height * RunClickTop), (int)(frame.Height * 0.78));
         if (!_input.CtrlClick(clickX, clickY))
         {
             _detail = "Ctrl+click blocked - waiting for the game to be in front";
@@ -833,8 +882,11 @@ public sealed partial class AutomationPilot
     /// Back to the skill spam after the walk, with a fresh "seen" timer so the walk is not taken for a
     /// lost target. The coordinates are the new death-jump baseline (the walk itself moves the
     /// character), but a jump past TeleportJump since before the walk is a death, as in LodAttack.
+    /// The next ring check is RingCheckEveryMs away, 3x that when the walk did not get there
+    /// (<paramref name="reached"/> false) - a ring it cannot reach would otherwise stop the attack
+    /// every few seconds.
     /// </summary>
-    private async Task ResumeLodAttackAsync(Mat frame, string why)
+    private async Task ResumeLodAttackAsync(Mat frame, string why, bool reached)
     {
         var lod = _settings.Lod;
         var coords = await _analyzer.ReadCoordinatesAsync(frame);
@@ -852,6 +904,7 @@ public sealed partial class AutomationPilot
         _lodSkillAt = 0;
         _lodCoordsAt = now;
         _lodAttackCoords = coords == null ? null : (coords.X, coords.Y);
+        _lodRingCheckAt = reached ? now : now + 2L * lod.RingCheckEveryMs;
         Advance(PilotPhase.LodAttack, 0);
     }
 

@@ -304,8 +304,25 @@ public sealed class LodSettings
     /// <summary>Time for the walk after a Ctrl+click (live: ~165 units in under 1.8 s).</summary>
     public int ApproachWaitMs { get; set; } = 1500;
 
-    /// <summary>Ctrl+clicks per fight before attacking from where the character is.</summary>
+    /// <summary>Ctrl+clicks per walk up before attacking from where the character is.</summary>
     public int ApproachTries { get; set; } = 2;
+
+    /// <summary>
+    /// Keep to the ring (user, 2026-10-27: "try to go to the ring as much as possible, do a periodical
+    /// check"): after the first walk up of a fight, the ring is looked for every this many ms while
+    /// attacking; the character further out than <see cref="RingStayMax"/> -> the same walk up again
+    /// (Shura, Ctrl+click). The ring only, never the belt: no ring in view is mostly the boss's body over
+    /// the camera with the character under it. A walk that did not get there waits 3x as long before the
+    /// next check. 0 = only the walk after the first hit, as before. Needs <see cref="ApproachBoss"/>.
+    /// </summary>
+    public int RingCheckEveryMs { get; set; } = 3000;
+
+    /// <summary>
+    /// The periodic check's "still on the ring": the character's distance from the ring's centre in ring
+    /// radii (ScreenAnalyzer.DistanceFromRing) - 1 = on the ring itself. The walk up stops at 0.6, so a character it just put there is not sent again. Saved
+    /// first-walk frames read 0.07-0.89 on or under the boss and 1.82-2.0 beside the ring.
+    /// </summary>
+    public double RingStayMax { get; set; } = 1.0;
 
     /// <summary>
     /// Auto-buff key (user: O; autohunt is disabled on this map). Pressed on arrival and again every

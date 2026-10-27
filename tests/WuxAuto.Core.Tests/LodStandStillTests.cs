@@ -75,36 +75,10 @@ public class LodStandStillTests
         return (settings, input, ocr);
     }
 
-    private sealed record Run(PilotPhase Phase, List<string> Lines);
-
-    private static async Task<Run> RunAsync(AppSettings settings, FakeGameInput input, FakeOcrEngine ocr, Func<AutomationPilot, bool> done)
+    private static async Task<(PilotPhase Phase, List<string> Lines)> RunAsync(AppSettings settings, FakeGameInput input,
+        FakeOcrEngine ocr, Func<AutomationPilot, bool> done)
     {
-        string root = Path.Combine(Path.GetTempPath(), "wux-core-" + Guid.NewGuid());
-        AppPaths.Configure(root, Path.Combine(root, "assets")); // no templates: the boss is found by name
-        try
-        {
-            using var analyzer = new ScreenAnalyzer(settings, ocr);
-            var pilot = new AutomationPilot(settings, analyzer, input);
-            var lines = new List<string>();
-            pilot.Log += (_, text) => lines.Add(text);
-            pilot.Start(PilotPhase.LodRun);
-
-            using var frame = new Mat(Height, Width, MatType.CV_8UC4, Scalar.All(0));
-            long deadline = Environment.TickCount64 + 15000;
-            while (!done(pilot) && pilot.IsRunning && Environment.TickCount64 < deadline)
-            {
-                await pilot.TickAsync(frame, CancellationToken.None);
-                await Task.Delay(20);
-            }
-
-            var phase = pilot.Phase;
-            pilot.Stop("test over");
-            return new Run(phase, lines);
-        }
-        finally
-        {
-            if (Directory.Exists(root))
-                Directory.Delete(root, true);
-        }
+        using var frame = new Mat(Height, Width, MatType.CV_8UC4, Scalar.All(0));
+        return await PilotRun.RunAsync(settings, input, ocr, frame, PilotPhase.LodRun, (pilot, _) => done(pilot));
     }
 }

@@ -33,7 +33,8 @@ Everything it does is drawn on its preview and written to its log.
   Tab until the boss **Bai Gu Great** shows (setting "Walk to the boss spot (LOD)" walks to it instead, the
   old way), then spams skill `1` until it is dead (it auto-buffs with `O` on arrival and every ~5 min). After the first hit of
   each fight it stops attacking, Ctrl+clicks the pink ring round the boss's feet to walk up to
-  it, then attacks again (setting "Walk up to the boss (LOD)"). The attack is stopped with **Shura**:
+  it, then attacks again (setting "Walk up to the boss (LOD)"); after that it checks every 3 s and walks
+  back to the ring whenever the character is off it. The attack is stopped with **Shura**:
   its icon is found on the skill bar and clicked 3 times; not found -> the "Shura key (LOD)" (default
   `E`, set it to the slot you put Shura in); empty -> Space as before. When the boss says "see you in hell" (or the boss's treasure icon is gone for 2 s) it loots with the `` ` `` key for 10 s, without pressing Tab.
   The boss respawns, so it keeps fighting until the map's timer runs out;
