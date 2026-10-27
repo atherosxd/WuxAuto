@@ -1,5 +1,7 @@
 using System.Diagnostics;
+using System.Globalization;
 using System.IO;
+using WuxAuto.Automation;
 using WuxAuto.Core;
 using WuxAuto.Vision;
 
@@ -15,6 +17,12 @@ internal sealed record DetectorResult(bool Found, PixelRect? Box, double? Score,
     /// compared - printed on difference lines so a scale drift is visible.
     /// </summary>
     public double? Scale { get; init; }
+
+    /// <summary>
+    /// Compare <see cref="Text"/> as it is (ordinal) instead of after TextMatcher.Normalize: for
+    /// line-key lists and counts, where Normalize would drop the separators.
+    /// </summary>
+    public bool ExactText { get; init; }
 
     /// <summary>" @x0.780" when a scale is known, else empty.</summary>
     public string ScaleSuffix => Scale is { } scale ? $" @x{scale:0.000}" : string.Empty;
@@ -77,28 +85,72 @@ internal interface IVisionSide : IDisposable
 }
 
 /// <summary>
-/// --parity &lt;dir&gt;: runs every detector the pilot uses on both the frozen pre-port vision
-/// (WuxAuto.Legacy) and Core's, per frame, with the inputs the pilot passes (a default
-/// AppSettings: regions are always code defaults), and compares the answers: same found / not
-/// found, box edges within 2 px, scores within 0.02, text equal after TextMatcher.Normalize.
+/// --parity &lt;dir&gt;: runs the detectors and the OCR reads of the pilot's call sites (each check
+/// names the pilot method it mirrors) on both the frozen pre-port vision (WuxAuto.Legacy) and
+/// Core's, per frame, with the inputs the pilot passes (a default AppSettings: regions are always
+/// code defaults), and compares the answers: same found / not found, box edges within 2 px, scores
+/// within 0.02, text equal after TextMatcher.Normalize (ordinal for line-key lists and counts).
+/// Three checks cover detectors the pilot does not call: compass / compass-angle (ScreenAnalyzer's
+/// compass detector, which only the Test scan button runs) and selectionring (main removed the
+/// pilot's calls); they stay in the strict view only.
 /// One analyzer pair for the whole run, frames in name order and no cache resets, so the learned
 /// template scale (keyed by client height) and the minimap anchor carry across frames as they do
-/// in the app. Prints every difference, then the coverage and the summary line.
+/// in the app. Prints every difference, then the coverage, the pilot-view rules and two summary
+/// lines: "pilot-view:" (hit lists compared the way the pilot consumes them, unused detectors
+/// excluded) and, last, the strict "parity:" line (every check, hit lists hit by hit).
 /// </summary>
 internal sealed class ParityProbe
 {
     private const int BoxTolerance = 2;
     private const double ScoreTolerance = 0.02;
 
+    /// <summary>Which summary a check counts in.</summary>
+    private enum View
+    {
+        /// <summary>Both: the strict "parity:" line and the "pilot-view:" line.</summary>
+        Both,
+
+        /// <summary>The strict line only: a raw hit list the pilot consumes through a pilot-view check, or a detector the pilot does not call.</summary>
+        StrictOnly,
+
+        /// <summary>The pilot-view line only: a hit list compared the way the pilot's call site consumes it.</summary>
+        PilotOnly,
+    }
+
+    /// <summary>The detectors the pilot no longer calls: in the strict view only.</summary>
+    private static readonly (string Check, string Why)[] ExcludedFromPilotView =
+    [
+        ("compass", "ScreenAnalyzer.ReadCompass - the compass detector only the Test scan button runs"),
+        ("compass-angle", "the same reading's heading"),
+        ("selectionring", "ScreenAnalyzer.FindSelectionRing - main removed the pilot's calls"),
+    ];
+
+    /// <summary>Each capped hit list (strict view, hit by hit) and how the pilot view compares it instead.</summary>
+    private static readonly (string Check, string Rule)[] PilotViewRules =
+    [
+        ("runskill-hits", "-> runskill: FindRunSkill takes the best score, near-ties the leftmost"),
+        ("shura-hits", "-> shura: FindShura, the same pick"),
+        ("teleportscroll-loose", "-> teleportscroll-loose-first: TickFindScroll's failure hint reads loose[0] only"),
+        ("teleport-next", "-> teleport-hasnext: TeleportListArrows asks for count > 0"),
+        ("teleport-prev", "-> teleport-hasprev: TeleportListArrows asks for count > 0"),
+        ("mapopen-rightchevron", "-> mapopen: MapWindowVisibleAsync asks for count >= 1 once 'Spawns' passed"),
+        ("checkzone-rightchevron", "-> checkzone-mapopen: TickCheckZoneAsync asks for count >= 2"),
+        ("row-focused, row-focused-wide, row-column", "-> rowchevron<N>: FindFocusedChevron's pick on the stage row read on both sides with the map open on both"),
+        ("row-fallback", "-> rowfallback<N>: ClickRowChevronFallback's click point (row glyph, else the column's median x, else the name)"),
+        ("teleport-rightchevron, teleport-leftchevron", "kept hit by hit in both views: TickFindChevron clicks matches[0] or the hit closest to its anchor, so every hit can be the one"),
+    ];
+
     private readonly IVisionSide _legacy;
     private readonly IVisionSide _core;
     private readonly AppSettings _settings = new();
     private readonly Dictionary<string, int> _ranOn = new(StringComparer.Ordinal);
     private readonly Dictionary<string, int> _foundOn = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, View> _viewOf = new(StringComparer.Ordinal);
     private readonly HashSet<string> _ranThisFrame = new(StringComparer.Ordinal);
     private readonly HashSet<string> _foundThisFrame = new(StringComparer.Ordinal);
     private string _frame = string.Empty;
     private int _checks, _verdict, _box, _score, _text;
+    private int _pilotVerdict, _pilotBox, _pilotScore, _pilotText;
 
     private ParityProbe(IVisionSide legacy, IVisionSide core)
     {
@@ -107,6 +159,8 @@ internal sealed class ParityProbe
     }
 
     private int Differences => _verdict + _box + _score + _text;
+
+    private int PilotDifferences => _pilotVerdict + _pilotBox + _pilotScore + _pilotText;
 
     public static async Task<int> RunAsync(string dir)
     {
@@ -171,14 +225,28 @@ internal sealed class ParityProbe
         // found 0 = the check ran but never found anything on either side: it compared verdicts only.
         Console.WriteLine($"coverage (per check: frames it ran on, frames where either side found something; {frames - unreadable} frame(s) checked):");
         foreach (var (name, ran) in _ranOn.OrderBy(p => p.Key, StringComparer.Ordinal))
-            Console.WriteLine($"  {name} ran {ran} found {_foundOn.GetValueOrDefault(name)}");
+            Console.WriteLine($"  {name} ran {ran} found {_foundOn.GetValueOrDefault(name)}{Tag(_viewOf.GetValueOrDefault(name))}");
         if (unreadable > 0)
             Console.WriteLine($"{unreadable} frame(s) not decoded by a side, or decoded to different sizes - not checked");
+        Console.WriteLine("pilot view (lines tagged [strict-only] count in the parity line only, [pilot-view] in the pilot-view line only):");
+        foreach (var (check, rule) in PilotViewRules)
+            Console.WriteLine($"  {check} {rule}");
+        foreach (var (check, why) in ExcludedFromPilotView)
+            Console.WriteLine($"  {check} excluded: {why}");
         Console.WriteLine($"elapsed {watch.Elapsed.TotalMinutes:0.0} min");
+        Console.WriteLine($"pilot-view: differences={PilotDifferences} (verdict={_pilotVerdict} box={_pilotBox} score={_pilotScore} text={_pilotText}) " +
+                          $"excluded={string.Join(',', ExcludedFromPilotView.Select(e => e.Check))}");
         Console.WriteLine($"parity: frames={frames} checks={_checks} size-changes={sizeChanges} differences={Differences} " +
                           $"(verdict={_verdict} box={_box} score={_score} text={_text})");
         return Differences == 0 ? 0 : 1;
     }
+
+    private static string Tag(View view) => view switch
+    {
+        View.StrictOnly => " [strict-only]",
+        View.PilotOnly => " [pilot-view]",
+        _ => string.Empty,
+    };
 
     /// <summary>
     /// Every template the checks use must exist on the legacy side (else the check could never
@@ -213,52 +281,59 @@ internal sealed class ParityProbe
         static DetectorResult Present(bool present) => present ? new DetectorResult(true, null, null, null) : DetectorResult.None;
     }
 
-    /// <summary>The checks of one frame. Every call names the pilot code it mirrors.</summary>
+    /// <summary>The checks of one frame. Every call names the pilot method it mirrors.</summary>
     private async Task CheckFrameAsync(int w, int h)
     {
         var s = _settings;
         var r = s.Regions;
         var full = new PixelRect(0, 0, w, h);
 
-        // ---- load hash: AutomationPilot.cs:1654 / :1662 FrameSignature.Compute(frame, whole client), WaitForLoad.
-        //      Exact equality: the pilot compares bit distances (3 and 5), so any changed bit matters.
+        // ---- load hash: FrameSignature.Compute(frame, whole client) in TickFindDestinationAsync (the
+        //      hash before the click) and TickWaitForLoad. Exact equality: the pilot compares bit
+        //      distances (3 and 5), so any changed bit matters.
         Compare("framesig", side => new DetectorResult(true, null, null, side.FrameSignature(full).ToString("X16")));
 
-        // ---- zone title: AutomationPilot.ReadMinimapTitleAsync (zone guard, CheckZone)
+        // ---- zone title: AutomationPilot.ReadMinimapTitleAsync (zone guard, TickCheckZoneAsync)
         await CompareAsync("title", async side => TextOf(await MinimapTitleAsync(side, w, h)));
 
-        // ---- minimap coordinates, then the searchlight box anchored on them (FaceNorth, RunToTarget, LOD)
+        // ---- minimap coordinates (ScreenAnalyzer.ReadCoordinatesAsync: TickFaceNorthAsync, TickRunToTargetAsync,
+        //      TickCheckZoneAsync, LOD), then the searchlight box anchored on them (ScreenAnalyzer.CompassRegion)
         await CompareAsync("coords", async side => await side.ReadCoordinatesAsync() is { } c
             ? new DetectorResult(true, c.Bounds, null, $"x{c.X}y{c.Y}raw{c.Raw}")
             : DetectorResult.None);
         Compare("compass-region", side => Of(side.CompassRegion()));
+        // ScreenAnalyzer.ReadCompass: not a pilot call - the compass detector is only run by the Test scan
+        // button (ScreenAnalyzer.TestScanAsync). Strict view only.
         var (compassA, compassB) = (_legacy.ReadCompass(), _core.ReadCompass());
-        Record("compass", Of(compassA), Of(compassB));
-        Record("compass-angle", AngleOf(compassA), AngleOf(compassB));
-        // AutomationPilot.cs:1744 FindIconAnyScale(template, CompassRegion, 0.30): north, west, south, LOD crop
+        Record("compass", Of(compassA), Of(compassB), View.StrictOnly);
+        Record("compass-angle", AngleOf(compassA), AngleOf(compassB), View.StrictOnly);
+        // TickFaceNorthAsync: FindIconAnyScale(template, CompassRegion, 0.30) - north, west, south, LOD crop
         foreach (string beam in new[] { s.Dungeon.FlashlightTemplate, s.Dungeon.FlashlightTemplate + "west", s.Dungeon.FlashlightTemplate + "south", s.Lod.FlashlightTemplate })
             Compare($"searchlight-{beam}", side => Of(side.FindIconAnyScale(beam, side.CompassRegion(), 0.30)));
 
-        // ---- skill bar: AutomationPilot.cs:1142 FindRunSkill (+ :1091 RingFraction), Lod.cs:188 FindShura
+        // ---- skill bar: FindRunSkill (+ RingFraction in TickRunSkill), FindShura (AutomationPilot.Lod.cs)
         var hotbar = r.Hotbar.ToPixels(w, h);
         var runA = _legacy.FindIcons(s.Sequence.RunSkillTemplate, hotbar, s.Sequence.RunSkillMatchScore, 4);
         var runB = _core.FindIcons(s.Sequence.RunSkillTemplate, hotbar, s.Sequence.RunSkillMatchScore, 4);
-        RecordHits("runskill-hits", runA, runB);
+        RecordHits("runskill-hits", runA, runB, View.StrictOnly);
         var (pickA, pickB) = (PilotBest(runA), PilotBest(runB));
         Record("runskill", Of(pickA), Of(pickB));
         if (pickA != null || pickB != null)
             Record("runskill-ring", RingOf(_legacy, pickA), RingOf(_core, pickB));
         var shuraA = _legacy.FindIcons(s.Lod.ShuraTemplate, hotbar, s.Lod.ShuraMatchScore, 4);
         var shuraB = _core.FindIcons(s.Lod.ShuraTemplate, hotbar, s.Lod.ShuraMatchScore, 4);
-        RecordHits("shura-hits", shuraA, shuraB);
+        RecordHits("shura-hits", shuraA, shuraB, View.StrictOnly);
         Record("shura", Of(PilotBest(shuraA)), Of(PilotBest(shuraB)));
 
-        // ---- teleport: AutomationPilot.cs:1462 (= :1485) scroll, :1494 loose scroll, :1525 list paging, :4730/4731 list arrows
+        // ---- teleport: TickOpenInventory / TickFindScroll (scroll, and the loose look-alikes of its failure
+        //      hint), TickFindChevron (list paging), TeleportListArrows (TickFindDestinationAsync)
         var scroll = r.Scroll.ToPixels(w, h);
         Compare("teleportscroll", side => Of(side.FindIcon("teleportscroll", scroll, 0.78)));
-        CompareHits("teleportscroll-loose", side => side.FindIcons("teleportscroll", scroll, 0.30, 3));
+        var (looseA, looseB) = (_legacy.FindIcons("teleportscroll", scroll, 0.30, 3), _core.FindIcons("teleportscroll", scroll, 0.30, 3));
+        RecordHits("teleportscroll-loose", looseA, looseB, View.StrictOnly);
+        Record("teleportscroll-loose-first", Of(looseA.FirstOrDefault()), Of(looseB.FirstOrDefault()), View.PilotOnly);
         var list = r.TeleportList.ToPixels(w, h);
-        // :1537-1539 pages with matches[0] (the closest to the last click once there is one; the first page has none)
+        // TickFindChevron pages with matches[0] (the closest to the last click once there is one; the first page has none)
         foreach (string arrow in new[] { "rightchevron", "leftchevron" })
         {
             var (pageA, pageB) = (
@@ -268,19 +343,24 @@ internal sealed class ParityProbe
             Record($"teleport-{arrow}-first", Of(pageA.FirstOrDefault()), Of(pageB.FirstOrDefault()));
         }
 
-        CompareHits("teleport-next", side => side.FindIcons("rightchevron", list, 0.80, 3));
-        CompareHits("teleport-prev", side => side.FindIcons("leftchevron", list, 0.80, 3));
+        foreach (var (check, arrow) in new[] { ("teleport-next", "rightchevron"), ("teleport-prev", "leftchevron") })
+        {
+            var (arrowA, arrowB) = (_legacy.FindIcons(arrow, list, 0.80, 3), _core.FindIcons(arrow, list, 0.80, 3));
+            RecordHits(check, arrowA, arrowB, View.StrictOnly);
+            Record(check == "teleport-next" ? "teleport-hasnext" : "teleport-hasprev", Verdict(arrowA.Count > 0), Verdict(arrowB.Count > 0), View.PilotOnly);
+        }
 
-        // ---- gate banner: AutomationPilot.cs:2403 FindGateBannerAsync
+        // ---- gate banner: FindGateBannerAsync (template; its OCR path is checked with the x1.5 reads below)
         var banner = r.GateBanner.ToPixels(w, h);
         Compare("gatebanner", side => Of(side.FindIcon(s.Dungeon.GateTemplate, banner, null)));
 
-        // ---- the map: AutomationPilot.cs:2501 map button, :2465 MapWindowVisibleAsync, :2615 arrows, :2623 down chevron
+        // ---- the map: TickClickMapAsync (map button), MapWindowVisibleAsync, TickReadStageAsync (arrows above
+        //      'Spawns', then the downchevron template)
         var mapIcon = r.MapIcon.ToPixels(w, h);
         Compare("mapicon", side => Of(side.FindIcon("mapicon", mapIcon, Math.Max(0.50, s.Detection.TemplateThreshold - 0.10))));
         var (openA, openB) = (await MapOpenAsync(_legacy, w, h), await MapOpenAsync(_core, w, h));
         Record("spawns", TextOf(openA.Spawns), TextOf(openB.Spawns));
-        RecordHits("mapopen-rightchevron", openA.Chevrons, openB.Chevrons);
+        RecordHits("mapopen-rightchevron", openA.Chevrons, openB.Chevrons, View.StrictOnly);
         Record("mapopen", Verdict(openA.Open), Verdict(openB.Open));
         var mapScroll = r.MapScroll.ToPixels(w, h);
         var (arrowsA, arrowsB) = (await _legacy.FindMapScrollArrowsAsync(mapScroll), await _core.FindMapScrollArrowsAsync(mapScroll));
@@ -288,36 +368,51 @@ internal sealed class ParityProbe
         Record("maparrow-down", Of(arrowsA.Down), Of(arrowsB.Down));
         Compare("map-downchevron", side => Of(side.FindIcon("downchevron", mapScroll, 0.75)));
 
-        // ---- the map's boss list: AutomationPilot.cs:822 CheckZone map-open test, :2744/2750/2758 FindFocusedChevron, :2813 row fallback
+        // ---- the map's boss list: TickCheckZoneAsync's map-open test, FindFocusedChevron, ClickRowChevronFallback
         var bossList = r.MapBossList.ToPixels(w, h);
-        CompareHits("checkzone-rightchevron", side => side.FindIcons("rightchevron", bossList, 0.85, 6));
-        string focused = s.Dungeon.RowChevronTemplate;
-        CompareHits("row-focused", side => side.FindIcons(focused, bossList, s.Dungeon.RowChevronThreshold, 8));
+        var (zoneA, zoneB) = (_legacy.FindIcons("rightchevron", bossList, 0.85, 6), _core.FindIcons("rightchevron", bossList, 0.85, 6));
+        RecordHits("checkzone-rightchevron", zoneA, zoneB, View.StrictOnly);
+        Record("checkzone-mapopen", Verdict(zoneA.Count >= 2), Verdict(zoneB.Count >= 2), View.PilotOnly);
         var wide = new NormRect(0.45, 0.10, 0.55, 0.85).ToPixels(w, h);
-        CompareHits("row-focused-wide", side => side.FindIcons(focused, wide, s.Dungeon.RowChevronThreshold, 8));
-        CompareHits("row-column", side => side.FindIcons("rightchevron", bossList, 0.55, 24));
-        CompareHits("row-fallback", side => side.FindIcons("rightchevron", bossList, 0.50, 24));
-        // AutomationPilot.cs:2570 ReadStage (FindTextAsync + IsFullName per stage) and :2807 FindRowGlyph
+        var (rowsA, rowsB) = (RowListsOf(_legacy, bossList, wide), RowListsOf(_core, bossList, wide));
+        RecordHits("row-focused", rowsA.Focused, rowsB.Focused, View.StrictOnly);
+        RecordHits("row-focused-wide", rowsA.FocusedWide, rowsB.FocusedWide, View.StrictOnly);
+        RecordHits("row-column", rowsA.Column, rowsB.Column, View.StrictOnly);
+        RecordHits("row-fallback", rowsA.Fallback, rowsB.Fallback, View.StrictOnly);
+        // TickReadStageAsync (FindTextAsync + IsFullName per stage), FindRowGlyph; TickAdvanceStageAsync's re-read
+        // of the row is the same read with the map open
         var (stagesA, stagesB) = (await StageNamesAsync(_legacy, bossList), await StageNamesAsync(_core, bossList));
         for (int i = 0; i < s.Dungeon.Stages.Count; i++)
         {
             Record($"stage{i + 1}", TextOf(stagesA[i]), TextOf(stagesB[i]));
-            if (stagesA[i] != null || stagesB[i] != null)
-                Record($"rowglyph{i + 1}",
-                    stagesA[i] is { } na ? Of(RowGlyph(_legacy, na.Bounds, w, h)) : DetectorResult.None,
-                    stagesB[i] is { } nb ? Of(RowGlyph(_core, nb.Bounds, w, h)) : DetectorResult.None);
+            if (stagesA[i] == null && stagesB[i] == null)
+                continue;
+
+            PixelRect? glyphA = stagesA[i] is { } na ? RowGlyph(_legacy, na.Bounds, w, h) : null;
+            PixelRect? glyphB = stagesB[i] is { } nb ? RowGlyph(_core, nb.Bounds, w, h) : null;
+            Record($"rowglyph{i + 1}", Of(glyphA), Of(glyphB));
+
+            // How the pilot consumes the row lists: only for a row it read with the map open (a verdict
+            // difference in the name or the map test is already its own line).
+            if (openA.Open && openB.Open && stagesA[i] is { } rowA && stagesB[i] is { } rowB)
+            {
+                Record($"rowchevron{i + 1}", Of(FocusedChevron(rowsA, rowA.Bounds)), Of(FocusedChevron(rowsB, rowB.Bounds)), View.PilotOnly);
+                Record($"rowfallback{i + 1}", RowFallback(glyphA, rowsA.Fallback, rowA.Bounds), RowFallback(glyphB, rowsB.Fallback, rowB.Bounds), View.PilotOnly);
+            }
         }
 
-        // ---- bosses: AutomationPilot.cs:4010 FindBossAsync, :3607 (= Lod.cs:338) target bar, :3366 (= :3699) finalboss
+        // ---- bosses: FindBossAsync (Tab marker), ReadLodScreenFullAsync (target bar chest),
+        //      TickSelectBossAsync / TickAutohuntConfirmAsync (finalboss)
         var monster = r.MonsterIcon.ToPixels(w, h);
         Compare("monstericon", side => Of(side.FindIcon("monstericon", monster, null)));
         var targetBar = new NormRect(0.25, 0, 0.50, 0.16).ToPixels(w, h);
         Compare("targetbar-monstericon", side => Of(side.FindIcon("monstericon", targetBar, 0.80)));
         Compare("finalboss", side => Of(side.FindIconAnyScale("finalboss", full, 0.60)));
 
-        // ---- colour detectors: AutomationPilot.cs:3240/3512 selection ring, Lod.cs:732/734 boss ring + belt,
-        //      :1997/1998 (= :2028) gate glow bands, :4825 gold buttons
-        Compare("selectionring", side => Of(side.FindSelectionRing()));
+        // ---- colour detectors: ScreenAnalyzer.FindSelectionRing (no pilot call any more - main removed them;
+        //      strict view only), TickLodApproachAsync boss ring + belt, TickAimGate gate glow bands,
+        //      TickReconnectAsync gold buttons
+        Compare("selectionring", side => Of(side.FindSelectionRing()), View.StrictOnly);
         Compare("bossring", side => Of(side.FindBossRing()));
         Compare("bossbelt", side => Of(side.FindBossBelt()));
         int glowArea = Math.Max(150, w * h / 4000);
@@ -337,7 +432,7 @@ internal sealed class ParityProbe
         Record("confirm-message", confirmA == null ? DetectorResult.None : Of(confirmA.MessageBounds),
             confirmB == null ? DetectorResult.None : Of(confirmB.MessageBounds));
 
-        // ---- auto war: AutomationPilot.War.cs:46-95 (Regular War box, AUTO BUFF dialog X)
+        // ---- auto war: AutomationPilot.War.cs TickAutoWarAsync (Regular War box, AUTO BUFF dialog X)
         var (warA, warB) = (await ReadWarAsync(_legacy, w, h), await ReadWarAsync(_core, w, h));
         Record("autobuff-title", OfLine(warA.Buff), OfLine(warB.Buff));
         Record("regularwar-label", Of(warA.RegularLabel), Of(warB.RegularLabel));
@@ -357,7 +452,7 @@ internal sealed class ParityProbe
             Record($"checkbox-ticked#{i + 1}", tickA, tickB);
         }
 
-        // ---- Settings window rows: AutomationPilot.cs:1306 "Font size", :1367 "TAB target"
+        // ---- Settings window rows: TickFontSizeAsync, ScreenAnalyzer.ReadSettingRowAsync "Font size" and "TAB target"
         foreach (var (label, numeric) in new[] { ("Font size", true), ("TAB target", false) })
         {
             var (rowA, rowB) = (await _legacy.ReadSettingRowAsync(label, numeric), await _core.ReadSettingRowAsync(label, numeric));
@@ -366,6 +461,91 @@ internal sealed class ParityProbe
             Record(name + "-value", Of(rowA?.Value), Of(rowB?.Value));
             Record(name + "-left", Of(rowA?.Left), Of(rowB?.Left));
             Record(name + "-right", Of(rowA?.Right), Of(rowB?.Right));
+        }
+
+        await CheckOcrReadsAsync(w, h, openA.Open || openB.Open);
+    }
+
+    /// <summary>
+    /// The pilot's x1.5 OCR reads: ScreenAnalyzer.FindTextAsync reads its region at
+    /// Detection.OcrScale (cubic upscale, which the port changed by +-1 level) and the pilot judges
+    /// the words with TextMatcher and its own rules. One read per region and side; every needle of
+    /// every call site that reads the same region at the same scale is judged on it (the pilot's
+    /// separate calls would OCR the same pixels again and get the same words).
+    /// </summary>
+    private async Task CheckOcrReadsAsync(int w, int h, bool mapOpen)
+    {
+        var s = _settings;
+        var r = s.Regions;
+        var full = new PixelRect(0, 0, w, h);
+
+        // ---- the teleport list: TickFindDestinationAsync (Regions.Ocr), FindBest + ZoneMatches, for every
+        //      destination the pilot looks for (CurrentDestination: Labyrinth, LOD, the home towns of the
+        //      return teleport). Without the paging anchor (runtime state; page 1 has none).
+        var destinationRoi = r.Ocr.ToPixels(w, h);
+        var (destA, destB) = (await ReadAtOcrScaleAsync(_legacy, destinationRoi), await ReadAtOcrScaleAsync(_core, destinationRoi));
+        foreach (string destination in Destinations())
+            Record($"dest-{TextMatcher.Normalize(destination)}", TextOf(DestinationHit(destA, destination)), TextOf(DestinationHit(destB, destination)));
+
+        // ---- the whole client (Regions.BossName is the whole client too)
+        var bossRoi = r.BossName.ToPixels(w, h);
+        var (screenA, screenB) = (await ReadAtOcrScaleAsync(_legacy, bossRoi), await ReadAtOcrScaleAsync(_core, bossRoi));
+        // FindBossAsync (TickWaitBossAsync, TickWatchBossAsync, TickWaitForGateAsync's look at the previous
+        // boss), TickCheckZoneAsync's stage resume (the highest stage whose name passes) and
+        // TickRunToTargetAsync's stalled-arrival check (stage 5): StageName(i) = Stages[i], then FinalBoss,
+        // each FindBest + IsFullName.
+        var names = s.Dungeon.Stages.Append(s.Dungeon.FinalBoss).ToList();
+        for (int i = 0; i < names.Count; i++)
+        {
+            if (!string.IsNullOrWhiteSpace(names[i]))
+                Record($"bossname-s{i + 1}", TextOf(FullName(screenA, names[i])), TextOf(FullName(screenB, names[i])));
+        }
+
+        // AutomationPilot.Lod.cs ReadLodScreenFullAsync (FindLodBossAsync: TickLodRunAsync, the south turn and
+        // TickCheckZoneAsync; TickLodAttackAsync; TickLodApproachAsync's death lines):
+        // the boss (name line, the FindBest fallback, else the target bar chest), the death-text line
+        // count and the combat log's "Attack succeeded" keys (a set: a key not in the set = a new hit).
+        var (lodA, lodB) = (LodScreen(_legacy, screenA, w, h), LodScreen(_core, screenB, w, h));
+        Record("lod-boss", lodA.Boss, lodB.Boss);
+        Record("lod-deathlines", CountOf(lodA.DeathLines), CountOf(lodB.DeathLines));
+        Record("lod-hitlines", KeysOf(lodA.HitLines.Distinct().Order(StringComparer.Ordinal)), KeysOf(lodB.HitLines.Distinct().Order(StringComparer.Ordinal)));
+
+        // TickFontSizeAsync's Find() over the whole frame: SETTINGS (window open / closed), VISUAL (clicked),
+        // SAVE (clicked, exact word only).
+        var (windowA, windowB) = bossRoi == full ? (screenA, screenB)
+            : (await ReadAtOcrScaleAsync(_legacy, full), await ReadAtOcrScaleAsync(_core, full));
+        foreach (string word in new[] { "SETTINGS", "VISUAL", "SAVE" })
+            Record($"settingswin-{TextMatcher.Normalize(word)}", TextOf(WindowWord(windowA, word)), TextOf(WindowWord(windowB, word)));
+
+        // ---- the combat log (Regions.AttackMessage)
+        var logRoi = r.AttackMessage.ToPixels(w, h);
+        var (logA, logB) = (await ReadAtOcrScaleAsync(_legacy, logRoi), await ReadAtOcrScaleAsync(_core, logRoi));
+        // ReadAttackLogAsync (TickSelectBossAsync, TickManualAttackAsync, TickAutohuntConfirmAsync,
+        // TickWatchBossAsync's stage 5 watchdog): the matching lines' keys top to bottom, joined - the pilot
+        // compares that string with its baseline (a change = a new hit), so the ordered keys are compared.
+        Record("attacklog", KeysOf(AttackKeys(logA)), KeysOf(AttackKeys(logB)));
+        // ReadAutohuntLinesAsync (EnsureAutohuntOffAsync: TickAutohuntOffAsync in town, TickWaitBossAsync at
+        // the final boss): the autohunt keys top to bottom (diffed against the baseline taken before the key) ...
+        var (huntA, huntB) = (AutohuntKeys(logA), AutohuntKeys(logB));
+        Record("autohunt-lines", KeysOf(huntA), KeysOf(huntB));
+        // ... and, at the final boss (trustVisibleLine), the state the newest visible line announces.
+        Record("autohunt-visible", VisibleAutohunt(huntA), VisibleAutohunt(huntB));
+
+        // ---- the gate banner text: FindGateBannerAsync's OCR path (Regions.GateBanner) - FindBest + IsFullName
+        //      (WaitForGate), and CountTextLinesAsync's line count (WatchBoss: more lines than its baseline = open)
+        var gateRoi = r.GateBanner.ToPixels(w, h);
+        var (gateA, gateB) = (await ReadAtOcrScaleAsync(_legacy, gateRoi), await ReadAtOcrScaleAsync(_core, gateRoi));
+        Record("gatetext", TextOf(FullName(gateA, s.Dungeon.GateText)), TextOf(FullName(gateB, s.Dungeon.GateText)));
+        Record("gatetext-lines", CountOf(TextLines(gateA, s.Dungeon.GateText).Count), CountOf(TextLines(gateB, s.Dungeon.GateText).Count));
+
+        // ---- TickReadStageAsync's wider second look (0.32, 0.08, 0.68, 0.86) when the list region missed the
+        //      name: the pilot reads stages only with the map open, so only on frames where a side sees it open.
+        if (mapOpen)
+        {
+            var wideRoi = new NormRect(0.32, 0.08, 0.68, 0.86).ToPixels(w, h);
+            var (wideA, wideB) = (await ReadAtOcrScaleAsync(_legacy, wideRoi), await ReadAtOcrScaleAsync(_core, wideRoi));
+            for (int i = 0; i < s.Dungeon.Stages.Count; i++)
+                Record($"stagewide{i + 1}", TextOf(FullName(wideA, s.Dungeon.Stages[i])), TextOf(FullName(wideB, s.Dungeon.Stages[i])));
         }
     }
 
@@ -502,11 +682,241 @@ internal sealed class ParityProbe
     /// </summary>
     private async Task<TextHit?[]> StageNamesAsync(IVisionSide side, PixelRect bossList)
     {
-        var words = await side.RecognizeAsync(bossList, _settings.Detection.OcrScale);
-        return _settings.Dungeon.Stages
-            .Select(stage => TextMatcher.FindBest(words, stage, _settings.Detection.OcrMinSimilarity) is { } hit
-                             && (hit.Similarity >= 0.90 || TextMatcher.CoversMost(hit.Text, stage)) ? hit : null)
-            .ToArray();
+        var words = await ReadAtOcrScaleAsync(side, bossList);
+        return _settings.Dungeon.Stages.Select(stage => FullName(words, stage)).ToArray();
+    }
+
+    /// <summary>The read of ScreenAnalyzer.FindTextAsync: the region OCR'd at Detection.OcrScale.</summary>
+    private Task<IReadOnlyList<OcrWord>> ReadAtOcrScaleAsync(IVisionSide side, PixelRect roi)
+        => side.RecognizeAsync(roi, _settings.Detection.OcrScale);
+
+    /// <summary>The hit of ScreenAnalyzer.FindTextAsync (TextMatcher.FindBest, no anchor) on words already read.</summary>
+    private TextHit? Best(IReadOnlyList<OcrWord> words, string text)
+        => TextMatcher.FindBest(words, text, _settings.Detection.OcrMinSimilarity);
+
+    /// <summary>FindTextAsync + AutomationPilot.IsFullName: a hit only when most of the name was read.</summary>
+    private TextHit? FullName(IReadOnlyList<OcrWord> words, string expected)
+        => Best(words, expected) is { } hit && IsFullName(hit, expected) ? hit : null;
+
+    /// <summary>A copy of AutomationPilot.IsFullName (private there).</summary>
+    private static bool IsFullName(TextHit hit, string expected)
+        => hit.Similarity >= 0.90 || TextMatcher.CoversMost(hit.Text, expected);
+
+    /// <summary>
+    /// The destinations TickFindDestinationAsync looks for (CurrentDestination): the Labyrinth, the
+    /// LOD map, and the home town of the return teleport (any clan's, else ReturnDestination).
+    /// </summary>
+    private IEnumerable<string> Destinations()
+        => new[] { _settings.Sequence.DestinationText, _settings.Lod.Destination }
+            .Concat(_settings.Dungeon.HomeTowns)
+            .Append(_settings.Dungeon.ReturnDestination)
+            .Where(d => !string.IsNullOrWhiteSpace(d))
+            .DistinctBy(TextMatcher.Normalize);
+
+    /// <summary>TickFindDestinationAsync: the FindTextAsync hit, dropped unless its line or text names the start of the destination (ZoneMatches).</summary>
+    private TextHit? DestinationHit(IReadOnlyList<OcrWord> words, string destination)
+        => Best(words, destination) is { } hit && (ZoneMatches(hit.LineText, destination) || ZoneMatches(hit.Text, destination)) ? hit : null;
+
+    /// <summary>TickFontSizeAsync's Find(): the FindTextAsync hit when it covers most of the word; SAVE is clicked only when it reads exactly "save".</summary>
+    private TextHit? WindowWord(IReadOnlyList<OcrWord> words, string text)
+    {
+        var hit = Best(words, text);
+        if (hit == null || !TextMatcher.CoversMost(hit.Text, text))
+            return null;
+        return text == "SAVE" && TextMatcher.Normalize(hit.Text) != "save" ? null : hit;
+    }
+
+    /// <summary>AutomationPilot.ReadTextLinesAsync: the distinct OCR lines that read like <paramref name="text"/>, top to bottom.</summary>
+    private List<(PixelRect Bounds, string Text)> TextLines(IReadOnlyList<OcrWord> words, string text)
+        => words
+            .GroupBy(word => word.LineBounds)
+            .Where(line => TextMatcher.Similarity(line.First().LineText, text) >= _settings.Detection.OcrMinSimilarity
+                           && TextMatcher.CoversMost(line.First().LineText, text))
+            .Select(line => (Bounds: line.Key, Text: line.First().LineText))
+            .OrderBy(line => line.Bounds.Y)
+            .ToList();
+
+    /// <summary>AutomationPilot.ReadAttackLogAsync before the join: the "Attack succeeded" lines' keys, top to bottom.</summary>
+    private List<string> AttackKeys(IReadOnlyList<OcrWord> words)
+    {
+        string text = _settings.Dungeon.AttackConfirmText;
+        return TextLines(words, text).Select(line => AttackLineKey(line.Text, text)).ToList();
+    }
+
+    /// <summary>A copy of AutomationPilot.AttackLineKey (private there): "attacksucceeded...damage(N)".</summary>
+    private static string AttackLineKey(string line, string text)
+    {
+        string start = TextMatcher.Normalize(text);
+        string value = TextMatcher.Normalize(line);
+        int from = value.IndexOf(start, StringComparison.Ordinal);
+        if (from > 0)
+            value = value[from..];
+        int tail = value.IndexOf("attrib", StringComparison.Ordinal);
+        return tail > 0 ? value[..tail] : value;
+    }
+
+    /// <summary>AutomationPilot.ReadAutohuntLinesAsync: the combat log's autohunt keys, top to bottom.</summary>
+    private List<string> AutohuntKeys(IReadOnlyList<OcrWord> words)
+    {
+        var seq = _settings.Sequence;
+        string? prefix = AutohuntLog.Prefix(seq.AutohuntStartedText, seq.AutohuntEndedText);
+        if (prefix == null)
+            return [];
+
+        var keys = new List<string>();
+        foreach (var line in words.GroupBy(word => word.LineBounds).OrderBy(g => g.Key.Y))
+        {
+            if (AutohuntLog.Key(line.First().LineText, prefix) is { } key)
+                keys.Add(key);
+        }
+
+        return keys;
+    }
+
+    /// <summary>EnsureAutohuntOffAsync with trustVisibleLine (final boss): the state the newest visible autohunt line announces.</summary>
+    private DetectorResult VisibleAutohunt(IReadOnlyList<string> keys)
+    {
+        var seq = _settings.Sequence;
+        bool? on = AutohuntLog.NewState([], keys, seq.AutohuntStartedText, seq.AutohuntEndedText, out string? line, seq.AutohuntStoppedText);
+        return on is { } state ? new DetectorResult(true, null, null, $"{(state ? "on" : "off")} {line}") { ExactText = true } : DetectorResult.None;
+    }
+
+    private sealed record LodRead(DetectorResult Boss, int DeathLines, IReadOnlyList<string> HitLines);
+
+    /// <summary>
+    /// AutomationPilot.Lod.cs ReadLodScreenFullAsync on the whole-client x1.5 read: the boss (a short
+    /// line naming it, else the FindBest hit if it is a whole name on a short line, else the target bar's
+    /// treasure chest), the death-text line count, and the "Attack succeeded" keys of the lines inside
+    /// Regions.AttackMessage.
+    /// </summary>
+    private LodRead LodScreen(IVisionSide side, IReadOnlyList<OcrWord> words, int w, int h)
+    {
+        var lod = _settings.Lod;
+        if (string.IsNullOrWhiteSpace(lod.BossName))
+            return new LodRead(DetectorResult.None, 0, []);
+
+        var hit = Best(words, lod.BossName);
+        var lines = words.GroupBy(word => word.LineBounds).Select(g => (Bounds: g.Key, Text: g.First().LineText)).ToList();
+
+        int deathLines = string.IsNullOrWhiteSpace(lod.DeathText) ? 0 : lines
+            .Count(line => TextMatcher.Normalize(line.Text).Contains(TextMatcher.Normalize(lod.DeathText), StringComparison.Ordinal)
+                           || TextMatcher.Similarity(line.Text, lod.DeathText) >= 0.85);
+
+        string name = TextMatcher.Normalize(lod.BossName);
+        int maxLetters = name.Length + 10;
+        TextHit? boss = lines
+            .Where(line => TextMatcher.Normalize(line.Text).Length <= maxLetters)
+            .Where(line => TextMatcher.Normalize(line.Text).Contains(name, StringComparison.Ordinal)
+                           || TextMatcher.Similarity(line.Text, lod.BossName) >= 0.85)
+            .Select(line => new TextHit(line.Text, 1.0, line.Bounds, line.Text, line.Bounds, 0))
+            .FirstOrDefault();
+        if (boss == null && hit != null && TextMatcher.Normalize(hit.LineText).Length <= maxLetters
+            && (IsFullName(hit, lod.BossName) || TextMatcher.CoversMost(hit.LineText, lod.BossName)))
+            boss = hit;
+
+        var bossResult = TextOf(boss);
+        if (boss == null)
+        {
+            var bar = new NormRect(0.25, 0, 0.50, 0.16).ToPixels(w, h);
+            if (side.FindIcon("monstericon", bar, 0.80) is { } chest)
+                bossResult = new DetectorResult(true, chest.Bounds, chest.Score, "treasure icon") { Scale = chest.Scale };
+        }
+
+        string hitText = _settings.Dungeon.AttackConfirmText;
+        var log = _settings.Regions.AttackMessage.ToPixels(w, h);
+        var hitLines = string.IsNullOrWhiteSpace(hitText) ? [] : lines
+            .Where(line => log.Contains(line.Bounds.CenterX, line.Bounds.CenterY))
+            .Where(line => TextMatcher.Similarity(line.Text, hitText) >= _settings.Detection.OcrMinSimilarity
+                           && TextMatcher.CoversMost(line.Text, hitText))
+            .Select(line => AttackLineKey(line.Text, hitText))
+            .ToList();
+
+        return new LodRead(bossResult, deathLines, hitLines);
+    }
+
+    private sealed record RowLists(
+        IReadOnlyList<TemplateMatch> Focused,
+        IReadOnlyList<TemplateMatch> FocusedWide,
+        IReadOnlyList<TemplateMatch> Column,
+        IReadOnlyList<TemplateMatch> Fallback);
+
+    /// <summary>
+    /// The map list's '>' searches of FindFocusedChevron (the highlighted row's '>' in MapBossList, then
+    /// in a wider band; the plain '>' column) and ClickRowChevronFallback (the plain '>' at 0.50).
+    /// </summary>
+    private RowLists RowListsOf(IVisionSide side, PixelRect bossList, PixelRect wide)
+    {
+        string focused = _settings.Dungeon.RowChevronTemplate;
+        double threshold = _settings.Dungeon.RowChevronThreshold;
+        return new RowLists(
+            side.FindIcons(focused, bossList, threshold, 8),
+            side.FindIcons(focused, wide, threshold, 8),
+            side.FindIcons("rightchevron", bossList, 0.55, 24),
+            side.FindIcons("rightchevron", bossList, 0.50, 24));
+    }
+
+    /// <summary>
+    /// AutomationPilot.FindFocusedChevron: the highlighted '>' (wide band when the list has none), kept
+    /// to the '>' column (median x of 3+ plain hits), the one nearest the row inside half the row
+    /// spacing; none on the row -> the column at the row's height (score 0).
+    /// </summary>
+    private TemplateMatch? FocusedChevron(RowLists rows, PixelRect rowBounds)
+    {
+        var hits = rows.Focused.Count > 0 ? rows.Focused : rows.FocusedWide;
+        if (hits.Count == 0)
+            return null;
+
+        var columnHits = rows.Column;
+        int? columnX = null;
+        if (columnHits.Count >= 3)
+        {
+            var xs = columnHits.Select(m => m.Bounds.CenterX).OrderBy(v => v).ToArray();
+            columnX = xs[xs.Length / 2];
+            int slack = Math.Max(12, (int)(columnX.Value * 0.02));
+            var nearColumn = hits.Where(m => Math.Abs(m.Bounds.CenterX - columnX.Value) <= slack).ToList();
+            if (nearColumn.Count > 0)
+                hits = nearColumn;
+        }
+
+        int band = Math.Max(12, rowBounds.Height * 2);
+        var ys = columnHits.Select(m => m.Bounds.CenterY).OrderBy(v => v).ToArray();
+        var gaps = ys.Zip(ys.Skip(1), (a, b) => b - a).Where(d => d > 5).OrderBy(d => d).ToArray();
+        if (gaps.Length > 0)
+            band = Math.Max(6, gaps[gaps.Length / 2] * 45 / 100);
+
+        var onRow = hits.Where(m => Math.Abs(m.Bounds.CenterY - rowBounds.CenterY) <= band).ToList();
+        if (onRow.Count > 0)
+            return onRow.OrderBy(m => Math.Abs(m.Bounds.CenterY - rowBounds.CenterY)).ThenByDescending(m => m.Score).First();
+
+        if (columnX == null)
+            return null;
+
+        var like = hits[0].Bounds;
+        var bounds = new PixelRect(columnX.Value - like.Width / 2, rowBounds.CenterY - like.Height / 2, like.Width, like.Height);
+        return new TemplateMatch(_settings.Dungeon.RowChevronTemplate, 0, bounds, hits[0].Scale);
+    }
+
+    /// <summary>
+    /// AutomationPilot.ClickRowChevronFallback's click point: the row glyph's centre, else the median x
+    /// of the plain '>' hits right of the name at the row's height, else the name's centre. The box is
+    /// the 1x1 click point (2 px tolerance); the text says which one.
+    /// </summary>
+    private static DetectorResult RowFallback(PixelRect? glyph, IReadOnlyList<TemplateMatch> fallback, PixelRect nameBounds)
+    {
+        int rowY = nameBounds.CenterY;
+        if (glyph is { } g)
+            return ClickAt(g.CenterX, g.CenterY, "glyph");
+
+        var hits = fallback.Where(m => m.Bounds.CenterX > nameBounds.CenterX + 4).ToList();
+        if (hits.Count > 0)
+        {
+            var xs = hits.Select(m => m.Bounds.CenterX).OrderBy(x => x).ToArray();
+            return ClickAt(xs[xs.Length / 2], rowY, "column");
+        }
+
+        return ClickAt(nameBounds.CenterX, rowY, "name");
+
+        static DetectorResult ClickAt(int x, int y, string how) => new(true, new PixelRect(x, y, 1, 1), null, how);
     }
 
     /// <summary>AutomationPilot.FindRowGlyph: the right-most text-sized bright blob right of the row's name.</summary>
@@ -568,9 +978,20 @@ internal sealed class ParityProbe
     private static DetectorResult RowOf(SettingRow? row) => row == null ? DetectorResult.None
         : new(true, row.Label, null, $"value {row.ValueText} percent {row.Percent}");
 
+    /// <summary>A line count the pilot compares with a baseline: none = not found, else the number (exact).</summary>
+    private static DetectorResult CountOf(int count) => count == 0 ? DetectorResult.None
+        : new(true, null, null, count.ToString(CultureInfo.InvariantCulture)) { ExactText = true };
+
+    /// <summary>Line keys joined with '|' (compared exactly): none = not found, as the pilot's empty log string.</summary>
+    private static DetectorResult KeysOf(IEnumerable<string> keys)
+    {
+        string joined = string.Join("|", keys);
+        return joined.Length == 0 ? DetectorResult.None : new(true, null, null, joined) { ExactText = true };
+    }
+
     // ------------------------------------------------------------------ comparison
 
-    private void Compare(string check, Func<IVisionSide, DetectorResult> probe) => Record(check, probe(_legacy), probe(_core));
+    private void Compare(string check, Func<IVisionSide, DetectorResult> probe, View view = View.Both) => Record(check, probe(_legacy), probe(_core), view);
 
     private async Task CompareAsync(string check, Func<IVisionSide, Task<DetectorResult>> probe)
     {
@@ -579,19 +1000,17 @@ internal sealed class ParityProbe
         Record(check, a, b);
     }
 
-    private void CompareHits(string check, Func<IVisionSide, IReadOnlyList<TemplateMatch>> probe) => RecordHits(check, probe(_legacy), probe(_core));
-
     /// <summary>
     /// A hit list is compared hit by hit, paired by position (centres within half the template, as
     /// TemplateMatcher.SameSpot merges hits) rather than by rank: near-equal scores (every map row's
     /// '>' scores ~0.99) may come back in either order. A hit without a partner is a found / not
     /// found difference. Nothing on both sides is one matching check.
     /// </summary>
-    private void RecordHits(string check, IReadOnlyList<TemplateMatch> a, IReadOnlyList<TemplateMatch> b)
+    private void RecordHits(string check, IReadOnlyList<TemplateMatch> a, IReadOnlyList<TemplateMatch> b, View view = View.Both)
     {
         if (a.Count == 0 && b.Count == 0)
         {
-            Record(check, DetectorResult.None, DetectorResult.None);
+            Record(check, DetectorResult.None, DetectorResult.None, view);
             return;
         }
 
@@ -605,11 +1024,11 @@ internal sealed class ParityProbe
                 .FirstOrDefault();
             if (partner != null)
                 unpaired.Remove(partner);
-            Record($"{check}#{i + 1}", Of(hit), Of(partner));
+            Record($"{check}#{i + 1}", Of(hit), Of(partner), view);
         }
 
         for (int j = 0; j < unpaired.Count; j++)
-            Record($"{check}#new{j + 1}", DetectorResult.None, Of(unpaired[j]));
+            Record($"{check}#new{j + 1}", DetectorResult.None, Of(unpaired[j]), view);
 
         static bool SameSpot(PixelRect x, PixelRect y)
             => Math.Abs(x.CenterX - y.CenterX) <= Math.Max(5, Math.Min(x.Width, y.Width) / 2) &&
@@ -618,20 +1037,26 @@ internal sealed class ParityProbe
 
     /// <summary>
     /// One check: found / not found first (a verdict difference makes the rest meaningless), then
-    /// every box edge, the score and the normalised text. Each difference is printed and counted.
+    /// every box edge, the score and the text (normalised, or exact for <see cref="DetectorResult.ExactText"/>).
+    /// Each difference is printed and counted in the summaries <paramref name="view"/> names; a line
+    /// that counts in one summary only is tagged.
     /// </summary>
-    private void Record(string check, DetectorResult legacy, DetectorResult current)
+    private void Record(string check, DetectorResult legacy, DetectorResult current, View view = View.Both)
     {
-        _checks++;
+        bool strict = view != View.PilotOnly;
+        bool pilot = view != View.StrictOnly;
+        if (strict)
+            _checks++;
         string family = check.Split('#')[0];
+        _viewOf[family] = view;
         _ranThisFrame.Add(family);
         if (legacy.Found || current.Found)
             _foundThisFrame.Add(family);
 
         if (legacy.Found != current.Found)
         {
-            _verdict++;
-            Print(check, legacy.ToString(), current.ToString());
+            Count(ref _verdict, ref _pilotVerdict);
+            Print(check, legacy.ToString(), current.ToString(), view);
             return;
         }
 
@@ -643,25 +1068,37 @@ internal sealed class ParityProbe
              (Math.Abs(a.X - b.X) > BoxTolerance || Math.Abs(a.Y - b.Y) > BoxTolerance ||
               Math.Abs(a.Right - b.Right) > BoxTolerance || Math.Abs(a.Bottom - b.Bottom) > BoxTolerance)))
         {
-            _box++;
-            Print(check, (legacy.Box?.ToString() ?? "no box") + legacy.ScaleSuffix, (current.Box?.ToString() ?? "no box") + current.ScaleSuffix);
+            Count(ref _box, ref _pilotBox);
+            Print(check, (legacy.Box?.ToString() ?? "no box") + legacy.ScaleSuffix, (current.Box?.ToString() ?? "no box") + current.ScaleSuffix, view);
         }
 
         if (legacy.Score.HasValue != current.Score.HasValue ||
             (legacy.Score is { } sa && current.Score is { } sb && Math.Abs(sa - sb) > ScoreTolerance))
         {
-            _score++;
+            Count(ref _score, ref _pilotScore);
             Print(check, (legacy.Score?.ToString("0.0000") ?? "no score") + legacy.ScaleSuffix,
-                (current.Score?.ToString("0.0000") ?? "no score") + current.ScaleSuffix);
+                (current.Score?.ToString("0.0000") ?? "no score") + current.ScaleSuffix, view);
         }
 
+        bool exact = legacy.ExactText || current.ExactText;
         if ((legacy.Text == null) != (current.Text == null) ||
-            TextMatcher.Normalize(legacy.Text ?? string.Empty) != TextMatcher.Normalize(current.Text ?? string.Empty))
+            (exact
+                ? !string.Equals(legacy.Text, current.Text, StringComparison.Ordinal)
+                : TextMatcher.Normalize(legacy.Text ?? string.Empty) != TextMatcher.Normalize(current.Text ?? string.Empty)))
         {
-            _text++;
-            Print(check, legacy.Text == null ? "no text" : $"'{legacy.Text}'", current.Text == null ? "no text" : $"'{current.Text}'");
+            Count(ref _text, ref _pilotText);
+            Print(check, legacy.Text == null ? "no text" : $"'{legacy.Text}'", current.Text == null ? "no text" : $"'{current.Text}'", view);
+        }
+
+        void Count(ref int strictCount, ref int pilotCount)
+        {
+            if (strict)
+                strictCount++;
+            if (pilot)
+                pilotCount++;
         }
     }
 
-    private void Print(string check, string legacy, string current) => Console.WriteLine($"{_frame} {check} legacy={legacy} new={current}");
+    private void Print(string check, string legacy, string current, View view)
+        => Console.WriteLine($"{_frame} {check} legacy={legacy} new={current}{Tag(view)}");
 }

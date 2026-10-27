@@ -75,16 +75,28 @@ internal static class CvHelpers
     }
 
     /// <summary>A copy of an 8-bit Mat's pixels, rows packed one after the other (index y * Width * channels + x * channels + c).</summary>
+    /// <exception cref="ArgumentException">The Mat is not 8-bit (any channel count).</exception>
     public static byte[] Bytes(Mat mat)
     {
+        // The array is sized from the Mat's own element size; the native copy trusts it, so a Mat of
+        // another depth must be refused before it writes past the managed array.
+        if (mat.Depth != DepthType.Cv8U)
+            throw new ArgumentException($"CvHelpers.Bytes needs an 8-bit Mat, got {mat.Depth} with {mat.NumberOfChannels} channel(s).", nameof(mat));
+
         var data = new byte[mat.Rows * mat.Cols * mat.ElementSize];
         mat.CopyTo(data);
         return data;
     }
 
     /// <summary>A copy of a single-channel 32-bit integer Mat (connectedComponentsWithStats' stats), row-major.</summary>
+    /// <exception cref="ArgumentException">The Mat is not single-channel 32-bit signed.</exception>
     public static int[] Int32s(Mat mat)
     {
+        // One int per element: anything wider (more channels, a 64-bit depth) would make the native
+        // copy write past the managed array.
+        if (mat.Depth != DepthType.Cv32S || mat.NumberOfChannels != 1)
+            throw new ArgumentException($"CvHelpers.Int32s needs a single-channel 32-bit integer Mat, got {mat.Depth} with {mat.NumberOfChannels} channel(s).", nameof(mat));
+
         var data = new int[mat.Rows * mat.Cols];
         mat.CopyTo(data);
         return data;

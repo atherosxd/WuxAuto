@@ -28,8 +28,8 @@ public static class KillScreenshots
             else
                 frameBgra.CopyTo(bgr);
 
-            // Encoded in memory and written by .NET (ImageFile): OpenCV's imwrite cannot open
-            // paths with non-ASCII characters (a user name in the profile path) on Windows.
+            // Encoded in memory and written by .NET (ImageFile), so a non-ASCII user name in the
+            // profile path does not depend on the OpenCV wrapper's path handling.
             string safeTag = string.Concat(tag.Select(c => char.IsLetterOrDigit(c) || c is '-' or '_' ? c : '_'));
             string file = Path.Combine(folder, $"{DateTime.Now:yyyyMMdd_HHmmss_fff}_{safeTag}.jpg");
             ImageFile.Write(file, bgr, new KeyValuePair<ImwriteFlags, int>(ImwriteFlags.JpegQuality, 90));

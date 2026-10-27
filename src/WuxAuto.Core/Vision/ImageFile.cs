@@ -6,8 +6,10 @@ using Emgu.CV.Util;
 namespace WuxAuto.Vision;
 
 /// <summary>
-/// Image files through .NET file I/O, decoded and encoded in memory: OpenCV's own imread / imwrite
-/// cannot open paths with non-ASCII characters (a user name in the profile path) on Windows.
+/// Image files through .NET file I/O, decoded and encoded in memory (Imdecode / Imencode), so the
+/// path handling is .NET's and does not depend on the OpenCV wrapper's - profile paths can hold
+/// non-ASCII user names. Emgu CV's own CvInvoke.Imread / Imwrite handle such folders too ("Pétur",
+/// "Пётр", checked 2026-10-27); this class keeps that true whatever the wrapper does with paths.
 /// </summary>
 public static class ImageFile
 {
