@@ -153,11 +153,21 @@
                         </WrapPanel>
                         <WrapPanel>
                             <CheckBox Content="Kill chime" IsChecked="{Binding Settings.Sequence.KillChime}" VerticalAlignment="Center"
-                                      ToolTip="A chime on this PC when a Labyrinth boss dies (every stage) and when an LOD kill's loot step ends - a reminder to check the loot. A chime.wav in the templates folder replaces the built-in sound." />
+                                      ToolTip="A chime on this PC when a Labyrinth boss dies (every stage) and when an LOD kill's loot step ends - a reminder to check the loot. 'Choose...' below picks your own MP3 or WAV." />
                             <CheckBox Content="Kill notification" IsChecked="{Binding Settings.Sequence.KillNotification}" VerticalAlignment="Center"
                                       ToolTip="A Windows notification at the same moments (it stays in the notification centre). Windows may hold it back while a game is in front." />
                             <Button Content="Test alert" Command="{Binding TestKillAlertCommand}" Padding="10,4"
                                     ToolTip="Plays the chime and shows the notification now (whichever is ticked), to check the sound on this PC." />
+                        </WrapPanel>
+                        <WrapPanel Margin="0,4,0,0">
+                            <TextBlock Text="Sound:" Style="{StaticResource Caption}" VerticalAlignment="Center" Margin="0,0,6,0" />
+                            <TextBlock Text="{Binding KillSoundName}" ToolTip="{Binding KillSoundPath}" VerticalAlignment="Center"
+                                       MaxWidth="160" TextTrimming="CharacterEllipsis" Margin="0,0,8,0" />
+                            <Button Content="Choose..." Command="{Binding ChooseKillSoundCommand}" Padding="10,4"
+                                    ToolTip="Pick an MP3 or WAV file for the kill chime. It is copied into WuxAuto's sounds folder (so it keeps playing if you move the original) and played once." />
+                            <Button Content="Default" Command="{Binding ResetKillSoundCommand}" Padding="10,4"
+                                    Visibility="{Binding HasKillSound, Converter={StaticResource BoolToVisibility}}"
+                                    ToolTip="Back to the built-in chime." />
                         </WrapPanel>
                         <Border Background="#0E1118" BorderBrush="{StaticResource CardBorder}" BorderThickness="1" CornerRadius="8" Padding="10,8" Margin="0,8,0,0">
                             <StackPanel>

@@ -201,7 +201,8 @@ but it also only ever talks to the bound window.
 | `Lod ▸ ShuraKey` ("Shura key (LOD)") | Auto LOD stops the attack with **Shura** before a mid-fight buff and before the walk up to the boss: the `shura.png` icon is looked for on the skill bar (`Regions ▸ Hotbar`, bottom 15 %) and clicked `ShuraPresses` (3) times, `ShuraEveryMs` (200) apart. Not found → this key, the same way (default `E`, the slot Shura is in); empty → `StopAttackKey` (Space) × 15 (buff) / 3 (walk) as before. The same icon in two slots → the leftmost. |
 | `Sequence ▸ AutohuntOffInTown` | On (default): in town, before every teleport, the autohunt key is tapped and the combat log read (`AutohuntStartedText` / `AutohuntEndedText`, "Auto hunt started" / "Auto hunt ended"); "started" = it was off, so it is tapped again. Off = never touch it in town. |
 | `Sequence ▸ AutoConfirmDialogs` ("Auto confirm (Ctrl + right click)") / `AutoConfirmText` / `AutoConfirmButton` | On (default): while the game is bound and the pilot is not running, a Ctrl + right click on the game starts a 3 s watch for a dialog line containing `AutoConfirmText` (`Confirm`); its `AutoConfirmButton` (`OK`: the line reading exactly that under the message, else the lowest gold button under it) is clicked as soon as it shows. Off = never. |
-| `Sequence ▸ KillChime` ("Kill chime") / `KillNotification` ("Kill notification") | On (default): a chime / a Windows notification when a Labyrinth boss dies and when an LOD kill's loot step ends (see *Kill alert* below). `templates\chime.wav` replaces the built-in chime. |
+| `Sequence ▸ KillChime` ("Kill chime") / `KillNotification` ("Kill notification") | On (default): a chime / a Windows notification when a Labyrinth boss dies and when an LOD kill's loot step ends (see *Kill alert* below). |
+| `Sequence ▸ KillSound` ("Sound: … Choose... / Default") | Empty (default) = the built-in chime (or `templates\chime.wav` if there is one). **Choose...** picks an MP3 or WAV; it is copied into `%LOCALAPPDATA%\WuxAuto\sounds` and this holds the copy's path. |
 | `Sequence ▸ RunSkillCheck` ("Run skill on in town") / `RunSkillKey` ("Run key") | On (default): in town, before every teleport, the Run skill icon (`runskill.png`, `RunSkillTemplate`) is looked for on the skill bar (`Regions ▸ Hotbar`) at `RunSkillMatchScore` (0.88) or better and the gold ring round it measured (`RunSkillRingMin`: 0.25 of the ring = on). No ring → the icon is clicked, up to 3 times. Icon not found → `RunSkillKey` (default `W`) once per Start. Off = never look. |
 
 ### Regions
@@ -295,10 +296,15 @@ up every drop). When a Labyrinth boss dies (every stage, the stage 5 boss too) a
 kill's 10 s loot step ends, WuxAuto plays a chime on that PC and shows a Windows notification
 (`WuxAuto: boss down` - `Stage 2: Spectral down - check the loot (14:32)`). The status box (and the
 Mini window's bottom row) shows the last one. Check boxes **Kill chime** and **Kill notification**
-(both on, under Loop) turn them off; **Test alert** plays / shows them now to check the sound. A
-`chime.wav` in the templates folder replaces the built-in chime (a file that is not a WAV → the
-built-in one plus a log warning). Windows can hold notifications back while a game is in front
-(Do not disturb / game mode), which is why the chime matters most - and nobody hears it on a PC
+(both on, under Loop) turn them off; **Test alert** plays / shows them now to check the sound.
+**Your own sound:** **Choose...** (the *Sound:* row under the check boxes) picks an MP3 or WAV file.
+WuxAuto copies it into `%LOCALAPPDATA%\WuxAuto\sounds` (so it keeps playing after you move or delete
+the original), checks that Windows can play it, saves the choice at once and plays it once. A file
+that does not play is refused with a log line and the sound stays as it was; a sound that goes
+missing or breaks later → the built-in chime plus a log warning. The whole file plays on every kill,
+so keep it short. **Default** goes back to the built-in chime. (Without a chosen sound, a
+`chime.wav` in the templates folder still replaces the built-in chime.) Windows can hold
+notifications back while a game is in front (Do not disturb / game mode), which is why the chime matters most - and nobody hears it on a PC
 that is muted or on headphones. Notifications off for WuxAuto in Windows Settings ▸ System ▸
 Notifications → one log warning.
 

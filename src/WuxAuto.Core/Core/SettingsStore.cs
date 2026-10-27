@@ -26,6 +26,9 @@ public static class AppPaths
     public static string LogFolder => Path.Combine(Root, "logs");
     public static string KillsFolder => Path.Combine(Root, "kills");
 
+    /// <summary>Copies of the sound files picked for the kill chime (created when the first one is picked).</summary>
+    public static string SoundsFolder => Path.Combine(Root, "sounds");
+
     public static void EnsureCreated()
     {
         Directory.CreateDirectory(Root);
@@ -255,6 +258,7 @@ public static class SettingsStore
         s.Sequence.RestartDelayMs = Math.Clamp(s.Sequence.RestartDelayMs, 1000, 120000);
         s.Sequence.MaxRestarts = Math.Clamp(s.Sequence.MaxRestarts, 1, 100);
         s.Sequence.LabyKeyWaitSeconds = Math.Clamp(s.Sequence.LabyKeyWaitSeconds, 0, 3600);
+        s.Sequence.KillSound = s.Sequence.KillSound?.Trim() ?? string.Empty;
         s.Dungeon.ManualAttacks = Math.Clamp(s.Dungeon.ManualAttacks, 0, 100);
         s.Dungeon.ManualAttackIntervalMs = Math.Clamp(s.Dungeon.ManualAttackIntervalMs, 100, 5000);
         s.Dungeon.ManualAttackWaitMs = Math.Clamp(s.Dungeon.ManualAttackWaitMs, 0, 10000);

@@ -2,6 +2,7 @@ using System.IO;
 using System.Media;
 using System.Resources;
 using System.Security;
+using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using Microsoft.Win32;
 using Windows.Data.Xml.Dom;
@@ -12,22 +13,33 @@ namespace WuxAuto.Core;
 /// <summary>
 /// Boss-kill alert (user, 2026-10-26: friends run the pilot on a second PC next to their main one,
 /// and LOD does not always pick up every drop - a reminder to go and check). A chime on this PC's
-/// speakers and a Windows notification. The chime is <see cref="CustomChimeName"/> from the
-/// templates folder when that file exists, else <see cref="GenerateChime"/> (written to
+/// speakers and a Windows notification. The chime is the sound file picked in the UI
+/// (<c>Sequence.KillSound</c>, MP3 or WAV, user 2026-10-27), else <see cref="CustomChimeName"/> from
+/// the templates folder when that file exists, else <see cref="GenerateChime"/> (written to
 /// <see cref="BuiltInChimeFile"/>: a sound played in the background must come from a file - from
-/// memory Windows keeps reading a buffer that .NET only holds still during the call).
-/// Used on the UI thread only.
+/// memory Windows keeps reading a buffer that .NET only holds still during the call). Sound files
+/// play through WPF's <see cref="MediaPlayer"/> (MP3 and every WAV kind); the built-in chime keeps
+/// <see cref="SoundPlayer"/>, which needs nothing from Windows Media, so the fallback always plays.
+/// Used on the UI thread only (<see cref="MediaPlayer"/> belongs to the thread that made it).
 /// </summary>
 public sealed class KillAlert : IDisposable
 {
     /// <summary>The app's identity in the Windows notification settings (registered under HKCU on first use).</summary>
     public const string AppId = "atherosxd.WuxAuto";
 
-    /// <summary>A WAV file of this name in the templates folder replaces the built-in chime.</summary>
+    /// <summary>A WAV file of this name in the templates folder replaces the built-in chime when no sound is picked.</summary>
     public const string CustomChimeName = "chime.wav";
+
+    /// <summary>How long a sound file may take to open before it counts as broken.</summary>
+    private static readonly TimeSpan OpenTimeout = TimeSpan.FromSeconds(5);
+
+    /// <summary>One sound file at a time: a second kill while the first file still opens waits for it.</summary>
+    private readonly SemaphoreSlim _mediaGate = new(1, 1);
 
     private SoundPlayer? _player;
     private string? _playerSource;
+    private MediaPlayer? _media;
+    private string? _mediaSource;
     private bool _builtInWritten;
     private ToastNotifier? _notifier;
 
@@ -35,21 +47,89 @@ public sealed class KillAlert : IDisposable
 
     public static string BuiltInChimeFile => Path.Combine(AppPaths.Root, "chime-builtin.wav");
 
-    /// <summary>Starts the chime (it plays in the background).</summary>
+    /// <summary>
+    /// Starts the chime (it plays in the background): <paramref name="soundFile"/> when one is set,
+    /// else <see cref="CustomChimeName"/> from the templates folder, else the built-in chime. A
+    /// sound file that does not play falls back to the built-in chime.
+    /// </summary>
     /// <returns>Empty when it played; otherwise what went wrong.</returns>
-    public string PlayChime()
+    public async Task<string> PlayChimeAsync(string? soundFile)
     {
-        string custom = CustomChimeFile;
-        if (!File.Exists(custom))
+        string? custom = !string.IsNullOrWhiteSpace(soundFile) ? soundFile.Trim()
+            : File.Exists(CustomChimeFile) ? CustomChimeFile
+            : null;
+        if (custom == null)
             return PlayBuiltIn();
 
-        string error = Play(custom);
+        string error = File.Exists(custom) ? await PlayFileAsync(custom) : "the file is not there any more";
         if (error.Length == 0)
             return string.Empty;
 
+        string name = Path.GetFileName(custom);
         return PlayBuiltIn().Length == 0
-            ? $"{CustomChimeName} could not be played ({error}) - played the built-in chime instead."
-            : error;
+            ? $"{name} could not be played ({error}) - played the built-in chime instead."
+            : $"{name} could not be played ({error}).";
+    }
+
+    /// <summary>
+    /// Copies a picked sound file into <see cref="AppPaths.SoundsFolder"/> (so it keeps playing after
+    /// the original is moved or deleted) and checks that it opens and has sound. A file of the same
+    /// name with other contents is kept: the copy gets a free name ("name-2.mp3"). A file that does
+    /// not play is not kept.
+    /// </summary>
+    /// <returns>The copy and its length, or what went wrong (then <c>File</c> is empty).</returns>
+    public static async Task<(string File, TimeSpan Length, string Error)> ImportSoundAsync(string source)
+    {
+        try
+        {
+            if (!File.Exists(source))
+                return (string.Empty, TimeSpan.Zero, "the file is not there");
+
+            Directory.CreateDirectory(AppPaths.SoundsFolder);
+            string target = Path.GetFullPath(source);
+            bool copied = false;
+            if (!IsInSoundsFolder(target))
+            {
+                target = FreeTarget(source);
+                if (!File.Exists(target))
+                {
+                    File.Copy(source, target);
+                    copied = true;
+                }
+            }
+
+            var (length, error) = await ProbeAsync(target);
+            if (error.Length == 0)
+                return (target, length, string.Empty);
+
+            if (copied)
+                TryDelete(target);
+            return (string.Empty, TimeSpan.Zero, error);
+        }
+        catch (Exception ex)
+        {
+            return (string.Empty, TimeSpan.Zero, ex.Message);
+        }
+    }
+
+    /// <summary>Opens a sound file without playing it: its length, or why it does not play.</summary>
+    public static async Task<(TimeSpan Length, string Error)> ProbeAsync(string file)
+    {
+        var player = new MediaPlayer();
+        try
+        {
+            string error = await OpenAsync(player, file);
+            var length = player.NaturalDuration.HasTimeSpan ? player.NaturalDuration.TimeSpan : TimeSpan.Zero;
+            return (length, error);
+        }
+        catch (Exception ex)
+        {
+            return (TimeSpan.Zero, ex.Message);
+        }
+        finally
+        {
+            player.Close();
+        }
     }
 
     /// <summary>A Windows notification (silent: the chime is the sound).</summary>
@@ -141,8 +221,134 @@ public sealed class KillAlert : IDisposable
 
     public void Dispose()
     {
+        CloseMedia();
         _player?.Dispose();
         _player = null;
+    }
+
+    /// <summary>A sound file through <see cref="MediaPlayer"/>, kept open between kills.</summary>
+    private async Task<string> PlayFileAsync(string file)
+    {
+        await _mediaGate.WaitAsync();
+        try
+        {
+            string source = SourceKey(file);
+            if (_media == null || source != _mediaSource)
+            {
+                CloseMedia();
+                var player = new MediaPlayer();
+                string error = await OpenAsync(player, file);
+                if (error.Length > 0)
+                {
+                    player.Close();
+                    return error;
+                }
+
+                player.MediaFailed += OnMediaFailed;
+                _media = player;
+                _mediaSource = source;
+            }
+
+            _media.Stop();   // back to the start, also when the last kill's sound still plays
+            _media.Play();
+            return string.Empty;
+        }
+        catch (Exception ex)
+        {
+            CloseMedia();
+            return ex.Message;
+        }
+        finally
+        {
+            _mediaGate.Release();
+        }
+    }
+
+    /// <summary>Waits for <paramref name="player"/> to open <paramref name="file"/>: empty when it did and has sound.</summary>
+    private static async Task<string> OpenAsync(MediaPlayer player, string file)
+    {
+        var done = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
+        void Opened(object? sender, EventArgs e) =>
+            done.TrySetResult(player.HasAudio ? string.Empty : "it has no sound");
+        // The exception is often just the media error code ("0xC00D11B1").
+        void Failed(object? sender, ExceptionEventArgs e) =>
+            done.TrySetResult($"Windows cannot play it: {e.ErrorException?.Message ?? "unknown error"}");
+
+        player.MediaOpened += Opened;
+        player.MediaFailed += Failed;
+        try
+        {
+            player.Volume = 1.0;   // MediaPlayer starts at half volume; SoundPlayer plays at full
+            player.Open(new Uri(Path.GetFullPath(file), UriKind.Absolute));
+            var finished = await Task.WhenAny(done.Task, Task.Delay(OpenTimeout));
+            return finished == done.Task
+                ? await done.Task
+                : $"it did not open within {OpenTimeout.TotalSeconds:0} s";
+        }
+        finally
+        {
+            player.MediaOpened -= Opened;
+            player.MediaFailed -= Failed;
+        }
+    }
+
+    /// <summary>A file that fails while playing is opened again on the next kill.</summary>
+    private void OnMediaFailed(object? sender, ExceptionEventArgs e) => _mediaSource = null;
+
+    private void CloseMedia()
+    {
+        if (_media != null)
+        {
+            _media.MediaFailed -= OnMediaFailed;
+            _media.Close();
+            _media = null;
+        }
+
+        _mediaSource = null;
+    }
+
+    /// <summary>The file's time is part of the key, so a replaced file is picked up without a restart.</summary>
+    private static string SourceKey(string file) => $"{Path.GetFullPath(file)}|{File.GetLastWriteTimeUtc(file).Ticks}";
+
+    private static bool IsInSoundsFolder(string fullPath) =>
+        string.Equals(Path.GetDirectoryName(fullPath), Path.GetFullPath(AppPaths.SoundsFolder).TrimEnd(Path.DirectorySeparatorChar),
+            StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// Where the copy of <paramref name="source"/> goes: its own name in the sounds folder, or
+    /// "name-2.ext", "name-3.ext", ... when another file of that name is there. A file with the same
+    /// contents is reused.
+    /// </summary>
+    private static string FreeTarget(string source)
+    {
+        string name = Path.GetFileNameWithoutExtension(source);
+        if (name.Length == 0)
+            name = "sound";
+        string extension = Path.GetExtension(source);
+        for (int n = 1; n < 1000; n++)
+        {
+            string candidate = Path.Combine(AppPaths.SoundsFolder, n == 1 ? name + extension : $"{name}-{n}{extension}");
+            if (!File.Exists(candidate) || SameContents(source, candidate))
+                return candidate;
+        }
+
+        return Path.Combine(AppPaths.SoundsFolder, $"{name}-{Guid.NewGuid():N}{extension}");
+    }
+
+    private static bool SameContents(string a, string b) =>
+        new FileInfo(a).Length == new FileInfo(b).Length
+        && File.ReadAllBytes(a).AsSpan().SequenceEqual(File.ReadAllBytes(b));
+
+    private static void TryDelete(string file)
+    {
+        try
+        {
+            File.Delete(file);
+        }
+        catch
+        {
+            // a leftover copy in the sounds folder does no harm
+        }
     }
 
     /// <summary>The generated chime, written once per app start (so a new version's sound replaces the old file).</summary>
@@ -167,15 +373,15 @@ public sealed class KillAlert : IDisposable
             // in use (another WuxAuto playing it): the copy already there is the same sound
         }
 
-        return Play(file);
+        return PlayWav(file);
     }
 
-    private string Play(string file)
+    /// <summary>A PCM WAV through <see cref="SoundPlayer"/> (the built-in chime).</summary>
+    private string PlayWav(string file)
     {
         try
         {
-            // The file's time is part of the key, so a replaced chime.wav is picked up without a restart.
-            string source = $"{file}|{File.GetLastWriteTimeUtc(file).Ticks}";
+            string source = SourceKey(file);
             if (_player == null || source != _playerSource)
             {
                 _player?.Dispose();
