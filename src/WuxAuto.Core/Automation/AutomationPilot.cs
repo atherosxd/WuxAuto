@@ -33,7 +33,7 @@ public enum PilotPhase
     RunToTarget,
     ReturnToTown,
     Reconnect,
-    AutoWar,
+    RegularWarOn,
     LodRun,
     LodAttack,
     LodApproach,
@@ -281,7 +281,7 @@ public sealed partial class AutomationPilot
         PilotPhase.LodLoot => "looting the LOD boss",
         PilotPhase.ReturnToTown => "autohunt off, returning to town",
         PilotPhase.Reconnect => "disconnected - logging back in",
-        PilotPhase.AutoWar => "turning the auto war on",
+        PilotPhase.RegularWarOn => "turning the auto war on",
         PilotPhase.Done => "sequence complete",
         PilotPhase.Failed => "failed",
         _ => "idle",
@@ -689,8 +689,8 @@ public sealed partial class AutomationPilot
                 case PilotPhase.Reconnect:
                     await TickReconnectAsync(frame);
                     break;
-                case PilotPhase.AutoWar:
-                    await TickAutoWarAsync(frame);
+                case PilotPhase.RegularWarOn:
+                    await TickRegularWarAsync(frame);
                     break;
                 case PilotPhase.Done:
                     TickDone();
@@ -4713,7 +4713,7 @@ public sealed partial class AutomationPilot
             return true;
         }
 
-        BeginAutoWar($"{why}, and no Den of Rebirth entries / Temple of Fiends Keys either");
+        BeginRegularWar($"{why}, and no Den of Rebirth entries / Temple of Fiends Keys either");
         return false;
     }
 

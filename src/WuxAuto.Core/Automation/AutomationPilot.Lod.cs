@@ -242,7 +242,7 @@ public sealed partial class AutomationPilot
 
         // Both out: the game's own auto war (Regular War ticked + J in the city, user), then stop.
         DebugArtifacts.SaveFrame(frame, _overlays, "out_of_keys");
-        BeginAutoWar("out of Temple of Fiends Keys and Den of Rebirth entries");
+        BeginRegularWar("out of Temple of Fiends Keys and Den of Rebirth entries");
         return true;
 
         static string Plain(string t) => new string(t.Normalize(System.Text.NormalizationForm.FormD)

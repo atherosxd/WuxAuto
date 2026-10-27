@@ -25,6 +25,7 @@ public enum RunMode
 {
     AutoLaby = 0,
     AutoLod = 1,
+    AutoWar = 2,
 }
 
 /// <summary>Where the mini mode window opens on the screen (user: default bottom right).</summary>
@@ -76,6 +77,9 @@ public sealed class AppSettings
 
     /// <summary>Auto LOD: the Ultimate Den of Rebirth boss (<see cref="RunMode.AutoLod"/>).</summary>
     public LodSettings Lod { get; set; } = new();
+
+    /// <summary>Auto War: the tribe war in Bohai Outpost (<see cref="RunMode.AutoWar"/>).</summary>
+    public WarSettings War { get; set; } = new();
     public UiSettings Ui { get; set; } = new();
 
     /// <summary>Puts every screen position (regions and click fractions) back to the built-in defaults.</summary>
@@ -367,6 +371,70 @@ public sealed class LodSettings
 
     /// <summary>Wait after being put back at the start before turning south.</summary>
     public int RespawnSettleMs { get; set; } = 3000;
+}
+
+/// <summary>Auto War (user, 2026-10-27): the tribe war in Bohai Outpost - see AutomationPilot.War.cs.</summary>
+public sealed class WarSettings
+{
+    /// <summary>Teleport list entry and minimap zone of the war map (user).</summary>
+    public string Destination { get; set; } = "Bohai Outpost";
+
+    /// <summary>The row of the war in the Tribe Status window (user's screenshot).</summary>
+    public string TribeRowText { get; set; } = "Bohai Outpost (Adept)";
+
+    /// <summary>The Tribe Status tile in the Menu window (user's screenshot).</summary>
+    public string MenuTileText { get; set; } = "Tribe Status";
+
+    /// <summary>How long before the war opens the pilot starts moving (user: 10 s).</summary>
+    public int LeadMs { get; set; } = 10000;
+
+    /// <summary>How long it waits for the "Confirm to move?" dialog to appear (my call: 2 min).</summary>
+    public int DialogWaitMs { get; set; } = 120000;
+
+    /// <summary>The TAB target option the war needs (user: Enemy worth CP).</summary>
+    public string TabTargetOption { get; set; } = "Enemy worth CP";
+
+    /// <summary>Buff icons clicked on the skill bar, in order (user's crops).</summary>
+    public List<string> BuffIcons { get; set; } = DefaultBuffIcons();
+
+    /// <summary>The buff icon that is also pressed with X (user).</summary>
+    public string XBuffIcon { get; set; } = "warbuff4";
+
+    /// <summary>Gap between two buff clicks (user: 1 s).</summary>
+    public int BuffClickGapMs { get; set; } = 1000;
+
+    /// <summary>How often the buffs are renewed (user: 5 min 45 s).</summary>
+    public int BuffEveryMs { get; set; } = 345000;
+
+    /// <summary>How long the Shura key is held to stop the attack (my call).</summary>
+    public int ShuraHoldMs { get; set; } = 1200;
+
+    /// <summary>How long the target must be gone before the pilot acts (my call).</summary>
+    public int TargetGoneMs { get; set; } = 2000;
+
+    /// <summary>The combat log line when the war gate opens (user).</summary>
+    public string GateText { get; set; } = "Gate is Open";
+
+    /// <summary>The teleport list page of the home map (user: page 3).</summary>
+    public int ListPage { get; set; } = 3;
+
+    /// <summary>The combat log word that says the character arrived (user).</summary>
+    public string ArrivedText { get; set; } = "Arrived";
+
+    /// <summary>How long it waits for the arrival line (my call).</summary>
+    public int ArriveWaitMs { get; set; } = 90000;
+
+    /// <summary>Minimum template score of a buff icon (my call).</summary>
+    public double IconMatchScore { get; set; } = 0.80;
+
+    /// <summary>The map to go back to after the war, as the teleport list shows it (user; empty = not set).</summary>
+    public string HomeMap { get; set; } = "";
+
+    /// <summary>The monster to hunt on the home map (user; empty = not set).</summary>
+    public string HomeMonster { get; set; } = "";
+
+    internal static List<string> DefaultBuffIcons() =>
+        ["warbuff1", "warbuff2", "warbuff3", "warbuff4", "warbuff5", "warbuff6"];
 }
 
 public sealed class SequenceSettings
