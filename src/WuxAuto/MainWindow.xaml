@@ -401,7 +401,7 @@
                                 <CheckBox Content="Hold skill (LOD)" IsChecked="{Binding Settings.Lod.HoldSkill}"
                                           ToolTip="Auto LOD: hold the skill key down while attacking instead of spamming it." />
                                 <CheckBox Content="Walk up to the boss (LOD)" IsChecked="{Binding Settings.Lod.ApproachBoss}"
-                                          ToolTip="Auto LOD: after the first hit, stop attacking (Shura, else Space) and Ctrl+click the pink ring round the boss's feet, then attack again." />
+                                          ToolTip="Auto LOD: after the first hit, stop attacking (Shura, else Space) and Ctrl+click the pink ring round the boss's feet, then attack again. After that the ring is checked every 3 s: the character off it -> Shura and Ctrl+click it again." />
                                 <CheckBox Content="Walk to the boss spot (LOD)" IsChecked="{Binding Settings.Lod.WalkToBossSpot}"
                                           ToolTip="Auto LOD: after the south turn, walk to 1191,2413 pressing Tab (the old way). Off = stay where the teleport put the character and press Tab until the boss shows." />
                                 <CheckBox Content="TAB target: Default" IsChecked="{Binding Settings.Sequence.TabTargetDefault}"

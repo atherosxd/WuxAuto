@@ -130,7 +130,7 @@ words and the map scroll-arrow result. `--crop` writes `<frame>.crop.png` next t
 Core tests and the refactor parity gate (M1, 2026-10-27):
 
 ```powershell
-dotnet test tests\WuxAuto.Core.Tests        # xUnit, platform-free Core only (11 tests, ~10 s; the pilot tests tick a
+dotnet test tests\WuxAuto.Core.Tests        # xUnit, platform-free Core only (23 tests, ~20 s; the pilot tests tick a
                                            # blank Mat with a scripted OCR scene - see tests/ in section 3)
 # probe baseline: runs every SelfTest probe over a frozen, local-only frame set (never committed)
 # and writes normalised output; run it before and after a refactor and diff the two
@@ -205,7 +205,12 @@ tests/WuxAuto.Core.Tests    xUnit tests of Core (AppPathsTests, which round-trip
                             Ctrl+1, J, centre click, "boss selected on click 1" → WatchBoss; hold off → J, Tab, click. No templates
                             (AppPaths points at an empty temp root), so the boss is found by name; needs OpenCvSharp4.runtime.win
                             in the test project; LodStandStillTests: the same doubles from `Start(LodRun)` in AutoLod - only
-                            Tab until "[LOD] Bai Gu Great" reads, then LodAttack; `WalkToBossSpot` on → a walk click); `dotnet test`
+                            Tab until "[LOD] Bai Gu Great" reads, then LodAttack; `WalkToBossSpot` on → a walk click;
+                            LodRingCheckTests: a pink ellipse drawn on the frame, the log gains a hit per skill tap - ring far →
+                            2 Ctrl+clicks, then "Ring check 1" and a 3rd, each after Shura's key; ring underfoot → 1 click only;
+                            `RingCheckEveryMs` 0 → 2 only; ring + a cyan "belt" gone / shown after the click → "under the boss", 1 click; a cyan "belt" after the
+                            walk → no ring-check walk; RingDistanceTests: DistanceFromRing on 6 real ring boxes; the shared
+                            runner is `PilotRun.RunAsync` in PilotTestDoubles); `dotnet test`
 tests/probe-baseline.ps1    runs every SelfTest probe over a frozen frame set and writes normalised
                             output for before/after diffs (refactor parity check, section 2)
 tests/WuxAuto.UiShot        renders the window to a PNG
@@ -480,6 +485,23 @@ brightness) and the pilot "lined up" facing north at ~0.82 — user caught it. f
   itself; two pilot fights: first hit -> click -> 0.56 / 0.12 of the radius -> attacking. When only the
   ring's front arc shows (boss over the character) its centre is a little in front of the feet. Snapshots
   `lod_approach` / `lod_approach_miss` (<= 3 per Start). Not seen: the belt fallback inside the pilot.
+* **Keep to the ring** (user, 2026-10-27: "in LOD, try to go to the ring as much as possible, do a periodical
+  check or maybe shura then ctrl+attack old or ctrl+click on the foot of the boss or ring"): after the first
+  walk up of a fight, `LodAttack` looks for the ring every `Lod.RingCheckEveryMs` (**3000**; 0 = off) while the
+  boss is targeted; the character further out than `Lod.RingStayMax` (**1.0** = on the ring) → the same walk
+  up (`BeginLodApproach(..., ringOnly: true)`: Shura → Ctrl+click the ring → ≤ `ApproachTries`), log
+  `Ring check N: off the pink ring (x of its radius out)`. A walk that did not get there → next check 3×
+  later (`ResumeLodAttackAsync(reached: false)`). Distance = `ScreenAnalyzer.DistanceFromRing` (also printed
+  by `--lodparts` as `away`): character at (0.5 w, 0.54 h), ring radii; the ring is ~half as tall as wide,
+  so a flatter box (< 0.4) is a partial arc and the distance is also taken from where the whole ring's centre
+  would be (front or back arc), nearest counts — with the character under the boss only the front arc shows
+  (a 160×50 arc read 2.0 from its own centre, 0.89 corrected). Saved first-walk frames: 0.07–0.89 on / under
+  the boss, 1.82–2.0 beside it. **Ring only, no belt** in the check and its walk: live 2026-10-27 23:20
+  (2048×1152, v0.16.0) the first walk's 1st Ctrl+click (ring above the character, 2.33 out) put the
+  character under the boss — camera inside the boss's body, no ring — and a cyan patch at the boss's side
+  read as the "belt". So the belt is only used before a walk's first click (first walk of a fight); after a
+  click, no ring in view ends the walk as reached ("no ring in view after N Ctrl+click(s) - under the boss"). "Ctrl + attack hold" from the request was not used: what Ctrl + skill does is unknown, the
+  Ctrl+click walk is verified live. Not yet seen live.
 * **The boss respawns after dying** (user, after run 2: one "fight" lasted 18 min) → the map is unlimited
   until its timer runs out; then the game sends the character to town → the zone guard teleports in
   again (if that is refused, "Still in … after the teleport" stops the run). A target gone for

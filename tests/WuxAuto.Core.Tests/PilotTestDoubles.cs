@@ -1,4 +1,5 @@
 using OpenCvSharp;
+using WuxAuto.Automation;
 using WuxAuto.Core;
 using WuxAuto.Input;
 using WuxAuto.Vision;
@@ -63,5 +64,44 @@ sealed class FakeGameInput : IGameInput
     {
         Calls.Add(call);
         return true;
+    }
+}
+
+/// <summary>
+/// Ticks a real pilot over one fixed frame from <paramref name="startAt"/> until <c>done</c> (given the
+/// pilot and its log so far) or the time-out, with an empty templates folder (things are found by name
+/// or by colour). Returns the last phase and the log.
+/// </summary>
+static class PilotRun
+{
+    public static async Task<(PilotPhase Phase, List<string> Lines)> RunAsync(AppSettings settings, IGameInput input,
+        IOcrEngine ocr, Mat frame, PilotPhase startAt, Func<AutomationPilot, IReadOnlyList<string>, bool> done, int timeoutMs = 15000)
+    {
+        string root = Path.Combine(Path.GetTempPath(), "wux-core-" + Guid.NewGuid());
+        AppPaths.Configure(root, Path.Combine(root, "assets"));
+        try
+        {
+            using var analyzer = new ScreenAnalyzer(settings, ocr);
+            var pilot = new AutomationPilot(settings, analyzer, input);
+            var lines = new List<string>();
+            pilot.Log += (_, text) => lines.Add(text);
+            pilot.Start(startAt);
+
+            long deadline = Environment.TickCount64 + timeoutMs;
+            while (!done(pilot, lines) && pilot.IsRunning && Environment.TickCount64 < deadline)
+            {
+                await pilot.TickAsync(frame, CancellationToken.None);
+                await Task.Delay(20);
+            }
+
+            var phase = pilot.Phase;
+            pilot.Stop("test over");
+            return (phase, lines);
+        }
+        finally
+        {
+            if (Directory.Exists(root))
+                Directory.Delete(root, true);
+        }
     }
 }
