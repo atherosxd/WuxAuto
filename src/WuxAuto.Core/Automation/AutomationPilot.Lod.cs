@@ -38,8 +38,8 @@ public sealed partial class AutomationPilot
 
     private bool IsLod => _settings.Sequence.Mode == RunMode.AutoLod;
 
-    /// <summary>Teleport list entry and minimap zone for the selected mode.</summary>
-    private string Destination => IsLod ? _settings.Lod.Destination : _settings.Sequence.DestinationText;
+    /// <summary>Teleport list entry and minimap zone for the selected mode (Auto War: the cave).</summary>
+    private string Destination => IsWar ? WarHomeMap : IsLod ? _settings.Lod.Destination : _settings.Sequence.DestinationText;
 
     /// <summary>
     /// True when the minimap title (or one OCR line) names <paramref name="destination"/>. The title is

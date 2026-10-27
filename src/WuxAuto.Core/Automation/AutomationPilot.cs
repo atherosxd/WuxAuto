@@ -39,6 +39,16 @@ public enum PilotPhase
     LodApproach,
     LodRespawn,
     LodLoot,
+    WarRemember,
+    WarWait,
+    WarJoin,
+    WarEnter,
+    WarBuff,
+    WarFight,
+    WarDead,
+    WarBack,
+    WarArrive,
+    WarHuntOn,
     Done,
     Failed,
 }
@@ -215,6 +225,11 @@ public sealed partial class AutomationPilot
     private List<string> _huntOffBaseline = [];   // autohunt log lines before the last tap
     private string? _homeTown;
     private int _fontStep;
+    // One Settings visit (BeginSettingsVisit): the TAB target option wanted (null = leave it), whether
+    // the font size is left alone, and the phase after the window is closed. Laby/LOD: ResetRunState.
+    private string? _visitTabTarget;
+    private bool _visitSkipFont;
+    private PilotPhase _visitNext = PilotPhase.OpenInventory;
     private int _fontClicks;
     private int _fontTabClicks;
     private bool _fontChanged;
@@ -265,7 +280,7 @@ public sealed partial class AutomationPilot
         PilotPhase.WaitForLoad => "waiting for zone load",
         PilotPhase.WaitForGate => $"waiting for the gate (stage {_stageIndex + 1})",
         PilotPhase.ClickMap => "clicking the map button",
-        PilotPhase.ReadStage => $"reading the map (stage {_stageIndex + 1})",
+        PilotPhase.ReadStage => IsWar ? $"finding '{MapPickName}' on the map" : $"reading the map (stage {_stageIndex + 1})",
         PilotPhase.AdvanceStage => "clicking the next-stage chevron",
         PilotPhase.WaitBoss => $"waiting for the boss (stage {_stageIndex + 1})",
         PilotPhase.SelectBoss => $"selecting the boss (stage {_stageIndex + 1})",
@@ -282,6 +297,16 @@ public sealed partial class AutomationPilot
         PilotPhase.ReturnToTown => "autohunt off, returning to town",
         PilotPhase.Reconnect => "disconnected - logging back in",
         PilotPhase.RegularWarOn => "turning the auto war on",
+        PilotPhase.WarRemember => "remembering the cave and monster",
+        PilotPhase.WarWait => "waiting for the Bohai war",
+        PilotPhase.WarJoin => "joining the war",
+        PilotPhase.WarEnter => "entering Bohai Outpost",
+        PilotPhase.WarBuff => "buffing",
+        PilotPhase.WarFight => "fighting in the war",
+        PilotPhase.WarDead => "dead - waiting to revive",
+        PilotPhase.WarBack => "teleporting back to the cave",
+        PilotPhase.WarArrive => "walking to the monster",
+        PilotPhase.WarHuntOn => "turning the autohunt on",
         PilotPhase.Done => "sequence complete",
         PilotPhase.Failed => "failed",
         _ => "idle",
@@ -408,9 +433,15 @@ public sealed partial class AutomationPilot
         _jumpAgreements = 0;
         _returning = false;
         _autohuntOff = false;
-        _huntOffPresses = 0;
-        _huntOffPressedAt = 0;
-        _huntOffBaseline = [];
+        ResetAutohuntCheck();
+        _visitTabTarget = _settings.Sequence.TabTargetDefault ? "Default" : null;
+        _visitSkipFont = false;
+        _visitNext = PilotPhase.OpenInventory;
+        _warListCheck = false;
+        _warMapVerify = false;
+        _warMonsterConfirmed = false;
+        _warPendingMonster = null;
+        _warPendingMap = null;
         _stuckShots = 0;
         _finalHuntOffChecked = false;
         _compassAnchored = false;
@@ -469,9 +500,11 @@ public sealed partial class AutomationPilot
         // Checked even while a phase is waiting (boss spawn, settle delays): a disconnect can
         // happen at any time and every key/click after it would land on the login screens.
         // Not while the teleport list is open: its destinations and buttons are ours to click.
-        bool cancelDialogs = !string.IsNullOrWhiteSpace(_settings.Sequence.CancelDialogText)
+        // Auto War never cancels the Bohai dialog (user) - it watches for it instead.
+        bool cancelDialogs = !IsWar
+                             && !string.IsNullOrWhiteSpace(_settings.Sequence.CancelDialogText)
                              && _phase is not (PilotPhase.FindChevron or PilotPhase.FindDestination);
-        if ((_settings.Sequence.AutoReconnect || cancelDialogs) && _phase != PilotPhase.Reconnect && now >= _nextDisconnectCheckAt)
+        if ((_settings.Sequence.AutoReconnect || cancelDialogs || IsWar) && _phase != PilotPhase.Reconnect && now >= _nextDisconnectCheckAt)
         {
             _nextDisconnectCheckAt = now + 5000;
             try
@@ -497,6 +530,14 @@ public sealed partial class AutomationPilot
                     Advance(PilotPhase.Reconnect, _settings.Sequence.ReconnectStepDelayMs);
                     return;
                 }
+
+                // The war dialog while waiting for it (the timer was missed or misread): join now.
+                if (IsWar && _phase is (PilotPhase.WarWait or PilotPhase.WarRemember)
+                    && ScreenAnalyzer.ToLines(screenWords).Any(l => WarText.IsWarDialogLine(l.Text, _settings.War.Destination)))
+                {
+                    BeginWarJoin("the war dialog is up");
+                    return;
+                }
             }
             catch (Exception ex)
             {
@@ -507,7 +548,8 @@ public sealed partial class AutomationPilot
         // Zone guard (user): Labyrinth phases send nothing unless the minimap title has said
         // "Labyrinth" within the last few seconds. Rotating, map clicks and Tab were sent in town
         // and in Bohai Outpost before. Stage 5 closing puts the character back in town -> next run.
-        if (_settings.Dungeon.Enabled && !_returning && IsLabyrinthPhase(_phase))
+        // Auto War: the same guard over the map pick in the cave (Destination = the cave).
+        if ((_settings.Dungeon.Enabled || IsWar) && !_returning && IsLabyrinthPhase(_phase))
         {
             if (now >= _nextZoneCheckAt)
             {
@@ -542,6 +584,23 @@ public sealed partial class AutomationPilot
                 {
                     ReleaseSweepKey();
                     bool inTown = townSeen != null;
+
+                    // Auto War: sent to town = back to the cave; anywhere else = start over (the
+                    // Start dispatch sorts out where the character is).
+                    if (IsWar)
+                    {
+                        if (inTown)
+                            BeginWarReturn(frame, $"in {HomeTown} during {_phase}");
+                        else
+                        {
+                            Log?.Invoke(LogLevel.Warning, $"In '{title}' instead of {Destination} during {_phase} - starting over.");
+                            ResetRunState();
+                            _runStart = Environment.TickCount64;
+                            Advance(PilotPhase.Focus, 1500);
+                        }
+
+                        return;
+                    }
 
                     // Auto LOD: the boss respawns, so the map is unlimited until its timer runs out and
                     // the game sends the character to town (user) - teleport in again.
@@ -580,7 +639,9 @@ public sealed partial class AutomationPilot
                     return;
                 }
 
-                _detail = "not confirmed in the Labyrinth (minimap title) - holding all input";
+                _detail = IsWar
+                    ? $"not confirmed in {Destination} (minimap title) - holding all input"
+                    : "not confirmed in the Labyrinth (minimap title) - holding all input";
                 if (!_zoneHoldLogged)
                 {
                     _zoneHoldLogged = true;
@@ -920,8 +981,8 @@ public sealed partial class AutomationPilot
     /// <summary>
     /// The autohunt-off check shared by the town visit (<see cref="TickAutohuntOffAsync"/>) and the
     /// arrival at the stage 5 boss (<see cref="TickWaitBossAsync"/>, user 2026-10-26). Ticked until it
-    /// returns true (off, or given up); false = still working, <c>_waitUntil</c> is set. Reset
-    /// <c>_huntOffPresses</c> / <c>_huntOffBaseline</c> before the first tick.
+    /// returns true (off, or given up); false = still working, <c>_waitUntil</c> is set. Call
+    /// <see cref="ResetAutohuntCheck"/> before the first tick.
     /// </summary>
     /// <param name="where">For the log: "in Piercing City", "at the final boss".</param>
     /// <param name="trustVisibleLine">
@@ -931,10 +992,28 @@ public sealed partial class AutomationPilot
     /// usually presses nothing (a tap on an autohunt that is off would turn it on for a second). In
     /// town the log may be hours old, so the town check always taps.
     /// </param>
-    private async Task<bool> EnsureAutohuntOffAsync(Mat frame, string where, bool trustVisibleLine)
+    private Task<bool> EnsureAutohuntOffAsync(Mat frame, string where, bool trustVisibleLine)
+        => EnsureAutohuntAsync(frame, where, wantOn: false, trustVisibleLine);
+
+    /// <summary>Clears the autohunt check's taps and baseline: the next <see cref="EnsureAutohuntAsync"/> starts afresh.</summary>
+    private void ResetAutohuntCheck()
+    {
+        _huntOffPresses = 0;
+        _huntOffPressedAt = 0;
+        _huntOffBaseline = [];
+    }
+
+    /// <summary>
+    /// Makes the autohunt <paramref name="wantOn"/> (on / off), confirmed in the combat log - J is a
+    /// toggle, so a blind tap is never trusted (see <see cref="EnsureAutohuntOffAsync"/>; Auto War
+    /// turns it back on in the cave). Ticked until true (there, or given up after 3 taps / no line).
+    /// </summary>
+    private async Task<bool> EnsureAutohuntAsync(Mat frame, string where, bool wantOn, bool trustVisibleLine)
     {
         var seq = _settings.Sequence;
         string key = _settings.Dungeon.AutohuntKey;
+        string want = wantOn ? "on" : "off";
+        string other = wantOn ? "off" : "on";
         long now = Environment.TickCount64;
 
         if (_input.IsDryRun)
@@ -968,16 +1047,16 @@ public sealed partial class AutomationPilot
             if (trustVisibleLine)
             {
                 bool? visible = AutohuntLog.NewState([], lines, seq.AutohuntStartedText, seq.AutohuntEndedText, out string? last, seq.AutohuntStoppedText);
-                if (visible == false)
+                if (visible == wantOn)
                 {
-                    Log?.Invoke(LogLevel.Success, $"Autohunt is off {where} (the combat log's newest autohunt line reads '{last}').");
+                    Log?.Invoke(LogLevel.Success, $"Autohunt is {want} {where} (the combat log's newest autohunt line reads '{last}').");
                     return true;
                 }
 
-                if (visible == true)
+                if (visible == !wantOn)
                 {
                     if (Tap())
-                        Log?.Invoke(LogLevel.Warning, $"The combat log's newest autohunt line reads '{last}' - the autohunt is on {where}; pressed '{key}' to turn it off.");
+                        Log?.Invoke(LogLevel.Warning, $"The combat log's newest autohunt line reads '{last}' - the autohunt is {other} {where}; pressed '{key}' to turn it {want}.");
                     return false;
                 }
             }
@@ -988,23 +1067,23 @@ public sealed partial class AutomationPilot
         }
 
         bool? on = AutohuntLog.NewState(_huntOffBaseline, lines, seq.AutohuntStartedText, seq.AutohuntEndedText, out string? line, seq.AutohuntStoppedText);
-        if (on == false)
+        if (on == wantOn)
         {
-            Log?.Invoke(LogLevel.Success, $"Autohunt is off {where} ('{line}' after '{key}' x{_huntOffPresses}).");
+            Log?.Invoke(LogLevel.Success, $"Autohunt is {want} {where} ('{line}' after '{key}' x{_huntOffPresses}).");
             return true;
         }
 
-        if (on == true)
+        if (on == !wantOn)
         {
             if (_huntOffPresses < 3)
             {
                 if (Tap())
-                    Log?.Invoke(LogLevel.Warning, $"The autohunt was off - '{key}' turned it on ('{line}'); pressed it again to turn it off.");
+                    Log?.Invoke(LogLevel.Warning, $"The autohunt was {want} - '{key}' turned it {other} ('{line}'); pressed it again to turn it {want}.");
                 return false;
             }
 
             Log?.Invoke(LogLevel.Warning, $"The combat log still reads '{line}' after '{key}' x3 - carrying on.");
-            DebugArtifacts.SaveFrame(frame, _overlays, "autohunt_on");
+            DebugArtifacts.SaveFrame(frame, _overlays, wantOn ? "autohunt_off" : "autohunt_on");
             return true;
         }
 
@@ -1173,14 +1252,30 @@ public sealed partial class AutomationPilot
     }
 
     /// <summary>
+    /// A Settings visit outside the town checks (Auto War, inside Bohai Outpost): TAB target to
+    /// <paramref name="tabTarget"/> (null = leave it), the font size left alone when
+    /// <paramref name="skipFont"/>, then <paramref name="next"/>.
+    /// </summary>
+    private void BeginSettingsVisit(string? tabTarget, bool skipFont, PilotPhase next)
+    {
+        _visitTabTarget = tabTarget;
+        _visitSkipFont = skipFont;
+        _visitNext = next;
+        _fontStep = 0;
+        Advance(PilotPhase.FontSize, 200);
+    }
+
+    /// <summary>
     /// One visit to the game's Settings window per Start, in town:
     /// Escape -> VISUAL -> list scrolled to the top -> "Font size" kept within
     /// <see cref="SequenceSettings.FontSizePercent"/> .. <see cref="SequenceSettings.FontSizeMaxPercent"/>
     /// (outside it, the chevrons beside the value move it to the nearer end) -> list scrolled down
-    /// to "TAB target", set to Default with its left chevron (<see cref="SequenceSettings.TabTargetDefault"/>)
-    /// -> SAVE once if anything changed -> Escape. Only buttons found by their own text are clicked
-    /// (the window also has CHARACTER SELECT and EXIT). Anything unexpected: close the window and
-    /// carry on with the run - neither setting is worth a failure.
+    /// to "TAB target", stepped to the wanted option with its chevrons (Laby/LOD: Default with
+    /// <see cref="SequenceSettings.TabTargetDefault"/>; Auto War: <see cref="BeginSettingsVisit"/>)
+    /// -> SAVE once if anything changed -> Escape -> the visit's next phase (the teleport for
+    /// Laby/LOD). Only buttons found by their own text are clicked (the window also has CHARACTER
+    /// SELECT and EXIT). Anything unexpected: close the window and carry on with the run - neither
+    /// setting is worth a failure.
     /// </summary>
     private async Task TickFontSizeAsync(Mat frame)
     {
@@ -1208,7 +1303,7 @@ public sealed partial class AutomationPilot
         // Font size done (or skipped): the TAB target next, then SAVE if anything changed.
         void AfterFont()
         {
-            if (_settings.Sequence.TabTargetDefault)
+            if (_visitTabTarget != null)
             {
                 _fontStep = TabStep;
                 return;
@@ -1272,7 +1367,7 @@ public sealed partial class AutomationPilot
                     _fontChecked = true;
                     _fontStep = OpenStep;
                     Log?.Invoke(LogLevel.Warning, "The Settings window did not open - leaving the font size and TAB target alone.");
-                    Advance(PilotPhase.OpenInventory, 300);
+                    Advance(_visitNext, 300);
                     return;
                 }
 
@@ -1313,7 +1408,7 @@ public sealed partial class AutomationPilot
                     return;
                 }
 
-                if (low <= 0) // font size check off
+                if (low <= 0 || _visitSkipFont) // font size check off, or not this visit
                 {
                     AfterFont();
                     return;
@@ -1360,8 +1455,9 @@ public sealed partial class AutomationPilot
                 return;
             }
 
-            case TabStep: // "TAB target" -> Default; the row is at the bottom of the list
+            case TabStep: // "TAB target" -> the wanted option; the row is at the bottom of the list
             {
+                string wanted = _visitTabTarget!;
                 var row = await _analyzer.ReadSettingRowAsync(frame, "TAB target", numeric: false);
                 if (row?.ValueText is not string value)
                 {
@@ -1383,31 +1479,32 @@ public sealed partial class AutomationPilot
                     return;
                 }
 
-                // Default is the first option: every click on the left chevron moves one step towards it.
-                if (IsDefaultTabTarget(value))
+                int? step = TabTargetChevron(value, wanted);
+                if (step == 0)
                 {
                     if (_tabChanged)
-                        _settingsChanges.Add("TAB target Default");
+                        _settingsChanges.Add($"TAB target {wanted}");
                     else
-                        Log?.Invoke(LogLevel.Info, "TAB target is already Default.");
+                        Log?.Invoke(LogLevel.Info, $"TAB target is already {wanted}.");
                     AfterTab();
                     return;
                 }
 
-                if (row.Left == null || _tabClicks >= 5)
+                PixelRect? chevron = step < 0 ? row.Left : step > 0 ? row.Right : null;
+                if (chevron == null || _tabClicks >= 5)
                 {
-                    Log?.Invoke(LogLevel.Warning, $"TAB target is '{value}' and could not be set to Default - leaving it.");
+                    Log?.Invoke(LogLevel.Warning, $"TAB target is '{value}' and could not be set to {wanted} - leaving it.");
                     if (_tabChanged)
                         _settingsChanges.Add($"TAB target {value}");
                     AfterTab();
                     return;
                 }
 
-                if (!Click(row.Left.Value))
+                if (!Click(chevron.Value))
                     return;
                 _tabClicks++;
                 _tabChanged = true;
-                _detail = $"TAB target '{value}' -> Default";
+                _detail = $"TAB target '{value}' -> {wanted}";
                 _waitUntil = now + 500;
                 return;
             }
@@ -1431,7 +1528,7 @@ public sealed partial class AutomationPilot
                 return;
             }
 
-            default: // close the window (Escape toggles it), then the teleport
+            default: // close the window (Escape toggles it), then the visit's next phase (Laby/LOD: the teleport)
             {
                 if (_attempts < 3 && await Find("SETTINGS") != null)
                 {
@@ -1442,7 +1539,7 @@ public sealed partial class AutomationPilot
                 }
 
                 _fontStep = OpenStep;
-                Advance(PilotPhase.OpenInventory, 300);
+                Advance(_visitNext, 300);
                 return;
             }
         }
@@ -1453,6 +1550,20 @@ public sealed partial class AutomationPilot
     /// Nearest monster) score below 0.2 against it.
     /// </summary>
     public static bool IsDefaultTabTarget(string value) => TextMatcher.Similarity(value, "Default") >= 0.75;
+
+    /// <summary>
+    /// The TAB target chevron that moves <paramref name="value"/> towards <paramref name="wanted"/>:
+    /// 0 = already there, -1 = left, +1 = right, null = cannot tell. The options are stepped through in
+    /// a fixed order (<see cref="TabTargetOptions.All"/>), Default first, so an unrecognised value can
+    /// still be stepped left towards Default (as before Auto War), but towards nothing else.
+    /// </summary>
+    internal static int? TabTargetChevron(string value, string wanted)
+    {
+        int? steps = TabTargetOptions.StepsTo(value, wanted);
+        if (steps == null)
+            return TabTargetOptions.IndexOf(wanted) == 0 ? -1 : null;
+        return Math.Sign(steps.Value);
+    }
 
     private void TickOpenInventory(Mat frame)
     {
@@ -1553,6 +1664,13 @@ public sealed partial class AutomationPilot
 
     private async Task TickFindDestinationAsync(Mat frame)
     {
+        // Auto War's Start: page to the caves' page and check the cave is there - no entry is clicked.
+        if (IsWar && _warListCheck)
+        {
+            await TickWarListCheckAsync(frame);
+            return;
+        }
+
         var roi = _settings.Regions.Ocr.ToPixels(frame.Width, frame.Height);
         var (hit, ms, words) = await _analyzer.FindTextAsync(
             frame,
@@ -2191,6 +2309,7 @@ public sealed partial class AutomationPilot
 
     private PilotPhase NextAfterLoad()
         => _returning ? PilotPhase.Done
+            : IsWar ? PilotPhase.WarBack
             : !_settings.Dungeon.Enabled ? PilotPhase.FaceNorth
             : _settings.Dungeon.ZoomOutNotches > 0 || _settings.Dungeon.NorthOnArrival ? PilotPhase.ZoomOut
             : PilotPhase.WaitForGate;
@@ -2499,13 +2618,7 @@ public sealed partial class AutomationPilot
             }
         }
 
-        var roi = _settings.Regions.MapIcon.ToPixels(frame.Width, frame.Height);
-
-        // The button sits in the very corner of the panel and is often partly clipped by the
-        // client edge, which costs a lot of correlation - so it gets a softer floor than icons
-        // that are fully on screen. The region keeps it from matching anything else.
-        double threshold = Math.Max(0.50, _settings.Detection.TemplateThreshold - 0.10);
-        var (match, ms) = _analyzer.FindIconTimed(frame, "mapicon", roi, threshold);
+        var (match, ms) = FindMapButton(frame);
 
         if (match == null)
         {
@@ -2522,25 +2635,66 @@ public sealed partial class AutomationPilot
 
         Log?.Invoke(LogLevel.Success, $"Clicked the map button (score {match.Score:0.00}, match {ms:0.0}ms).");
         _mapScrolls = 0;
-        Advance(_settings.Dungeon.Enabled ? PilotPhase.ReadStage : PilotPhase.Done,
-            _settings.Dungeon.Enabled ? _settings.Dungeon.MapOpenDelayMs : _settings.Input.AfterClickMs);
+        bool pick = IsWar || _settings.Dungeon.Enabled;
+        Advance(pick ? PilotPhase.ReadStage : PilotPhase.Done,
+            pick ? _settings.Dungeon.MapOpenDelayMs : _settings.Input.AfterClickMs);
     }
 
     /// <summary>
-    /// Reads the boss name of the current stage from the map's monster list, scrolling the list
-    /// with the wheel when the name is not on the visible page, then clicks that row's '>'.
+    /// The map button. It sits in the very corner of the panel and is often partly clipped by the
+    /// client edge, which costs a lot of correlation - so it gets a softer floor than icons that are
+    /// fully on screen. The region keeps it from matching anything else.
+    /// </summary>
+    private (TemplateMatch? Match, double Ms) FindMapButton(Mat frame)
+    {
+        var roi = _settings.Regions.MapIcon.ToPixels(frame.Width, frame.Height);
+        double threshold = Math.Max(0.50, _settings.Detection.TemplateThreshold - 0.10);
+        return _analyzer.FindIconTimed(frame, "mapicon", roi, threshold);
+    }
+
+    /// <summary>
+    /// The monster the map pick looks for: the Labyrinth stage's boss, or Auto War's monster - the one
+    /// being checked at Start (<c>_warMapVerify</c>) or the remembered one. Null = nothing to pick.
+    /// </summary>
+    private string? MapPickName => IsWar
+        ? NullIfBlank(_warMapVerify ? _warPendingMonster : _settings.War.HomeMonster)
+        : _stageIndex < _settings.Dungeon.Stages.Count ? _settings.Dungeon.Stages[_stageIndex] : null;
+
+    /// <summary>Where the map pick goes once the row's '>' is clicked (or the name confirmed).</summary>
+    private PilotPhase AfterMapPick => !IsWar ? PilotPhase.WaitBoss
+        : _warMapVerify ? PilotPhase.WarRemember
+        : PilotPhase.WarArrive;
+
+    private static string? NullIfBlank(string? value) => string.IsNullOrWhiteSpace(value) ? null : value;
+
+    /// <summary>
+    /// Reads the boss name of the current stage (Auto War: the monster, <see cref="MapPickName"/>)
+    /// from the map's monster list, scrolling the list with the wheel when the name is not on the
+    /// visible page, then clicks that row's '>'. Auto War's Start check (<c>_warMapVerify</c>) only
+    /// confirms the name is in the list and closes the map.
     /// </summary>
     private async Task TickReadStageAsync(Mat frame)
     {
         var dungeon = _settings.Dungeon;
-        if (dungeon.Stages.Count == 0)
+        if (!IsWar)
         {
-            Advance(PilotPhase.AdvanceStage, 0);
+            if (dungeon.Stages.Count == 0)
+            {
+                Advance(PilotPhase.AdvanceStage, 0);
+                return;
+            }
+
+            _stageIndex = Math.Clamp(_stageIndex, 0, dungeon.Stages.Count - 1);
+        }
+
+        bool verify = IsWar && _warMapVerify;
+        string? expected = MapPickName;
+        if (expected == null)
+        {
+            Advance(AfterMapPick, 300);
             return;
         }
 
-        _stageIndex = Math.Clamp(_stageIndex, 0, dungeon.Stages.Count - 1);
-        string expected = dungeon.Stages[_stageIndex];
         var roi = _settings.Regions.MapBossList.ToPixels(frame.Width, frame.Height);
 
         // The map button click can be swallowed (the game is still busy after the kill). If the
@@ -2567,6 +2721,12 @@ public sealed partial class AutomationPilot
 
             // No clicking without the map (user, 2026-10-26): a boss name read here with the map
             // shut is the name tag in the game world, and a click on it walks the character.
+            if (verify)
+            {
+                WarStop(frame, $"The map window never opened, so '{expected}' could not be checked against this map's monster list - press Start again");
+                return;
+            }
+
             Fail(frame, "The map window never opened. Widen Regions.MapBossList or raise Dungeon.MapReopenRetries " +
                         "- press F11 with the map open to check the region.");
             return;
@@ -2583,8 +2743,9 @@ public sealed partial class AutomationPilot
 
         // Different resolutions move the map window around, so before paging the list try one
         // generous region. If the name turns up there, say where - that is the correction for
-        // Regions.MapBossList.
-        if (hit == null && _attempts == 0 && _mapScrolls == 0)
+        // Regions.MapBossList. Not for Auto War's Start check: that wide band also holds the game
+        // world, where a targeted player's name tag would pass for a monster of the cave.
+        if (hit == null && _attempts == 0 && _mapScrolls == 0 && !verify)
         {
             var wide = new NormRect(0.32, 0.08, 0.68, 0.86).ToPixels(frame.Width, frame.Height);
             var (wideHit, _, _) = await _analyzer.FindTextAsync(frame, wide, expected);
@@ -2601,8 +2762,23 @@ public sealed partial class AutomationPilot
 
         if (hit != null)
         {
-            _overlays.Add(new OverlayItem(hit.Bounds, $"stage {_stageIndex + 1}: {hit.Text}", OverlayColor.Green));
-            Log?.Invoke(LogLevel.Success, $"Map shows stage {_stageIndex + 1}: '{hit.Text}' ({hit.Similarity:0.00}).");
+            if (IsWar)
+            {
+                _overlays.Add(new OverlayItem(hit.Bounds, hit.Text, OverlayColor.Green));
+                Log?.Invoke(LogLevel.Success, $"Map shows '{hit.Text}' ({hit.Similarity:0.00}).");
+            }
+            else
+            {
+                _overlays.Add(new OverlayItem(hit.Bounds, $"stage {_stageIndex + 1}: {hit.Text}", OverlayColor.Green));
+                Log?.Invoke(LogLevel.Success, $"Map shows stage {_stageIndex + 1}: '{hit.Text}' ({hit.Similarity:0.00}).");
+            }
+
+            if (verify)
+            {
+                CloseMapAfterCheck(frame);
+                return;
+            }
+
             ClickStageRow(frame, hit.Bounds, hit.Text);
             return;
         }
@@ -2664,18 +2840,21 @@ public sealed partial class AutomationPilot
         }
 
         // A different stage name means the game is ahead/behind us - say so instead of guessing.
-        foreach (var (name, index) in dungeon.Stages.Select((n, i) => (n, i)))
+        if (!IsWar)
         {
-            if (index == _stageIndex)
-                continue;
+            foreach (var (name, index) in dungeon.Stages.Select((n, i) => (n, i)))
+            {
+                if (index == _stageIndex)
+                    continue;
 
-            var (other, _, _) = await _analyzer.FindTextAsync(frame, roi, name);
-            if (other == null)
-                continue;
+                var (other, _, _) = await _analyzer.FindTextAsync(frame, roi, name);
+                if (other == null)
+                    continue;
 
-            Log?.Invoke(LogLevel.Warning,
-                $"Map shows '{other.Text}' (stage {index + 1}) but '{expected}' (stage {_stageIndex + 1}) was expected.");
-            break;
+                Log?.Invoke(LogLevel.Warning,
+                    $"Map shows '{other.Text}' (stage {index + 1}) but '{expected}' (stage {_stageIndex + 1}) was expected.");
+                break;
+            }
         }
 
         if (++_attempts > _settings.Sequence.MaxRetries)
@@ -2691,6 +2870,12 @@ public sealed partial class AutomationPilot
                 return;
             }
 
+            if (verify)
+            {
+                WarStop(frame, $"'{expected}' is not in this map's monster list - target a monster of this cave and press Start again");
+                return;
+            }
+
             Fail(frame, $"Could not find '{expected}' in the map's monster list after scrolling " +
                         $"{dungeon.MapScrollMaxSteps} time(s). Check Regions.MapBossList - press F11 with the map open.");
             return;
@@ -2699,6 +2884,27 @@ public sealed partial class AutomationPilot
         _mapScrolls = 0;
         _detail = $"reading the map for '{expected}' (retry {_attempts}/{_settings.Sequence.MaxRetries})";
         _waitUntil = Environment.TickCount64 + 700;
+    }
+
+    /// <summary>
+    /// Auto War's Start check found the monster in the list: close the map with its button (a click
+    /// on the row would walk the character there) and hand back to the remember step.
+    /// </summary>
+    private void CloseMapAfterCheck(Mat frame)
+    {
+        var (button, _) = FindMapButton(frame);
+        if (button == null)
+            Log?.Invoke(LogLevel.Warning, "The map button was not found to close the map - leaving it open.");
+        else
+        {
+            _overlays.Add(new OverlayItem(button.Bounds, $"close map {button.Score:0.00}", OverlayColor.Green));
+            if (!Click(button.Bounds))
+                return;
+            Log?.Invoke(LogLevel.Info, "Closed the map with its button.");
+        }
+
+        _warMonsterConfirmed = true;
+        Advance(PilotPhase.WarRemember, 700);
     }
 
 
@@ -2940,10 +3146,10 @@ public sealed partial class AutomationPilot
     private async Task TickAdvanceStageAsync(Mat frame)
     {
         var dungeon = _settings.Dungeon;
-        string? expected = _stageIndex < dungeon.Stages.Count ? dungeon.Stages[_stageIndex] : null;
+        string? expected = MapPickName;
         if (expected == null)
         {
-            Advance(PilotPhase.WaitBoss, 300);
+            Advance(AfterMapPick, 300);
             return;
         }
 
@@ -2959,8 +3165,10 @@ public sealed partial class AutomationPilot
         {
             if (_chevronClicked)
             {
-                Log?.Invoke(LogLevel.Info, "The map closed after the '>' click; waiting for the spawn.");
-                Advance(PilotPhase.WaitBoss, 300);
+                Log?.Invoke(LogLevel.Info, IsWar
+                    ? $"The map closed after the '>' click; walking to '{expected}'."
+                    : "The map closed after the '>' click; waiting for the spawn.");
+                Advance(AfterMapPick, 300);
                 return;
             }
 
@@ -2993,8 +3201,9 @@ public sealed partial class AutomationPilot
                 return;
             }
 
-            Log?.Invoke(LogLevel.Warning, $"The map is gone before the '>' click and was reopened {dungeon.MapReopenRetries}x already; waiting for the spawn anyway.");
-            Advance(PilotPhase.WaitBoss, 300);
+            Log?.Invoke(LogLevel.Warning, $"The map is gone before the '>' click and was reopened {dungeon.MapReopenRetries}x already; " +
+                                          (IsWar ? "carrying on anyway." : "waiting for the spawn anyway."));
+            Advance(AfterMapPick, 300);
             return;
         }
 
@@ -3043,7 +3252,7 @@ public sealed partial class AutomationPilot
         if (++_attempts > 3)
         {
             Log?.Invoke(LogLevel.Warning, "The map is still open after the chevron click; carrying on anyway.");
-            Advance(PilotPhase.WaitBoss, 300);
+            Advance(AfterMapPick, 300);
             return;
         }
 
@@ -4453,9 +4662,7 @@ public sealed partial class AutomationPilot
 
         // WaitBoss first reads the autohunt off in the combat log (user, 2026-10-26).
         _finalHuntOffChecked = false;
-        _huntOffPresses = 0;
-        _huntOffPressedAt = 0;
-        _huntOffBaseline = [];
+        ResetAutohuntCheck();
 
         // Autohunt only once the boss has been hit by hand (SelectBoss, user).
         _bossFirstSeenAt = null;
