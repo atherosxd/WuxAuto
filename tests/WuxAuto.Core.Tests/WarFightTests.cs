@@ -72,7 +72,7 @@ public class WarFightTests
         var verdicts = new List<AutomationPilot.WarHpVerdict>();
         foreach (var hp in reads)
         {
-            (watch, var verdict) = AutomationPilot.WarHpNext(watch, hp, dead);
+            (watch, var verdict, _) = AutomationPilot.WarHpNext(watch, hp, dead);
             verdicts.Add(verdict);
         }
 
@@ -112,6 +112,47 @@ public class WarFightTests
     }
 
     [Fact]
+    public void Maximum_RaisedByAtMostHalfAgain_ABiggerJumpIsIgnoredAndReportedOnce()
+    {
+        // The user's buff: 34493 -> 42833 (about 1.24 x).
+        var unbuffed = Known with { AliveMax = 34493, PendingMax = 34493 };
+        Assert.Equal(Max, Run(unbuffed, false, Full, Full).Watch.AliveMax);
+
+        // The MP line of a character whose MP maximum is far higher, read in place of the HP line: not the HP maximum.
+        var (watch, verdicts) = Run(Known, false, (90000, 90000), (90000, 90000), (90000, 90000));
+        Assert.Equal(Max, watch.AliveMax);
+        Assert.Equal(new[] { AutomationPilot.WarHpVerdict.None, AutomationPilot.WarHpVerdict.RaiseIgnored, AutomationPilot.WarHpVerdict.None }, verdicts);
+        Assert.Equal(AutomationPilot.WarHpVerdict.None, Last(watch, false, (90000, 90000), (90000, 90000)));   // once per Start
+
+        // 1.5 x, rounded down, is the last raise taken.
+        Assert.Equal(64249, Run(Known, false, (60000, 64249), (60000, 64249)).Watch.AliveMax);
+        Assert.Equal(Max, Run(Known, false, (60000, 64250), (60000, 64250)).Watch.AliveMax);
+    }
+
+    [Fact]
+    public void ForeignReads_TellNothing_SoTheyRunTheUnreadTimer()
+    {
+        // With the maximum known, a read of another "N / M" line (the MP line, the bar under the HP bar) is as good as
+        // none: it says nothing about the HP, and ten seconds of only such reads save war_hp_unread.
+        var watch = Known;
+        long since = 0;
+        for (long t = 0; t <= AutomationPilot.WarHpUnreadMs; t += 1000)
+        {
+            (watch, _, bool told) = AutomationPilot.WarHpNext(watch, t % 2000 == 0 ? MpLine : LowBar, dead: false);
+            Assert.False(told);
+            since = AutomationPilot.WarHpUnreadSince(since, told, Now + t);
+        }
+
+        Assert.True(AutomationPilot.WarHpUnreadTooLong(Now + AutomationPilot.WarHpUnreadMs, since));
+
+        // A read of the player's HP tells, and ends the unread spell.
+        var (_, _, hpTold) = AutomationPilot.WarHpNext(watch, Full, dead: false);
+        Assert.True(hpTold);
+        Assert.Equal(0, AutomationPilot.WarHpUnreadSince(since, hpTold, Now + 11_000));
+        Assert.False(AutomationPilot.WarHpNext(watch, null, dead: false).Told);
+    }
+
+    [Fact]
     public void Death_TwoDeathReadsInARow()
     {
         Assert.Equal(AutomationPilot.WarHpVerdict.None, Last(Known, false, Dead));
@@ -119,7 +160,9 @@ public class WarFightTests
         Assert.Equal(AutomationPilot.WarHpVerdict.Dead, Last(Known, false, (0, 34493), (0, 34493)));   // the buffs went with the death
         Assert.Equal(AutomationPilot.WarHpVerdict.Dead, Last(Known, false, Dead, null, Dead));         // an unread neither counts nor breaks
         Assert.Equal(AutomationPilot.WarHpVerdict.None, Last(Known, false, Dead, Full, Dead));
-        Assert.Equal(AutomationPilot.WarHpVerdict.None, Last(Known, false, Dead, (0, 3000), Dead));
+        // Another line's read (outside the player's maximum) between: like an unread one, it does not break the row.
+        Assert.Equal(AutomationPilot.WarHpVerdict.Dead, Last(Known, false, Dead, (0, 3000), Dead));
+        Assert.Equal(AutomationPilot.WarHpVerdict.Dead, Last(Known, false, Dead, MpLine, Dead));
         Assert.Equal(AutomationPilot.WarHpVerdict.None, Last(Known, false, (0, 3000), (0, 3000)));
     }
 
@@ -137,6 +180,7 @@ public class WarFightTests
         Assert.Equal(AutomationPilot.WarHpVerdict.Revived, Last(Known, true, (900, 34493), (2000, 34493)));
         Assert.Equal(AutomationPilot.WarHpVerdict.None, Last(Known, true, (900, 34493), Dead));
         Assert.Equal(AutomationPilot.WarHpVerdict.None, Last(Known, true, (900, 34493), MpLine));
+        Assert.Equal(AutomationPilot.WarHpVerdict.Revived, Last(Known, true, (900, 34493), MpLine, (2000, 34493)));   // the MP line breaks no row
         Assert.Equal(AutomationPilot.WarHpVerdict.None, Last(Known, false, Full, Full));   // only while dead
     }
 

@@ -140,71 +140,94 @@ public sealed partial class AutomationPilot
 
     /// <summary>
     /// What the HP reads so far say. <c>AliveMax</c>: the player's HP maximum (<see cref="WarLearnAliveMax"/>);
-    /// <c>PendingMax</c>: the last read that may set it, waiting for a second; the reads in a row behind each verdict; and
-    /// whether a fall of the maximum (buffs gone) may be reported - armed by a read at the maximum, spent by a report.
+    /// <c>PendingMax</c>: the last read that may set it, waiting for a second; the reads in a row behind each verdict;
+    /// whether a fall of the maximum (buffs gone) may be reported - armed by a read at the maximum, spent by a report; and
+    /// whether a raise too big to be a buff was reported this Start.
     /// </summary>
-    internal readonly record struct WarHpWatch(int? AliveMax, int? PendingMax, int DeadReads, int ReviveReads, int LowReads, bool DropArmed);
+    internal readonly record struct WarHpWatch(
+        int? AliveMax, int? PendingMax, int DeadReads, int ReviveReads, int LowReads, bool DropArmed, bool RaiseReported);
 
-    /// <summary>What one HP read decides: nothing, dead, back on our feet (while dead), or the buffs gone (alive).</summary>
+    /// <summary>
+    /// What one HP read decides: nothing, dead, back on our feet (while dead), the buffs gone (alive), or - once per Start - a
+    /// raise of the maximum refused as too big for a buff.
+    /// </summary>
     internal enum WarHpVerdict
     {
         None,
         Dead,
         Revived,
         BuffsDropped,
+        RaiseIgnored,
     }
 
     /// <summary>
     /// The player's HP maximum after one more read. A read can set it when the character is alive (HP above 0), its maximum
     /// is 1000 or more and - with a maximum known - not below it (buffs raise it; it is never lowered: buffs gone or the MP
     /// line read in place of the HP line both read lower). Two such reads in a row that agree within 1 % set it (the later
-    /// one); anything else read in between starts the pair again, an unread does not.
+    /// one); anything else read in between starts the pair again, an unread does not. A raise to more than 1.5 times the
+    /// known maximum is refused (<c>RaiseIgnored</c>): the user's buff raises it about 1.24 times (34493 -> 42833), and the
+    /// MP line of a character with a higher MP maximum, read twice in place of the HP line, must not hide every death after.
     /// </summary>
-    internal static (int? AliveMax, int? PendingMax) WarLearnAliveMax(int? aliveMax, int? pendingMax, (int Cur, int Max) read)
+    internal static (int? AliveMax, int? PendingMax, bool RaiseIgnored) WarLearnAliveMax(int? aliveMax, int? pendingMax, (int Cur, int Max) read)
     {
         bool candidate = read.Cur > 0 && read.Max >= 1000 && (aliveMax is not int known || read.Max >= known);
         if (!candidate)
-            return (aliveMax, null);
+            return (aliveMax, null, false);
 
         bool agree = pendingMax is int pending && Math.Abs((long)pending - read.Max) * 100 <= Math.Max(pending, read.Max);
-        return (agree ? read.Max : aliveMax, read.Max);
+        if (!agree)
+            return (aliveMax, read.Max, false);
+        if (aliveMax is int current && 2L * read.Max > 3L * current)
+            return (aliveMax, read.Max, true);
+        return (read.Max, read.Max, false);
     }
 
     /// <summary>
-    /// One HP read through the watch (<paramref name="hp"/> null = unread: it says nothing and breaks no row). The maximum
-    /// is learnt first (<see cref="WarLearnAliveMax"/>), then the read is judged against it - "the player's maximum" is
-    /// <see cref="WarText.IsPlayerHpMax"/>, half of it to 5 % over:
+    /// One HP read through the watch. The maximum is learnt first (<see cref="WarLearnAliveMax"/>), then the read is
+    /// judged against it - "the player's maximum" is <see cref="WarText.IsPlayerHpMax"/>, half of it to 5 % over:
     /// <list type="bullet">
     /// <item>dead: <see cref="WarText.IsDeadRead"/> <see cref="WarHpReadsInARow"/> times in a row;</item>
     /// <item>back on our feet (only while <paramref name="dead"/>): HP above 0 out of the player's maximum, as many times;</item>
     /// <item>buffs gone (alive): HP above 0 out of the player's maximum but under 9/10 of it, as many times - once per fall,
     /// armed again by a read at 9/10 or more. It also catches a quick respawn that was never seen as a death.</item>
     /// </list>
-    /// The MP line ("8000/11467") and the "1500/3000" bar of a 42833 HP character are none of these.
+    /// <c>Told</c>: the read said something about the player's HP. No read, or - with the maximum known - a read of another
+    /// "N / M" line (outside the player's maximum: the MP line "8000/11467", the "0/3000" bar) tells nothing: it neither
+    /// counts nor breaks a row, and it runs the HP-unread time (<see cref="WarHpUnreadSince"/>). A death read that
+    /// alternates with the MP line is still two death reads in a row.
     /// </summary>
-    internal static (WarHpWatch Watch, WarHpVerdict Verdict) WarHpNext(WarHpWatch watch, (int Cur, int Max)? hp, bool dead)
+    internal static (WarHpWatch Watch, WarHpVerdict Verdict, bool Told) WarHpNext(WarHpWatch watch, (int Cur, int Max)? hp, bool dead)
     {
         if (hp is not { } read)
-            return (watch, WarHpVerdict.None);
+            return (watch, WarHpVerdict.None, false);
 
-        var (aliveMax, pendingMax) = WarLearnAliveMax(watch.AliveMax, watch.PendingMax, read);
+        var (aliveMax, pendingMax, raiseIgnored) = WarLearnAliveMax(watch.AliveMax, watch.PendingMax, read);
+        if (aliveMax != null && !WarText.IsPlayerHpMax(read.Max, aliveMax))
+        {
+            bool report = raiseIgnored && !watch.RaiseReported;
+            var learnt = watch with { AliveMax = aliveMax, PendingMax = pendingMax, RaiseReported = watch.RaiseReported || raiseIgnored };
+            return (learnt, report ? WarHpVerdict.RaiseIgnored : WarHpVerdict.None, false);
+        }
+
         bool alive = read.Cur > 0 && WarText.IsPlayerHpMax(read.Max, aliveMax);
         bool low = alive && aliveMax is int max && 10L * read.Max < 9L * max;
-        var next = new WarHpWatch(
-            aliveMax,
-            pendingMax,
-            DeadReads: WarText.IsDeadRead(read, aliveMax) ? watch.DeadReads + 1 : 0,
-            ReviveReads: alive ? watch.ReviveReads + 1 : 0,
-            LowReads: low ? watch.LowReads + 1 : 0,
-            DropArmed: watch.DropArmed || (alive && aliveMax != null && !low));
+        var next = watch with
+        {
+            AliveMax = aliveMax,
+            PendingMax = pendingMax,
+            DeadReads = WarText.IsDeadRead(read, aliveMax) ? watch.DeadReads + 1 : 0,
+            ReviveReads = alive ? watch.ReviveReads + 1 : 0,
+            LowReads = low ? watch.LowReads + 1 : 0,
+            DropArmed = watch.DropArmed || (alive && aliveMax != null && !low),
+        };
 
         if (dead)
-            return (next, next.ReviveReads >= WarHpReadsInARow ? WarHpVerdict.Revived : WarHpVerdict.None);
+            return (next, next.ReviveReads >= WarHpReadsInARow ? WarHpVerdict.Revived : WarHpVerdict.None, true);
         if (next.DeadReads >= WarHpReadsInARow)
-            return (next, WarHpVerdict.Dead);
+            return (next, WarHpVerdict.Dead, true);
         if (next.LowReads >= WarHpReadsInARow && next.DropArmed)
-            return (next with { DropArmed = false }, WarHpVerdict.BuffsDropped);
-        return (next, WarHpVerdict.None);
+            return (next with { DropArmed = false }, WarHpVerdict.BuffsDropped, true);
+        return (next, WarHpVerdict.None, true);
     }
 
     /// <summary>A key Auto War presses: the setting's name (as the settings panel shows it), its value, and whether it must be set.</summary>
@@ -235,6 +258,13 @@ public sealed partial class AutomationPilot
 
     /// <summary>The target counts as gone after <paramref name="targetGoneMs"/> without a sight, on the war clock.</summary>
     internal static bool WarTargetGone(long clockNow, long seenAt, int targetGoneMs) => clockNow - seenAt >= targetGoneMs;
+
+    /// <summary>
+    /// Since when (war clock) no read has told anything about the player's HP, after one more read (<paramref name="told"/>,
+    /// from <see cref="WarHpNext"/>): 0 again after one that told, else the start of the spell.
+    /// </summary>
+    internal static long WarHpUnreadSince(long unreadSince, bool told, long clockNow)
+        => told ? 0 : unreadSince == 0 ? clockNow : unreadSince;
 
     /// <summary>The HP has not read for <see cref="WarHpUnreadMs"/> on the war clock (<paramref name="unreadSince"/> 0 = it reads).</summary>
     internal static bool WarHpUnreadTooLong(long clockNow, long unreadSince)
@@ -413,7 +443,7 @@ public sealed partial class AutomationPilot
         if (_warTimerStep == 4)
             return;     // clicked an X (or the click waits for the game): look again on a fresh frame
 
-        var (_, hp) = await ReadWarHpAsync(frame);
+        var (_, hp, _) = await ReadWarHpAsync(frame);
         Log?.Invoke(LogLevel.Info, hp is { } read
             ? $"HP {read.Cur} / {read.Max}; setting TAB target to '{war.TabTargetOption}'."
             : $"HP not read; setting TAB target to '{war.TabTargetOption}'.");
@@ -1014,37 +1044,39 @@ public sealed partial class AutomationPilot
 
     // ---------------------------------------------------------------- HP and death
 
-    /// <summary>One HP read (<see cref="ScreenAnalyzer.ReadPlayerHpAsync"/>) through the watch (<see cref="WarHpNext"/>): its verdict and the read.</summary>
-    private async Task<(WarHpVerdict Verdict, (int Cur, int Max)? Hp)> ReadWarHpAsync(Mat frame, bool dead = false)
+    /// <summary>
+    /// One HP read (<see cref="ScreenAnalyzer.ReadPlayerHpAsync"/>) through the watch (<see cref="WarHpNext"/>): its verdict,
+    /// the read, and whether it told anything about the player's HP. A raise of the maximum refused as too big for a buff
+    /// is a warning (once per Start, the watch counts it), whichever phase read it.
+    /// </summary>
+    private async Task<(WarHpVerdict Verdict, (int Cur, int Max)? Hp, bool Told)> ReadWarHpAsync(Mat frame, bool dead = false)
     {
         var hp = await _analyzer.ReadPlayerHpAsync(frame);
-        (_warHp, var verdict) = WarHpNext(_warHp, hp, dead);
-        return (verdict, hp);
+        (_warHp, var verdict, bool told) = WarHpNext(_warHp, hp, dead);
+        if (verdict == WarHpVerdict.RaiseIgnored && hp is { } big)
+            Log?.Invoke(LogLevel.Warning, $"The HP maximum read {big.Max} twice, more than 1.5 times the {_warHp.AliveMax} seen alive - not taken as the HP maximum (the MP line read in place of the HP line?).");
+        return (verdict, hp, told);
     }
 
     /// <summary>
-    /// The fight's HP read (design §4.6). Unread for <see cref="WarHpUnreadMs"/> on the war clock: a warning and
-    /// <c>war_hp_unread</c> once per unread spell, and the fight goes on as alive.
+    /// The fight's HP read (design §4.6). No read of the player's HP - unread, or another "N / M" line read in its place -
+    /// for <see cref="WarHpUnreadMs"/> on the war clock: a warning and <c>war_hp_unread</c> once per such spell, and the
+    /// fight goes on as alive.
     /// </summary>
     private async Task<(WarHpVerdict Verdict, (int Cur, int Max)? Hp)> WatchWarHpAsync(Mat frame, long now)
     {
-        var (verdict, hp) = await ReadWarHpAsync(frame);
-        if (hp != null)
-        {
-            _warHpUnreadSince = 0;
-            _warHpUnreadWarned = false;
-            return (verdict, hp);
-        }
-
+        var (verdict, hp, told) = await ReadWarHpAsync(frame);
         long clock = _warClock.Now(now);
-        if (_warHpUnreadSince == 0)
+        _warHpUnreadSince = WarHpUnreadSince(_warHpUnreadSince, told, clock);
+        if (told)
         {
-            _warHpUnreadSince = clock;
+            _warHpUnreadWarned = false;
         }
         else if (!_warHpUnreadWarned && WarHpUnreadTooLong(clock, _warHpUnreadSince))
         {
             _warHpUnreadWarned = true;
-            Log?.Invoke(LogLevel.Warning, $"The HP numbers (top left) have not read for {WarHpUnreadMs / 1000}s - fighting on as if alive.");
+            string last = hp is { } other ? $" (it reads {other.Cur} / {other.Max}, not the player's maximum {_warHp.AliveMax})" : "";
+            Log?.Invoke(LogLevel.Warning, $"The HP numbers (top left) have not read for {WarHpUnreadMs / 1000}s{last} - fighting on as if alive.");
             WarShot(frame, "war_hp_unread");
         }
 
@@ -1080,7 +1112,7 @@ public sealed partial class AutomationPilot
         if (now >= _warHpReadAt)
         {
             _warHpReadAt = now + 1000;
-            var (verdict, hp) = await ReadWarHpAsync(frame, dead: true);
+            var (verdict, hp, _) = await ReadWarHpAsync(frame, dead: true);
             if (verdict == WarHpVerdict.Revived && hp is { } alive)
             {
                 Log?.Invoke(LogLevel.Info, $"Back on our feet (HP {alive.Cur} / {alive.Max}) after {dead / 1000}s.");
