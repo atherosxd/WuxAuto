@@ -223,6 +223,7 @@ public sealed partial class AutomationPilot
     private int _huntOffPresses;              // AutohuntOff: taps of the autohunt key this visit (<= 3)
     private long _huntOffPressedAt;
     private List<string> _huntOffBaseline = [];   // autohunt log lines before the last tap
+    private bool _huntCheckConfirmed;             // EnsureAutohuntAsync's last "true" read the wanted state (not given up, not a dry run)
     private string? _homeTown;
     private int _fontStep;
     // One Settings visit: the TAB target option wanted (null = leave it), whether the font size is left
@@ -277,7 +278,9 @@ public sealed partial class AutomationPilot
         PilotPhase.OpenInventory => "opening inventory",
         PilotPhase.FindScroll => "locating teleport scroll",
         PilotPhase.FindChevron => "clicking next page chevron",
-        PilotPhase.FindDestination => $"finding '{CurrentDestination}'",
+        PilotPhase.FindDestination => IsWar && _warListCheck
+            ? $"checking '{_warTitle}' is on page {_settings.War.ListPage} of the teleport scroll"
+            : $"finding '{CurrentDestination}'",
         PilotPhase.WaitForLoad => "waiting for zone load",
         PilotPhase.WaitForGate => $"waiting for the gate (stage {_stageIndex + 1})",
         PilotPhase.ClickMap => "clicking the map button",
@@ -329,6 +332,10 @@ public sealed partial class AutomationPilot
         _lodBuffs = 0;
         _lodApproachSnapshots = 0;
         _fontStep = 0;
+        _warSpotChecked = false;
+        _warRemembering = false;
+        _warRefusedTeleports = 0;
+        _warShots.Clear();
         _runStart = Environment.TickCount64;
         ResetRunState();
         IsRunning = true;
@@ -445,6 +452,13 @@ public sealed partial class AutomationPilot
         _warPendingMap = null;
         _warMapClosing = false;
         _warMapCloseClicked = false;
+        _warTimerStep = 0;
+        _warTitle = null;
+        _warWindowsChecked = false;
+        _warListStep = 0;
+        _warListEntry = null;
+        _warListStopWhy = null;
+        _warArriveBaseline = null;
         _stuckShots = 0;
         _finalHuntOffChecked = false;
         _compassAnchored = false;
@@ -563,7 +577,8 @@ public sealed partial class AutomationPilot
                 string zone = title == null ? string.Empty : TextMatcher.Normalize(title);
                 string? townSeen = TownIn(title);
 
-                if (ZoneMatches(title, Destination))
+                // Auto War: the cave itself, never a sibling sharing its first 10 letters (WarZoneConfirmed).
+                if (IsWar ? WarZoneConfirmed(title) : ZoneMatches(title, Destination))
                 {
                     _zoneConfirmedAt = now;
                     _otherZoneReads = 0;
@@ -764,6 +779,18 @@ public sealed partial class AutomationPilot
                 case PilotPhase.WarJoin:
                     await TickWarJoinAsync(frame);
                     break;
+                case PilotPhase.WarRemember:
+                    await TickWarRememberAsync(frame);
+                    break;
+                case PilotPhase.WarBack:
+                    await TickWarBackAsync(frame);
+                    break;
+                case PilotPhase.WarArrive:
+                    await TickWarArriveAsync(frame);
+                    break;
+                case PilotPhase.WarHuntOn:
+                    await TickWarHuntOnAsync(frame);
+                    break;
                 case PilotPhase.Done:
                     TickDone();
                     break;
@@ -818,6 +845,12 @@ public sealed partial class AutomationPilot
     /// </summary>
     private async Task TickCheckZoneAsync(Mat frame)
     {
+        if (IsWar)
+        {
+            await TickWarCheckZoneAsync(frame);
+            return;
+        }
+
         var dungeon = _settings.Dungeon;
         string? title = await ReadMinimapTitleAsync(frame);
         bool inLabyrinth = ZoneMatches(title, Destination);
@@ -1035,6 +1068,9 @@ public sealed partial class AutomationPilot
         string other = wantOn ? "off" : "on";
         long now = Environment.TickCount64;
 
+        // Every "true" below ends the check; only the two that read the wanted state confirm it (Auto War's
+        // "hunting again" is only claimed then). The value is not read by Laby / LOD.
+        _huntCheckConfirmed = false;
         if (_input.IsDryRun)
         {
             Log?.Invoke(LogLevel.Info, $"Dry run - not checking whether the autohunt is on {where}.");
@@ -1069,6 +1105,7 @@ public sealed partial class AutomationPilot
                 if (visible == wantOn)
                 {
                     Log?.Invoke(LogLevel.Success, $"Autohunt is {want} {where} (the combat log's newest autohunt line reads '{last}').");
+                    _huntCheckConfirmed = true;
                     return true;
                 }
 
@@ -1089,6 +1126,7 @@ public sealed partial class AutomationPilot
         if (on == wantOn)
         {
             Log?.Invoke(LogLevel.Success, $"Autohunt is {want} {where} ('{line}' after '{key}' x{_huntOffPresses}).");
+            _huntCheckConfirmed = true;
             return true;
         }
 
@@ -1687,6 +1725,13 @@ public sealed partial class AutomationPilot
         if (IsWar && _warListCheck)
         {
             await TickWarListCheckAsync(frame);
+            return;
+        }
+
+        // Auto War's trip back: the saved cave's entry, picked so that it is never a sibling cave.
+        if (IsWar)
+        {
+            await TickWarDestinationAsync(frame);
             return;
         }
 
@@ -2807,9 +2852,14 @@ public sealed partial class AutomationPilot
             }
 
             // Start's check: the monster is in this cave's list - that is all it wanted to know.
-            // No row click (that walks the character there); close the map instead.
+            // No row click (that walks the character there); close the map instead. The list's spelling
+            // is the one saved: the target bar's read may carry stray characters.
             if (verify)
             {
+                string? listName = WarText.MonsterNameFromListLine(string.IsNullOrWhiteSpace(hit.LineText) ? hit.Text : hit.LineText, expected);
+                if (listName != null && listName != expected)
+                    Log?.Invoke(LogLevel.Info, $"Saving the map list's spelling '{listName}' (the target bar read '{expected}').");
+                _warPendingMonster = listName ?? expected;
                 _warMonsterConfirmed = true;
                 await BeginCloseWarMapAsync(frame);
                 return;

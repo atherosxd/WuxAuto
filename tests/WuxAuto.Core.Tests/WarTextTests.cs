@@ -266,4 +266,77 @@ public class WarTextTests
     [InlineData("MAIN", "MENU", false)]
     public void FindWindowTitle_Reads(string text, string title, bool found)
         => Assert.Equal(found, WarText.FindWindowTitle([L(text, 300, 10)], title) != null);
+
+    [Theory]
+    [InlineData("[Dark Soul Cave X]", "[Dark Soul Cave X]")]
+    [InlineData("[Dark Soul Cave X] ", "[Dark Soul Cave X]")]
+    [InlineData("[Dark Soul Cave X]", "[Dark Soul Cave X")]        // saved without its ']': the letters decide
+    [InlineData("[The Labyrinth (Adep", "[The Labyrinth (Adept)]")]  // cut at the minimap panel's edge
+    [InlineData("[Dark Soul Cave X", "[Dark Soul Cave X]")]         // ']' cut off or not read
+    [InlineData("[Dark Soul Ca", "[Dark Soul Cave X]")]             // 10 letters: still a cut read
+    [InlineData("[Coliseum", "[Coliseum]")]                         // a short name read whole, ']' dropped
+    [InlineData("[Maya Cliff)", "[Maya Cliff]")]                     // list entries at 1024x768 read some ']' as ')'
+    [InlineData("[Dark Soul Cave IF", "[Dark Soul Cave IF (WD)]")]  // page 3 at 2048x1152 (OCR reads "1F" as "IF"), cut
+    public void SameZone_TheSavedMap(string read, string home) => Assert.True(WarText.SameZone(read, home));
+
+    [Theory]
+    [InlineData("[Dark Soul Cave IX]", "[Dark Soul Cave X]")]
+    [InlineData("[Dark Soul Cave X]", "[Dark Soul Cave IX]")]
+    [InlineData("[Dark Soul Cave IX", "[Dark Soul Cave X]")]        // a cut read of the sibling is no prefix of it
+    [InlineData("[Dark Soul Cave X", "[Dark Soul Cave IX]")]
+    [InlineData("[Dark Soul Cave I", "[Dark Soul Cave X]")]
+    [InlineData("[Dark Soul Cave XI]", "[Dark Soul Cave X]")]       // complete and longer
+    [InlineData("[Dark Soul Cave]", "[Dark Soul Cave X]")]          // complete and shorter: another map
+    [InlineData("[Dark Soul C", "[Dark Soul Cave X]")]              // 9 letters: too short to tell the caves apart
+    [InlineData("[Piercing City]", "[Dark Soul Cave X]")]
+    [InlineData("[Dark Soul Cave IF", "[Dark Soul Cave IX]")]       // OCR noise is no cut
+    [InlineData("[Dark Soul Cave 2F", "[Dark Soul Cave IF (WD)]")]  // the floor below, cut
+    [InlineData("[Dark Soul Cave 2F (WD)]", "[Dark Soul Cave IF (WD)]")]
+    [InlineData("", "[Dark Soul Cave X]")]
+    [InlineData(null, "[Dark Soul Cave X]")]
+    [InlineData("[Dark Soul Cave X]", "")]
+    public void SameZone_NotTheSavedMap(string? read, string home) => Assert.False(WarText.SameZone(read, home));
+
+    [Fact]
+    public void TeleportListEntries_TheBracketLinesUnderTheTitle()
+    {
+        // 1920x1080, the lod_no_entries frame: TELEPORT SCROLL: 847-1070 x 168-190, the entries centred under it.
+        var title = new PixelRect(847, 168, 223, 22);
+        var lines = new[]
+        {
+            L("[PvP] (Snake) iMstrG [Cape Box].", 833, 110, 252, 18),   // chat line above the window
+            L("TELEPORT SCROLL:", 847, 168, 223, 22),
+            L("2 / 3", 940, 248, 38, 16),
+            L("[Bohai Outpost (Adept)]", 864, 290, 189, 18),
+            L("[ATTR Dungeon 5 (B.Dragon)]", 843, 399, 232, 18),
+            L("[Maya Cliff]", 914, 436, 89, 18),
+            L("[Vice Guild Master] THEOS", 450, 268, 206, 18),          // a name tag left of the window
+        };
+
+        var entries = WarText.TeleportListEntries(lines, title);
+
+        Assert.Equal(["[Bohai Outpost (Adept)]", "[ATTR Dungeon 5 (B.Dragon)]", "[Maya Cliff]"], entries.Select(e => e.Text));
+    }
+
+    [Theory]
+    [InlineData("Goblin Elite 145 25", "Goblin Elite", "Goblin Elite")]
+    [InlineData("o Goblin Elite 145 25", "Goblin Elite", "Goblin Elite")]       // the row's green marker read as a letter
+    [InlineData("■ Goblin Elite 145 25 >", "Goblin Elite", "Goblin Elite")]
+    [InlineData("Goblin Elite 145", "'Goblin Elite.", "Goblin Elite")]          // stray characters of the target bar read
+    [InlineData("Goblin Elite 145 25", "Gobiin Elite", "Goblin Elite")]         // the list's spelling wins over an OCR slip
+    [InlineData("Goblin Elite.", "Goblin Elite", "Goblin Elite")]
+    [InlineData("Spectral", "Spectral", "Spectral")]
+    [InlineData("Red Mandolin Maiden 145 25", "Red Mandolin Maiden", "Red Mandolin Maiden")]
+    [InlineData("Bandit (Elite) 120 4", "Bandit (Elite)", "Bandit (Elite)")]
+    [InlineData("S undersword", "Sundersword", "S undersword")]                // a real 1024x768 read: the split stays (later checks normalise)
+    public void MonsterNameFromListLine_TheListsSpellingOfTheName(string line, string target, string expected)
+        => Assert.Equal(expected, WarText.MonsterNameFromListLine(line, target));
+
+    [Theory]
+    [InlineData("145 25", "Goblin Elite")]
+    [InlineData("Sacred Sky Lord 145 3", "Goblin Elite")]
+    [InlineData("", "Goblin Elite")]
+    [InlineData("Goblin Elite 145", "")]
+    public void MonsterNameFromListLine_NothingLikeTheTargetIsNull(string line, string target)
+        => Assert.Null(WarText.MonsterNameFromListLine(line, target));
 }

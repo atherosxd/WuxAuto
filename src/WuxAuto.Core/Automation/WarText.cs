@@ -262,6 +262,99 @@ public static class WarText
         return best;
     }
 
+    /// <summary>The teleport scroll window's title ("TELEPORT SCROLL:", the game's capitals).</summary>
+    public const string TeleportScrollTitle = "TELEPORT SCROLL";
+
+    /// <summary>
+    /// A minimap title read (<paramref name="readTitle"/>) names the saved map <paramref name="home"/> and no other:
+    /// a read ending in ']' is complete and must equal it (normalised); any other read is cut at the panel's edge
+    /// (or its ']' was not read) and must be the start of it, at least 10 letters long, or all of it. "[Dark Soul
+    /// Cave IX]" never confirms "[Dark Soul Cave X]", nor the other way round - the 10-letter run of
+    /// <c>ZoneMatches</c> would.
+    /// </summary>
+    public static bool SameZone(string? readTitle, string home)
+    {
+        if (string.IsNullOrWhiteSpace(readTitle))
+            return false;
+
+        string r = TextMatcher.Normalize(readTitle);
+        string h = TextMatcher.Normalize(home);
+        if (r.Length == 0 || h.Length == 0)
+            return false;
+        if (r == h)
+            return true;
+
+        return !readTitle.TrimEnd().EndsWith(']') && r.Length >= 10 && h.StartsWith(r, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// The destinations of the open teleport list: the lines starting with '[' below the window's
+    /// <paramref name="title"/> (<see cref="TeleportScrollTitle"/>) whose centre is within a title width of the title's
+    /// (the entries are centred under it) - chat lines above the window and name tags beside it are not entries.
+    /// Top to bottom. On 12 saved frames with the list open (1024x768 to 2048x1152) every entry read was kept.
+    /// </summary>
+    public static IReadOnlyList<(string Text, PixelRect Bounds)> TeleportListEntries(IReadOnlyList<(string Text, PixelRect Bounds)> lines, PixelRect title)
+        => lines.Where(l => l.Text.TrimStart().StartsWith('[')
+                            && l.Bounds.Y >= title.Bottom
+                            && Math.Abs(l.Bounds.CenterX - title.CenterX) <= title.Width)
+            .OrderBy(l => l.Bounds.Y)
+            .Select(l => (l.Text.Trim(), l.Bounds))
+            .ToList();
+
+    /// <summary>
+    /// The map list's spelling of the targeted monster: of the words of the list's OCR line
+    /// (<paramref name="listLine"/>, e.g. "o Goblin Elite 145 25" - the row's marker, the name, Lv and Spawns), the run
+    /// that reads most like <paramref name="targetName"/> (the target bar's read, which may carry stray characters). A
+    /// run starts and ends on a word with a letter, so the number columns are left out; punctuation at its ends goes
+    /// (a closing ')' stays when the name has a '('); ties go to the run with fewer words. Null when no run is at least
+    /// 0.72 similar (<see cref="TextMatcher.Similarity"/>).
+    /// </summary>
+    public static string? MonsterNameFromListLine(string listLine, string targetName)
+    {
+        if (string.IsNullOrWhiteSpace(listLine) || TextMatcher.Normalize(targetName).Length == 0)
+            return null;
+
+        string[] words = listLine.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries);
+        string? best = null;
+        double bestScore = 0;
+        int bestWords = int.MaxValue;
+        for (int first = 0; first < words.Length; first++)
+        {
+            if (!words[first].Any(char.IsLetter))
+                continue;
+
+            for (int last = first; last < words.Length; last++)
+            {
+                if (!words[last].Any(char.IsLetter))
+                    continue;
+
+                string name = TrimName(string.Join(' ', words[first..(last + 1)]));
+                double score = TextMatcher.Similarity(name, targetName);
+                int count = last - first + 1;
+                if (score > bestScore || (score == bestScore && count < bestWords))
+                {
+                    best = name;
+                    bestScore = score;
+                    bestWords = count;
+                }
+            }
+        }
+
+        return bestScore >= 0.72 ? best : null;
+    }
+
+    /// <summary>A name without the punctuation at its ends; a closing ')' stays when the name has a '('.</summary>
+    static string TrimName(string name)
+    {
+        bool keepParen = name.Contains('(');
+        int start = 0, end = name.Length;
+        while (start < end && !char.IsLetterOrDigit(name[start]))
+            start++;
+        while (end > start && !char.IsLetterOrDigit(name[end - 1]) && !(keepParen && name[end - 1] == ')'))
+            end--;
+        return name[start..end];
+    }
+
     static readonly Regex HpOcrO = new(@"[Oo](?=[0-9/Oo])|(?<=[0-9/])[Oo]", RegexOptions.Compiled);
     static readonly Regex HpPair = new(@"^\D{0,2}(\d{1,7})/(\d{2,7})\D{0,2}$", RegexOptions.Compiled);
     static readonly Regex NumbersLine = new(@"\d+\s*/\s*\d+", RegexOptions.Compiled);
