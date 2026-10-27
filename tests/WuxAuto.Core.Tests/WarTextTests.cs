@@ -76,6 +76,31 @@ public class WarTextTests
         Assert.True(amb);
     }
 
+    [Theory]
+    [InlineData("[Dark Soul Cave", "[Dark Soul Cave I]", "[Dark Soul Cave II]")]
+    [InlineData("[Dark Soul Ca", "[Dark Soul Cave I]", "[Dark Soul Cave II]")]
+    [InlineData("[Dark Soul Cave", "[Dark Soul Cave]", "[Dark Soul Cave X]")]
+    public void BestListEntry_PurePrefixOfTwoEntriesIsAmbiguous(string title, string a, string b)
+    {
+        WarText.BestListEntry(title, [a, b], out bool amb);
+        Assert.True(amb);
+    }
+
+    [Fact]
+    public void BestListEntry_CompleteTitleWinsOverLongerEntry()
+    {
+        Assert.Equal("[Dark Soul Cave]", WarText.BestListEntry("[Dark Soul Cave]", ["[Dark Soul Cave]", "[Dark Soul Cave X]"], out bool amb));
+        Assert.False(amb);
+    }
+
+    [Fact]
+    public void FindWarRow_NoticeLineBeforeTheRealRowIsSkipped()
+    {
+        var lines = new[] { L("[Bohai Outpost (Adept)] [10] minute(s) to opening of the entrance", 20, 400, 500),
+                            L("Bohai Outpost (Adept)", 448, 241), L("00:04:25", 704, 241, 68) };
+        Assert.Equal(new WarCountdown(TimeSpan.FromSeconds(265), false), WarText.FindWarRow(lines, "Bohai Outpost (Adept)"));
+    }
+
     [Fact]
     public void BestListEntry_NothingCloseIsNull()
         => Assert.Null(WarText.BestListEntry("[Piercing City]", ["[Dark Soul Cave]", "[Maya Cliff]"], out _));

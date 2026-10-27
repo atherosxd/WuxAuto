@@ -61,36 +61,32 @@ public static class WarText
         if (wanted.Length == 0)
             return null;
 
-        int rowIndex = -1;
-        for (int i = 0; i < lines.Count; i++)
+        // Every row-like line is tried in order: the "[Bohai Outpost (Adept)] [10] minute(s) to opening"
+        // notice matches the row text too but carries no time, and must not hide the real row.
+        for (int rowIndex = 0; rowIndex < lines.Count; rowIndex++)
         {
-            string normalized = TextMatcher.Normalize(lines[i].Text);
-            if (normalized.Contains(wanted, StringComparison.Ordinal)
-                || TextMatcher.Similarity(lines[i].Text, rowText) >= 0.80)
+            string normalized = TextMatcher.Normalize(lines[rowIndex].Text);
+            if (!normalized.Contains(wanted, StringComparison.Ordinal)
+                && TextMatcher.Similarity(lines[rowIndex].Text, rowText) < 0.80)
+                continue;
+
+            var (rowLine, rowBounds) = lines[rowIndex];
+            var merged = Decide(rowLine);
+            if (merged is not null)
+                return merged;
+
+            int self = rowIndex;
+            var sameRow = lines
+                .Where((l, i) => i != self
+                    && Math.Abs(l.Bounds.CenterY - rowBounds.CenterY) <= rowBounds.Height
+                    && l.Bounds.X >= rowBounds.Right)
+                .OrderBy(l => l.Bounds.X);
+            foreach (var (text, _) in sameRow)
             {
-                rowIndex = i;
-                break;
+                var decided = Decide(text);
+                if (decided is not null)
+                    return decided;
             }
-        }
-
-        if (rowIndex < 0)
-            return null;
-
-        var (rowLine, rowBounds) = lines[rowIndex];
-        var merged = Decide(rowLine);
-        if (merged is not null)
-            return merged;
-
-        var sameRow = lines
-            .Where((l, i) => i != rowIndex
-                && Math.Abs(l.Bounds.CenterY - rowBounds.CenterY) <= rowBounds.Height
-                && l.Bounds.X >= rowBounds.Right)
-            .OrderBy(l => l.Bounds.X);
-        foreach (var (text, _) in sameRow)
-        {
-            var decided = Decide(text);
-            if (decided is not null)
-                return decided;
         }
 
         return null;
@@ -116,9 +112,13 @@ public static class WarText
     }
 
     /// <summary>
-    /// The teleport-list entry for the zone named by the (cut-off) minimap title: the longest common
-    /// prefix wins, scored against the longer of the two. <paramref name="ambiguous"/> is true when a
-    /// second entry scores within 0.05 of the best (the best is still returned); null when none is close.
+    /// The teleport-list entry for the zone named by the (cut-off) minimap title, never a guess between caves:
+    /// (1) a title ending in ']' is complete, and the entry with the same normalised text wins;
+    /// (2) otherwise the entries the title is a full prefix of: exactly one wins, two or more are
+    /// <paramref name="ambiguous"/> (the shortest is returned);
+    /// (3) otherwise the longest common prefix, scored against the longer of the two (prefix at least
+    /// min(10, title length), score at least 0.75), ambiguous when a second entry scores within 0.05.
+    /// Null when nothing is close.
     /// </summary>
     public static string? BestListEntry(string minimapTitle, IReadOnlyList<string> entries, out bool ambiguous)
     {
@@ -126,6 +126,26 @@ public static class WarText
         string t = TextMatcher.Normalize(minimapTitle);
         if (t.Length == 0)
             return null;
+
+        if (minimapTitle.TrimEnd().EndsWith(']'))
+        {
+            foreach (string entry in entries)
+            {
+                if (TextMatcher.Normalize(entry) == t)
+                    return entry;
+            }
+        }
+
+        var prefixed = entries
+            .Where(entry => TextMatcher.Normalize(entry).StartsWith(t, StringComparison.Ordinal))
+            .ToList();
+        if (prefixed.Count == 1)
+            return prefixed[0];
+        if (prefixed.Count > 1)
+        {
+            ambiguous = true;
+            return prefixed.OrderBy(entry => TextMatcher.Normalize(entry).Length).First();
+        }
 
         string? best = null;
         double bestScore = 0;
