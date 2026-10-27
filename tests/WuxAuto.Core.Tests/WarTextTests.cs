@@ -145,6 +145,10 @@ public class WarTextTests
         Assert.Null(WarText.FindTargetName([L("Ver: 0.2.492.1 — 10/24/2026 09:03:10", 1282, 20, 250), L("62ms — FPS: 41", 1610, 20, 120)]));
         Assert.Null(WarText.FindTargetName([L("[PvP] (Snake) iMstrG [Cape Box].", 833, 110, 250)]));
         Assert.Null(WarText.FindTargetName([L("297", 890, 66, 30), L("100/100", 880, 92, 60)]));
+        // Each junk line with a numbers line right under it: only the ':' / '.' rules keep it out.
+        Assert.Null(WarText.FindTargetName([L("Ver: 0.2.492.1 — 10/24/2026 09:03:10", 1282, 20, 250), L("100/100", 1300, 40, 60)]));
+        Assert.Null(WarText.FindTargetName([L("62ms — FPS: 41", 1610, 20, 120), L("100/100", 1620, 40, 60)]));
+        Assert.Null(WarText.FindTargetName([L("[PvP] (Snake) iMstrG [Cape Box].", 833, 110, 250), L("5/10", 900, 130, 40)]));
     }
 
     [Theory]
