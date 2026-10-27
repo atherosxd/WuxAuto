@@ -94,6 +94,18 @@ int lodPartsIndex = Array.IndexOf(args, "--lodparts");
 if (lodPartsIndex >= 0 && lodPartsIndex + 1 < args.Length)
     return FrameProbe.LodParts(args[lodPartsIndex + 1]);
 
+int parityIndex = Array.IndexOf(args, "--parity");
+if (parityIndex >= 0)
+{
+    if (parityIndex + 1 >= args.Length)
+    {
+        Console.WriteLine("usage: --parity <folder of frames>");
+        return 1;
+    }
+
+    return await ParityProbe.RunAsync(args[parityIndex + 1]);
+}
+
 int titlesIndex = Array.IndexOf(args, "--titles");
 if (titlesIndex >= 0 && titlesIndex + 1 < args.Length)
     return await FrameProbe.TitlesAsync(args[titlesIndex + 1]);

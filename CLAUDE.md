@@ -109,6 +109,9 @@ dotnet run --project .\tests\WuxAuto.SelfTest -- --alert
 
 # auto-confirm dialog (message line + OK button) for every PNG (absolute path; tests\frames holds the user's crop)
 dotnet run --project .\tests\WuxAuto.SelfTest -- --confirm "$env:LOCALAPPDATA\WuxAuto\debug"
+
+# M2 parity: every pilot detector on the frozen legacy vision (tests\...\Legacy) vs Core's, per frame (~46 min; differences=0 to pass)
+dotnet run --project .\tests\WuxAuto.SelfTest -- --parity "$env:LOCALAPPDATA\WuxAuto\parity-frames"
 ```
 
 `--do` frames land in `%TEMP%\wuxauto-step<N>-<verb>.png`. Check the frame before every click: an
