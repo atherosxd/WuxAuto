@@ -104,4 +104,68 @@ public class WarTextTests
     [Fact]
     public void BestListEntry_NothingCloseIsNull()
         => Assert.Null(WarText.BestListEntry("[Piercing City]", ["[Dark Soul Cave]", "[Maya Cliff]"], out _));
+
+    [Fact]
+    public void ParseHp_TopmostPairIsHp()
+    {
+        // 1920x1080 lod_no_entries frame: HP, MP, the item counter 10/10, the 0/3000 bar.
+        var lines = new[] { L("9990 / 11467", 195, 61), L("42833 / 42833", 184, 34), L("10/10", 500, 50, 40), L("0/3000", 328, 110, 52) };
+        Assert.Equal((42833, 42833), WarText.ParseHp(lines));
+    }
+
+    [Fact]
+    public void ParseHp_ZeroAndOcrO()
+    {
+        Assert.Equal((0, 42833), WarText.ParseHp([L("0 / 42833", 184, 34), L("9990 / 11467", 195, 61)]));
+        Assert.Equal((0, 42833), WarText.ParseHp([L("O / 42833", 184, 34)]));
+        Assert.Null(WarText.ParseHp([L("[The Labyrinth (Adep", 1000, 70)]));
+    }
+
+    [Theory]
+    [InlineData(0, 42833, 42833, true)]
+    [InlineData(0, 3000, 42833, false)]    // the bar under the HP bar
+    [InlineData(0, 11467, 42833, false)]   // MP read alone
+    [InlineData(120, 42833, 42833, false)]
+    [InlineData(0, 42833, null, true)]
+    [InlineData(0, 300, null, false)]
+    public void IsDeadRead(int cur, int max, int? aliveMax, bool dead) => Assert.Equal(dead, WarText.IsDeadRead((cur, max), aliveMax));
+
+    [Fact]
+    public void FindTargetName_NameAboveItsHpNumbers()
+    {
+        // 1273x1024 Laby frame: target bar "Spectral" with 9070530/47372000 under it, version line above.
+        var lines = new[] { L("Ver: 0.2.492.1 — 10/25/2026 02:29:00", 675, 20, 330), L("Spectral", 630, 64, 70),
+                            L("9070530/47372000", 590, 92, 140, 14), L("297", 890, 66, 30) };
+        Assert.Equal("Spectral", WarText.FindTargetName(lines));
+    }
+
+    [Fact]
+    public void FindTargetName_NoticesAndVersionLineAreNotTargets()
+    {
+        Assert.Null(WarText.FindTargetName([L("Ver: 0.2.492.1 — 10/24/2026 09:03:10", 1282, 20, 250), L("62ms — FPS: 41", 1610, 20, 120)]));
+        Assert.Null(WarText.FindTargetName([L("[PvP] (Snake) iMstrG [Cape Box].", 833, 110, 250)]));
+        Assert.Null(WarText.FindTargetName([L("297", 890, 66, 30), L("100/100", 880, 92, 60)]));
+    }
+
+    [Theory]
+    [InlineData("Arrived: Cave Bat", "Cave Bat", true)]
+    [InlineData("Arived: Cave Bat", "Cave Bat", true)]
+    [InlineData("Arrived: Dark Spider", "Cave Bat", false)]
+    [InlineData("Attack succeeded!Normal damage(+50)", "Cave Bat", false)]
+    public void IsArrivedLine(string line, string monster, bool expected) => Assert.Equal(expected, WarText.IsArrivedLine(line, "Arrived", monster));
+
+    [Theory]
+    [InlineData("[Auto buff scroll]  02.11.2026", true)]
+    [InlineData("[Auto buff scrol] 02.11.2026", true)]
+    [InlineData("AUTO BUFF", false)]
+    [InlineData("[Slayer Scroll] 171 (time(s))", false)]
+    public void IsAutoBuffScrollLine(string line, bool expected) => Assert.Equal(expected, WarText.IsAutoBuffScrollLine(line));
+
+    [Fact]
+    public void NewLines_IsAMultisetDifference()
+    {
+        Assert.Equal(new[] { "arrivedcavebat" }, WarText.NewLines(["a", "b"], ["a", "b", "arrivedcavebat"]));
+        Assert.Empty(WarText.NewLines(["arrivedcavebat", "a"], ["a", "arrivedcavebat"]));   // an old line moved up
+        Assert.Equal(new[] { "a" }, WarText.NewLines(["a"], ["a", "a"]));
+    }
 }

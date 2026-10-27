@@ -179,4 +179,140 @@ public static class WarText
         ambiguous = best is not null && second > 0 && bestScore - second <= 0.05;
         return best;
     }
+
+    static readonly Regex HpOcrO = new(@"[Oo](?=[0-9/Oo])|(?<=[0-9/])[Oo]", RegexOptions.Compiled);
+    static readonly Regex HpPair = new(@"^\D{0,2}(\d{1,7})/(\d{2,7})\D{0,2}$", RegexOptions.Compiled);
+    static readonly Regex NumbersLine = new(@"\d+\s*/\s*\d+", RegexOptions.Compiled);
+
+    /// <summary>
+    /// The player's HP read as "cur / max" from the OCR lines: the topmost pair (the HP bar sits above
+    /// the MP bar and the "0/3000" bar), max at least 100 and cur not above it. Null when none.
+    /// </summary>
+    public static (int Cur, int Max)? ParseHp(IReadOnlyList<(string Text, PixelRect Bounds)> lines)
+    {
+        (int Cur, int Max)? best = null;
+        int bestY = int.MaxValue;
+        foreach (var (text, bounds) in lines)
+        {
+            string compact = HpOcrO.Replace(text.Replace(" ", ""), "0");
+            var m = HpPair.Match(compact);
+            if (!m.Success)
+                continue;
+
+            int cur = int.Parse(m.Groups[1].Value);
+            int max = int.Parse(m.Groups[2].Value);
+            if (max < 100 || cur > max || bounds.Y >= bestY)
+                continue;
+
+            best = (cur, max);
+            bestY = bounds.Y;
+        }
+
+        return best;
+    }
+
+    /// <summary>
+    /// An HP read that means "dead": 0 out of the player's own maximum. The MP bar and the "0/3000"
+    /// bar also read 0 / N, so the maximum must match the one seen alive (within 1 %), or, with none
+    /// seen yet, be at least 1000.
+    /// </summary>
+    public static bool IsDeadRead((int Cur, int Max) hp, int? aliveMax)
+    {
+        if (hp.Cur != 0)
+            return false;
+        return aliveMax is int alive
+            ? Math.Abs(hp.Max - alive) <= alive / 100
+            : hp.Max >= 1000;
+    }
+
+    /// <summary>
+    /// The enemy named in the target box: a line of 3+ letters (no ':' and not a sentence ending in '.')
+    /// with an "N / M" numbers line right under it (within 3 name heights) that overlaps it
+    /// horizontally. The version/ping line, system notices and bare numbers never qualify.
+    /// Top to bottom, the first such name, trimmed. Null when none.
+    /// </summary>
+    public static string? FindTargetName(IReadOnlyList<(string Text, PixelRect Bounds)> lines)
+    {
+        foreach (var (text, bounds) in lines.OrderBy(l => l.Bounds.Y))
+        {
+            string trimmed = text.Trim();
+            if (trimmed.Contains(':') || trimmed.EndsWith('.'))
+                continue;
+            if (TextMatcher.Normalize(trimmed).Count(char.IsLetter) < 3)
+                continue;
+
+            bool hasNumbers = lines.Any(n =>
+                NumbersLine.IsMatch(n.Text)
+                && n.Bounds.Y > bounds.Y
+                && n.Bounds.Y - bounds.Bottom <= 3 * bounds.Height
+                && n.Bounds.X < bounds.Right && n.Bounds.Right > bounds.X);
+            if (hasNumbers)
+                return trimmed;
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// The combat-log line "Arrived: &lt;monster&gt;": the word (up to 2 characters in, one letter off, so
+    /// "Arived" passes) followed by the home monster's name (contained, or at least 0.80 similar).
+    /// An empty monster accepts any rest.
+    /// </summary>
+    public static bool IsArrivedLine(string line, string arrivedText, string monster)
+    {
+        string a = TextMatcher.Normalize(arrivedText);
+        string n = TextMatcher.Normalize(line);
+        string mon = TextMatcher.Normalize(monster);
+        if (a.Length == 0)
+            return false;
+
+        for (int start = 0; start <= 2; start++)
+        {
+            for (int len = a.Length - 1; len <= a.Length + 1; len++)
+            {
+                if (len < 1 || start + len > n.Length)
+                    continue;
+                if (TextMatcher.Levenshtein(n.Substring(start, len), a) > 1)
+                    continue;
+
+                string rest = n[(start + len)..];
+                if (mon.Length == 0
+                    || rest.Contains(mon, StringComparison.Ordinal)
+                    || TextMatcher.Similarity(rest, mon) >= 0.80)
+                    return true;
+            }
+        }
+
+        return false;
+    }
+
+    /// <summary>The item line "[Auto buff scroll] dd.mm.yyyy" (the autobuff scroll's remaining time).</summary>
+    public static bool IsAutoBuffScrollLine(string line)
+    {
+        string n = TextMatcher.Normalize(line);
+        int i = n.IndexOf("autobuff", StringComparison.Ordinal);
+        return i >= 0 && n.IndexOf("scro", i + "autobuff".Length, StringComparison.Ordinal) >= 0;
+    }
+
+    /// <summary>
+    /// The lines of <paramref name="after"/> not used up by an equal line of <paramref name="before"/>
+    /// (counted per string), in <paramref name="after"/>'s order. An old log line that only moved up is not new.
+    /// </summary>
+    public static IReadOnlyList<string> NewLines(IReadOnlyList<string> before, IReadOnlyList<string> after)
+    {
+        var left = new Dictionary<string, int>(StringComparer.Ordinal);
+        foreach (string b in before)
+            left[b] = left.GetValueOrDefault(b) + 1;
+
+        var result = new List<string>();
+        foreach (string a in after)
+        {
+            if (left.GetValueOrDefault(a) > 0)
+                left[a]--;
+            else
+                result.Add(a);
+        }
+
+        return result;
+    }
 }
