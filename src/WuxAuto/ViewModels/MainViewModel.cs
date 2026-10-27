@@ -321,30 +321,111 @@ public partial class MainViewModel : ObservableObject, IAsyncDisposable
     {
         var time = DateTime.Now;
         LastKillText = $"{time:HH:mm:ss} {what} - check the loot";
-        Alert(what, time, test: false);
+        _ = AlertAsync(what, time, test: false);
     }
 
     /// <summary>"Test alert": the chime and the notification as on a kill, so the sound can be checked on this PC.</summary>
     [RelayCommand]
-    private void TestKillAlert()
+    private Task TestKillAlert()
     {
         var sequence = Settings.Sequence;
         if (!sequence.KillChime && !sequence.KillNotification)
         {
             AppendLog(new LogEntry(LogLevel.Warning, "Kill alert test: 'Kill chime' and 'Kill notification' are both off."));
+            return Task.CompletedTask;
+        }
+
+        return AlertAsync("Test", DateTime.Now, test: true);
+    }
+
+    private async Task AlertAsync(string what, DateTime time, bool test)
+    {
+        var sequence = Settings.Sequence;
+        // A sound file can take a moment to open the first time: the notification does not wait for it.
+        var chime = sequence.KillChime ? _killAlert.PlayChimeAsync(sequence.KillSound) : null;
+        if (sequence.KillNotification)
+            Report(_killAlert.Notify("WuxAuto: boss down", $"{what} - check the loot ({time:HH:mm})"), "notification", ref _notificationWarned, test);
+        if (chime != null)
+        {
+            string error = await chime;
+            Report(error, "chime", ref _chimeWarned, test);
+        }
+    }
+
+    /// <summary><c>Settings.Sequence.KillSound</c>, the kill chime's sound file, with change notification for the UI.</summary>
+    public string KillSound
+    {
+        get => Settings.Sequence.KillSound;
+        set
+        {
+            if (value == Settings.Sequence.KillSound)
+                return;
+
+            Settings.Sequence.KillSound = value;
+            OnPropertyChanged();
+            OnPropertyChanged(nameof(KillSoundName));
+            OnPropertyChanged(nameof(KillSoundPath));
+            OnPropertyChanged(nameof(HasKillSound));
+        }
+    }
+
+    /// <summary>What the kill chime plays, shown next to "Choose..." (checked when the window opens and on every change).</summary>
+    public string KillSoundName =>
+        HasKillSound ? Path.GetFileName(Settings.Sequence.KillSound) + (File.Exists(Settings.Sequence.KillSound) ? string.Empty : " (missing)")
+        : File.Exists(KillAlert.CustomChimeFile) ? $"{KillAlert.CustomChimeName} (templates folder)"
+        : "built-in chime";
+
+    /// <summary>The kill chime's sound file (tooltip of <see cref="KillSoundName"/>).</summary>
+    public string KillSoundPath =>
+        HasKillSound ? Settings.Sequence.KillSound
+        : File.Exists(KillAlert.CustomChimeFile) ? KillAlert.CustomChimeFile
+        : "The built-in three-note chime.";
+
+    /// <summary>A sound file was picked for the kill chime.</summary>
+    public bool HasKillSound => !string.IsNullOrEmpty(Settings.Sequence.KillSound);
+
+    /// <summary>
+    /// "Choose...": an MP3 or WAV for the kill chime (user, 2026-10-27). It is copied into the
+    /// sounds folder, checked, saved in the settings at once and played once so it can be heard.
+    /// A file that does not play leaves the current sound as it was.
+    /// </summary>
+    [RelayCommand]
+    private async Task ChooseKillSound()
+    {
+        var dialog = new Microsoft.Win32.OpenFileDialog
+        {
+            Title = "Kill chime sound",
+            Filter = "Sound files (*.mp3;*.wav)|*.mp3;*.wav",
+        };
+        if (dialog.ShowDialog() != true)
+            return;
+
+        string picked = Path.GetFileName(dialog.FileName);
+        var (file, length, error) = await KillAlert.ImportSoundAsync(dialog.FileName);
+        if (error.Length > 0)
+        {
+            AppendLog(new LogEntry(LogLevel.Warning, $"Kill chime sound: {picked} cannot be played ({error}) - the sound stays {KillSoundName}."));
             return;
         }
 
-        Alert("Test", DateTime.Now, test: true);
+        KillSound = file;
+        SettingsStore.Save(Settings);
+        AppendLog(new LogEntry(LogLevel.Success, $"Kill chime sound: {Path.GetFileName(file)} ({length.TotalSeconds:0.0} s), kept in {AppPaths.SoundsFolder}."));
+        if (length > TimeSpan.FromSeconds(10))
+            AppendLog(new LogEntry(LogLevel.Info, $"It plays in full on every kill ({length.TotalSeconds:0} s) - a short sound works best."));
+
+        string played = await _killAlert.PlayChimeAsync(file);
+        if (played.Length > 0)
+            AppendLog(new LogEntry(LogLevel.Warning, $"Kill chime: {played}"));
     }
 
-    private void Alert(string what, DateTime time, bool test)
+    /// <summary>"Default": back to the built-in chime (or chime.wav in the templates folder). The copy stays in the sounds folder.</summary>
+    [RelayCommand]
+    private void ResetKillSound()
     {
-        var sequence = Settings.Sequence;
-        if (sequence.KillChime)
-            Report(_killAlert.PlayChime(), "chime", ref _chimeWarned, test);
-        if (sequence.KillNotification)
-            Report(_killAlert.Notify("WuxAuto: boss down", $"{what} - check the loot ({time:HH:mm})"), "notification", ref _notificationWarned, test);
+        KillSound = string.Empty;
+        SettingsStore.Save(Settings);
+        AppendLog(new LogEntry(LogLevel.Info, $"Kill chime sound: {KillSoundName}."));
     }
 
     /// <summary>

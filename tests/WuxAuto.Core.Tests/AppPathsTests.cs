@@ -22,6 +22,34 @@ public class AppPathsTests : AppPathsScope
     }
 
     [Fact]
+    public void KillSound_IsSavedTrimmed_AndAMissingOrNullValueLoadsEmpty()
+    {
+        string root = Path.Combine(Path.GetTempPath(), "wux-core-" + Guid.NewGuid());
+        AppPaths.Configure(root, Path.Combine(root, "assets"));
+        try
+        {
+            Assert.Equal(Path.Combine(root, "sounds"), AppPaths.SoundsFolder);
+
+            var settings = new AppSettings();
+            Assert.Equal(string.Empty, settings.Sequence.KillSound);
+            settings.Sequence.KillSound = "  C:\\sounds\\boss down.mp3 ";
+            SettingsStore.Save(settings);
+            Assert.Equal("C:\\sounds\\boss down.mp3", SettingsStore.Load().Sequence.KillSound);
+
+            // An older file has no KillSound; a hand-edited one may say null.
+            File.WriteAllText(AppPaths.SettingsFile, File.ReadAllText(AppPaths.SettingsFile)
+                .Replace("\"KillSound\": \"C:\\\\sounds\\\\boss down.mp3\"", "\"KillSound\": null"));
+            Assert.Contains("\"KillSound\": null", File.ReadAllText(AppPaths.SettingsFile));
+            Assert.Equal(string.Empty, SettingsStore.Load().Sequence.KillSound);
+        }
+        finally
+        {
+            if (Directory.Exists(root))
+                Directory.Delete(root, true);
+        }
+    }
+
+    [Fact]
     public void Configure_WithoutAssetsFolder_KeepsTheBaseDirectoryDefault()
     {
         string root = TempRoot();

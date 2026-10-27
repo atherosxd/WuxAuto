@@ -438,10 +438,18 @@ public sealed class SequenceSettings
     /// <summary>
     /// Kill alert (user, 2026-10-26: friends run the pilot on a second PC and LOD does not always
     /// pick up every drop - a reminder to check): a chime when a Labyrinth boss dies (every stage)
-    /// and when an LOD kill's loot step ends. <c>KillAlert.CustomChimeName</c> (desktop project) in the
-    /// templates folder replaces the built-in chime. Check box "Kill chime".
+    /// and when an LOD kill's loot step ends. The sound is <see cref="KillSound"/>, else
+    /// <c>KillAlert.CustomChimeName</c> (desktop project) in the templates folder, else the built-in
+    /// chime. Check box "Kill chime".
     /// </summary>
     public bool KillChime { get; set; } = true;
+
+    /// <summary>
+    /// The kill chime's sound file, MP3 or WAV (user, 2026-10-27). Empty = the built-in chime.
+    /// Set with the "Choose..." button next to the check box, which copies the file into
+    /// <c>%LOCALAPPDATA%\WuxAuto\sounds</c> first, so it keeps playing after the original is moved.
+    /// </summary>
+    public string KillSound { get; set; } = string.Empty;
 
     /// <summary>The same moments as <see cref="KillChime"/>, as a Windows notification. Check box "Kill notification".</summary>
     public bool KillNotification { get; set; } = true;
@@ -785,7 +793,7 @@ public sealed class DungeonSettings
     public string SkillKey { get; set; } = "1";
 
     /// <summary>
-    /// Every manual skill press - Laby stage 5 (the skill spam and the manual attacks) and the LOD
+    /// Every manual skill press - Laby stage 5 (the held press and the manual attack taps) and the LOD
     /// skill spam - sends <see cref="SkillKey"/> and then Ctrl + <see cref="SkillKey"/>, e.g. 1 then
     /// Ctrl+1 (user, 2026-10-26: "when manually attacking couple it with ctrl + skill key"). With
     /// <see cref="LodSettings.HoldSkill"/> the held key is let go for a Ctrl + skill tap every
@@ -800,23 +808,33 @@ public sealed class DungeonSettings
     public bool WaypointWalkFallback { get; set; }
 
     /// <summary>
-    /// Once the boss is selected (magenta ring under it + its name, or a hit), press the skill key
-    /// this many times before turning the autohunt on (user: autohunt alone did not attack a
-    /// selected boss; 2026-10-26: at least 15). 0 = autohunt straight away.
+    /// Stage 5, the boss in view: after the held press (<see cref="HoldSkillMs"/>) tap the skill key
+    /// this many times before turning the autohunt on (user, 2026-10-27: "Attack Hold skill, then do
+    /// 10x attack (total 11)"; the autohunt alone did not attack the boss). 0 = autohunt straight away.
     /// </summary>
-    public int ManualAttacks { get; set; } = 15;
+    public int ManualAttacks { get; set; } = 10;
+
+    /// <summary>
+    /// Stage 5: the first manual attack holds the skill key down this long (user, 2026-10-27: the
+    /// character "didn't get near or inside the boss" with taps alone - a held skill keeps it running
+    /// at the target); stages 1-4 hold it this long before the autohunt (<see cref="HoldBeforeAutohunt"/>).
+    /// 0 = no hold: taps only on stage 5, J right after the spawn wait on stages 1-4. UI "Hold skill (ms)".
+    /// </summary>
+    public int HoldSkillMs { get; set; } = 3000;
+
+    /// <summary>
+    /// Stages 1-4: with the boss in view, hold the skill key (<see cref="HoldSkillMs"/>) once before
+    /// the autohunt goes on, then J and the select clicks (user, 2026-10-27: "on other stages, before
+    /// going autohunt, try to skill hold first"). Off = J right after the spawn wait, as before. UI
+    /// "Hold skill before autohunt (stages 1-4)".
+    /// </summary>
+    public bool HoldBeforeAutohunt { get; set; } = true;
 
     /// <summary>At least this long between two skill presses (user, 2026-10-26: 300 ms or more).</summary>
     public int ManualAttackIntervalMs { get; set; } = 300;
 
     /// <summary>After the last manual press: wait this long, then look for "Attack succeeded" (user: 500 ms).</summary>
     public int ManualAttackWaitMs { get; set; } = 500;
-
-    /// <summary>
-    /// Stage 5: a new "Attack succeeded" line must follow within this long of the autohunt going on,
-    /// or the autohunt is turned off again and the manual attacks repeat (user, 2026-10-26: 2 s).
-    /// </summary>
-    public int AutohuntConfirmMs { get; set; } = 2000;
 
     /// <summary>
     /// Stage 5, watching the boss with the autohunt on: no new "Attack succeeded" line for this long
