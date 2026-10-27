@@ -26,8 +26,8 @@ public sealed partial class AutomationPilot
     private int _warOtherZoneReads;        // reads of another zone since the last Bohai read
     private bool _warZoneHeld;             // the last title read was another zone: the phase holds
 
-    // Per Start (Start clears it): the HP maximum read while alive - a "0 / N" read is a death only with this N.
-    private int? _warAliveMax;
+    // Per Start (Start clears it): what the HP reads say - the maximum seen alive and the reads in a row (WarHpNext).
+    private WarHpWatch _warHp;
 
     // WarBuff.
     private int _warBuffStep;              // 0 autobuff known?, 1 ask the autohunt settings, 2 close them, 3 buff
@@ -37,6 +37,7 @@ public sealed partial class AutomationPilot
     private int _warHuntSettingsCloses;    // step 2: presses to close them
     private long _warHuntSettingsAt;       // steps 1 / 2: the last press
     private long _warBuffedAt;             // the last buff (TickCount64: buffs wear off in game time, in front or not)
+    private long? _warBuffsDroppedAt;      // the HP maximum fell (buffs gone) since the last buff: rebuff wanted from then
 
     // WarFight.
     private int _warFightStep;             // 0 Tab, 1 a target?, 2 Shura down, 3 Shura up, 4 attack
@@ -48,7 +49,6 @@ public sealed partial class AutomationPilot
 
     // The HP watch (WarFight, WarDead).
     private long _warHpReadAt;             // next HP read (TickCount64)
-    private int _warDeadReads;             // death reads in a row
     private long _warHpUnreadSince;        // war clock: HP unread since (0 = it reads)
     private bool _warHpUnreadWarned;
     private long _warDeadSince;            // WarDead: war clock at the death
@@ -60,8 +60,17 @@ public sealed partial class AutomationPilot
     /// <summary>HP unread this long (war clock) = a warning and <c>war_hp_unread</c>; the fight carries on as alive.</summary>
     internal const int WarHpUnreadMs = 10000;
 
-    /// <summary>Death reads in a row that make a death: one alone may be a misread.</summary>
-    internal const int WarDeadReadsNeeded = 2;
+    /// <summary>HP reads in a row behind every verdict (dead, back on our feet, buffs gone): one alone may be a misread.</summary>
+    internal const int WarHpReadsInARow = 2;
+
+    /// <summary>A rebuff this overdue is not left waiting for the Tab point: it interrupts the attack (step 4).</summary>
+    internal const int WarRebuffOverdueMs = 30000;
+
+    /// <summary>
+    /// Presses of the autohunt settings key while nothing reads: right after the Settings visit an unreadable open window
+    /// is likelier than an eaten press, and an even count of the toggle leaves it as it was.
+    /// </summary>
+    private const int WarHuntSettingsPresses = 2;
 
     /// <summary>
     /// A clock that only runs while the game is in front: behind another window nothing is read and nothing is sent, so
@@ -114,20 +123,115 @@ public sealed partial class AutomationPilot
         return shown >= 3 ? WarItemList.NoAutoBuff : WarItemList.Unread;
     }
 
-    /// <summary>The buffs are renewed every <paramref name="buffEveryMs"/>, only at the fight cycle's Tab (step 0).</summary>
-    internal static bool WarRebuffDue(long now, long buffedAt, int buffEveryMs, int fightStep)
-        => fightStep == 0 && now - buffedAt >= buffEveryMs;
-
-    /// <summary>The HP maximum seen alive after one more read: a read with HP above 0 sets it (buffs move it).</summary>
-    internal static int? WarAliveMax(int? aliveMax, (int Cur, int Max)? hp) => hp is { Cur: > 0 } read ? read.Max : aliveMax;
+    /// <summary>
+    /// When a rebuff is wanted: <paramref name="buffEveryMs"/> after the last buff, or from the moment the buffs were seen
+    /// gone (<paramref name="droppedAt"/>), whichever comes first.
+    /// </summary>
+    internal static long WarRebuffWantedAt(long buffedAt, int buffEveryMs, long? droppedAt)
+        => Math.Min(buffedAt + buffEveryMs, droppedAt ?? long.MaxValue);
 
     /// <summary>
-    /// Death reads in a row after one more HP read: a death read (<see cref="WarText.IsDeadRead"/> against the maximum seen
-    /// alive) adds one; any other read - HP above 0, or another "0 / N" line such as the bar under the HP bar - starts
-    /// again at 0; no read says neither and leaves the count. <see cref="WarDeadReadsNeeded"/> in a row = dead.
+    /// Rebuff now: at the fight cycle's Tab (step 0) once it is wanted; in the attack (step 4) only once it is
+    /// <see cref="WarRebuffOverdueMs"/> overdue - a target that keeps reading (one out of reach) would keep the attack going
+    /// and the buffs would never come; never between Tab and the attack (steps 1-3, the Shura hold).
     /// </summary>
-    internal static int WarDeadReads(int deadReads, (int Cur, int Max)? hp, int? aliveMax)
-        => hp is not { } read ? deadReads : WarText.IsDeadRead(read, aliveMax) ? deadReads + 1 : 0;
+    internal static bool WarRebuffDue(long now, long wantedAt, int fightStep)
+        => now >= wantedAt && (fightStep == 0 || (fightStep == 4 && now - wantedAt >= WarRebuffOverdueMs));
+
+    /// <summary>
+    /// What the HP reads so far say. <c>AliveMax</c>: the player's HP maximum (<see cref="WarLearnAliveMax"/>);
+    /// <c>PendingMax</c>: the last read that may set it, waiting for a second; the reads in a row behind each verdict; and
+    /// whether a fall of the maximum (buffs gone) may be reported - armed by a read at the maximum, spent by a report.
+    /// </summary>
+    internal readonly record struct WarHpWatch(int? AliveMax, int? PendingMax, int DeadReads, int ReviveReads, int LowReads, bool DropArmed);
+
+    /// <summary>What one HP read decides: nothing, dead, back on our feet (while dead), or the buffs gone (alive).</summary>
+    internal enum WarHpVerdict
+    {
+        None,
+        Dead,
+        Revived,
+        BuffsDropped,
+    }
+
+    /// <summary>
+    /// The player's HP maximum after one more read. A read can set it when the character is alive (HP above 0), its maximum
+    /// is 1000 or more and - with a maximum known - not below it (buffs raise it; it is never lowered: buffs gone or the MP
+    /// line read in place of the HP line both read lower). Two such reads in a row that agree within 1 % set it (the later
+    /// one); anything else read in between starts the pair again, an unread does not.
+    /// </summary>
+    internal static (int? AliveMax, int? PendingMax) WarLearnAliveMax(int? aliveMax, int? pendingMax, (int Cur, int Max) read)
+    {
+        bool candidate = read.Cur > 0 && read.Max >= 1000 && (aliveMax is not int known || read.Max >= known);
+        if (!candidate)
+            return (aliveMax, null);
+
+        bool agree = pendingMax is int pending && Math.Abs((long)pending - read.Max) * 100 <= Math.Max(pending, read.Max);
+        return (agree ? read.Max : aliveMax, read.Max);
+    }
+
+    /// <summary>
+    /// One HP read through the watch (<paramref name="hp"/> null = unread: it says nothing and breaks no row). The maximum
+    /// is learnt first (<see cref="WarLearnAliveMax"/>), then the read is judged against it - "the player's maximum" is
+    /// <see cref="WarText.IsPlayerHpMax"/>, half of it to 5 % over:
+    /// <list type="bullet">
+    /// <item>dead: <see cref="WarText.IsDeadRead"/> <see cref="WarHpReadsInARow"/> times in a row;</item>
+    /// <item>back on our feet (only while <paramref name="dead"/>): HP above 0 out of the player's maximum, as many times;</item>
+    /// <item>buffs gone (alive): HP above 0 out of the player's maximum but under 9/10 of it, as many times - once per fall,
+    /// armed again by a read at 9/10 or more. It also catches a quick respawn that was never seen as a death.</item>
+    /// </list>
+    /// The MP line ("8000/11467") and the "1500/3000" bar of a 42833 HP character are none of these.
+    /// </summary>
+    internal static (WarHpWatch Watch, WarHpVerdict Verdict) WarHpNext(WarHpWatch watch, (int Cur, int Max)? hp, bool dead)
+    {
+        if (hp is not { } read)
+            return (watch, WarHpVerdict.None);
+
+        var (aliveMax, pendingMax) = WarLearnAliveMax(watch.AliveMax, watch.PendingMax, read);
+        bool alive = read.Cur > 0 && WarText.IsPlayerHpMax(read.Max, aliveMax);
+        bool low = alive && aliveMax is int max && 10L * read.Max < 9L * max;
+        var next = new WarHpWatch(
+            aliveMax,
+            pendingMax,
+            DeadReads: WarText.IsDeadRead(read, aliveMax) ? watch.DeadReads + 1 : 0,
+            ReviveReads: alive ? watch.ReviveReads + 1 : 0,
+            LowReads: low ? watch.LowReads + 1 : 0,
+            DropArmed: watch.DropArmed || (alive && aliveMax != null && !low));
+
+        if (dead)
+            return (next, next.ReviveReads >= WarHpReadsInARow ? WarHpVerdict.Revived : WarHpVerdict.None);
+        if (next.DeadReads >= WarHpReadsInARow)
+            return (next, WarHpVerdict.Dead);
+        if (next.LowReads >= WarHpReadsInARow && next.DropArmed)
+            return (next with { DropArmed = false }, WarHpVerdict.BuffsDropped);
+        return (next, WarHpVerdict.None);
+    }
+
+    /// <summary>A key Auto War presses: the setting's name (as the settings panel shows it), its value, and whether it must be set.</summary>
+    internal readonly record struct WarKey(string Setting, string Key, bool Required);
+
+    /// <summary>
+    /// What is wrong with the keys, null when nothing: a required key left empty, or a key name the platform cannot press
+    /// (<paramref name="isKnown"/>) - such a key is refused on every press, which reads like the game being behind another
+    /// window, so an unmappable Shura key would mean no attack in the whole war.
+    /// </summary>
+    internal static string? WarKeyProblem(IEnumerable<WarKey> keys, Func<string, bool> isKnown)
+    {
+        foreach (var (setting, key, required) in keys)
+        {
+            if (string.IsNullOrWhiteSpace(key))
+            {
+                if (required)
+                    return $"No key is set for '{setting}' - Auto War presses it; set it and press Start again";
+                continue;
+            }
+
+            if (!isKnown(key))
+                return $"'{key}' ('{setting}') is not a key the pilot can press - fix it and press Start again";
+        }
+
+        return null;
+    }
 
     /// <summary>The target counts as gone after <paramref name="targetGoneMs"/> without a sight, on the war clock.</summary>
     internal static bool WarTargetGone(long clockNow, long seenAt, int targetGoneMs) => clockNow - seenAt >= targetGoneMs;
@@ -309,7 +413,7 @@ public sealed partial class AutomationPilot
         if (_warTimerStep == 4)
             return;     // clicked an X (or the click waits for the game): look again on a fresh frame
 
-        var hp = await ReadWarHpAsync(frame);
+        var (_, hp) = await ReadWarHpAsync(frame);
         Log?.Invoke(LogLevel.Info, hp is { } read
             ? $"HP {read.Cur} / {read.Max}; setting TAB target to '{war.TabTargetOption}'."
             : $"HP not read; setting TAB target to '{war.TabTargetOption}'.");
@@ -405,10 +509,10 @@ public sealed partial class AutomationPilot
     }
 
     /// <summary>
-    /// Step 1: the autohunt settings key (S, at most 3 presses, 2.5 s apart): the AUTO BUFF dialog shows - autobuff; its X
-    /// (a bright blob right of the title, never a guessed point) is clicked, or with no X the settings are closed with S
-    /// alone. The settings without the dialog - no autobuff. Nothing after 3 presses - no autobuff, a warning and
-    /// <c>war_autobuff_unread</c>. A dry run presses nothing and buffs by the icons.
+    /// Step 1: the autohunt settings key (S, at most <see cref="WarHuntSettingsPresses"/> presses, 2.5 s apart): the AUTO
+    /// BUFF dialog shows - autobuff; its X (a bright blob right of the title, never a guessed point) is clicked, or with no X
+    /// the settings are closed with S alone. The settings without the dialog - no autobuff. Nothing read after the last
+    /// press - no autobuff, a warning and <c>war_autobuff_unread</c>. A dry run presses nothing and buffs by the icons.
     /// </summary>
     private async Task TickWarAskAutoBuffAsync(Mat frame)
     {
@@ -463,10 +567,10 @@ public sealed partial class AutomationPilot
             return;
         }
 
-        if (_warHuntSettingsPresses >= 3)
+        if (_warHuntSettingsPresses >= WarHuntSettingsPresses)
         {
             _warHasAutoBuff = false;
-            Log?.Invoke(LogLevel.Warning, $"Neither the AUTO BUFF dialog nor the autohunt settings showed after '{key}' x3 - buffing by the icons.");
+            Log?.Invoke(LogLevel.Warning, $"Neither the AUTO BUFF dialog nor the autohunt settings read after '{key}' x{_warHuntSettingsPresses} - buffing by the icons.");
             WarShot(frame, "war_autobuff_unread");
             _warBuffStep = 3;
             return;
@@ -481,7 +585,7 @@ public sealed partial class AutomationPilot
 
         _warHuntSettingsPresses++;
         _warHuntSettingsAt = now;
-        Log?.Invoke(LogLevel.Info, $"Pressed '{key}' for the autohunt settings - does the AUTO BUFF dialog show? ({_warHuntSettingsPresses}/3)");
+        Log?.Invoke(LogLevel.Info, $"Pressed '{key}' for the autohunt settings - does the AUTO BUFF dialog show? ({_warHuntSettingsPresses}/{WarHuntSettingsPresses})");
         _waitUntil = now + 1200;
     }
 
@@ -494,39 +598,42 @@ public sealed partial class AutomationPilot
     }
 
     /// <summary>
-    /// Step 2: the autohunt settings still open - the "Regular War" label shows, or (before any press here) the AUTO BUFF
-    /// dialog, which may cover the list - get the key again, one press per 1.2 s, at most 2, each followed by a look on a
-    /// fresh frame. After a press only the label counts: the key is a toggle, and a press for a dialog left on its own
-    /// would open the settings again. Then the buffs, with a warning when something is left open.
+    /// Step 2: step 1 has seen the autohunt settings open (the AUTO BUFF dialog or the "Regular War" label), so the first
+    /// press of the key goes out without a read - one OCR miss of a label never seen live must not leave the window open.
+    /// After it the label decides, on a fresh frame 1.2 s later: still there - one more press (at most 2), then a warning;
+    /// gone - the buffs. The AUTO BUFF dialog alone does not get a second press: the key is a toggle, and a press for a
+    /// dialog left on its own would open the settings again.
     /// </summary>
     private async Task TickWarCloseHuntSettingsAsync(Mat frame)
     {
         long now = Environment.TickCount64;
         string key = _settings.Sequence.AutohuntSettingsKey;
-        var (title, regular) = await ReadHuntSettingsAsync(frame);
-        bool open = regular || (title != null && _warHuntSettingsCloses == 0);
-        if (!open)
+        if (_warHuntSettingsCloses > 0)
         {
-            if (title != null)
+            var (title, regular) = await ReadHuntSettingsAsync(frame);
+            if (!regular)
             {
-                Log?.Invoke(LogLevel.Warning, $"The AUTO BUFF dialog is still up after '{key}' - leaving it.");
+                if (title != null)
+                {
+                    Log?.Invoke(LogLevel.Warning, $"The AUTO BUFF dialog is still up after '{key}' - leaving it.");
+                    WarShot(frame, "war_autohunt_open");
+                }
+                else
+                {
+                    Log?.Invoke(LogLevel.Info, "The autohunt settings are closed.");
+                }
+
+                _warBuffStep = 3;
+                return;
+            }
+
+            if (_warHuntSettingsCloses >= 2)
+            {
+                Log?.Invoke(LogLevel.Warning, $"The autohunt settings are still open after '{key}' x2 - leaving them.");
                 WarShot(frame, "war_autohunt_open");
+                _warBuffStep = 3;
+                return;
             }
-            else if (_warHuntSettingsCloses > 0)
-            {
-                Log?.Invoke(LogLevel.Info, "The autohunt settings are closed.");
-            }
-
-            _warBuffStep = 3;
-            return;
-        }
-
-        if (_warHuntSettingsCloses >= 2)
-        {
-            Log?.Invoke(LogLevel.Warning, $"The autohunt settings are still open after '{key}' x2 - leaving them.");
-            WarShot(frame, "war_autohunt_open");
-            _warBuffStep = 3;
-            return;
         }
 
         if (now - _warHuntSettingsAt < 1200)
@@ -598,7 +705,7 @@ public sealed partial class AutomationPilot
             }
 
             _overlays.Add(new OverlayItem(hit.Bounds, $"{icon} {hit.Score:0.00}", OverlayColor.Green));
-            if (!WarClick(hit.Bounds, $"the buff icon '{icon}' ({hit.Score:0.00})"))
+            if (!WarClick(hit.Bounds, $"the buff icon '{icon}' ({hit.Score:0.00})", LogLevel.Trace))
                 return;     // the game is not in front: find it again on the next frame
 
             _warBuffIcon++;
@@ -613,10 +720,11 @@ public sealed partial class AutomationPilot
         await FinishWarBuffAsync(frame, now);
     }
 
-    /// <summary>The buffs are done: the rebuff timer starts, one HP read (the alive maximum), then the fight from Tab.</summary>
+    /// <summary>The buffs are done: the rebuff timer starts again, one HP read (the alive maximum), then the fight from Tab.</summary>
     private async Task FinishWarBuffAsync(Mat frame, long now)
     {
         _warBuffedAt = now;
+        _warBuffsDroppedAt = null;
         _warBuffStep = 0;
         _warBuffIcon = 0;
         _warBuffClicks = 0;
@@ -636,13 +744,16 @@ public sealed partial class AutomationPilot
 
     // ---------------------------------------------------------------- fight
 
-    /// <summary>The fight cycle from Tab, with a fresh HP watch.</summary>
+    /// <summary>
+    /// The fight cycle from Tab, with fresh rows of HP reads (the maximum learnt so far is kept). The buffs-gone check waits
+    /// for a read at the maximum: buffs that did not take must not bring a rebuff after every rebuff.
+    /// </summary>
     private void BeginWarFight()
     {
         _warFightStep = 0;
         _warTabPolls = 0;
         _warHpReadAt = 0;
-        _warDeadReads = 0;
+        _warHp = _warHp with { DeadReads = 0, ReviveReads = 0, LowReads = 0, DropArmed = false };
         _warHpUnreadSince = 0;
         _warHpUnreadWarned = false;
         Advance(PilotPhase.WarFight, 300);
@@ -650,7 +761,8 @@ public sealed partial class AutomationPilot
 
     /// <summary>
     /// The fight (design §4.5), sub-steps of <c>_warFightStep</c>; first on every tick (after a Shura release, which keeps its
-    /// time) the zone check, the HP watch (two death reads in a row - dead) and, at the Tab point only, the rebuff timer.
+    /// time) the zone check, the HP watch (<see cref="WarHpNext"/>: dead, or the buffs gone) and the rebuff
+    /// (<see cref="WarRebuffDue"/>: at the Tab point, or 30 s overdue mid-attack).
     /// 0 Tab; 1 a target in the target box (a name or the chest)
     /// - the X buff, else Tab again 1 s later (before the war has started, "Gate is Open" is looked for on every 2nd read);
     /// 2 the Shura key goes down; 3 it goes up after <see cref="WarSettings.ShuraHoldMs"/>; 4 the skill until the target is
@@ -681,16 +793,27 @@ public sealed partial class AutomationPilot
         if (now >= _warHpReadAt)
         {
             _warHpReadAt = now + 1000;
-            if (await WatchWarHpAsync(frame, now) is { } dead)
+            var (verdict, hp) = await WatchWarHpAsync(frame, now);
+            if (verdict == WarHpVerdict.Dead && hp is { } dead)
             {
                 BeginWarDead(frame, dead);
                 return;
             }
+
+            if (verdict == WarHpVerdict.BuffsDropped && hp is { } low)
+            {
+                _warBuffsDroppedAt ??= now;
+                Log?.Invoke(LogLevel.Info, $"HP maximum {low.Max} of {_warHp.AliveMax} - the buffs are gone (or a death went unseen); rebuffing at the next Tab.");
+            }
         }
 
-        if (WarRebuffDue(now, _warBuffedAt, war.BuffEveryMs, _warFightStep))
+        long wanted = WarRebuffWantedAt(_warBuffedAt, war.BuffEveryMs, _warBuffsDroppedAt);
+        if (WarRebuffDue(now, wanted, _warFightStep))
         {
-            BeginWarRebuff($"{Clock(now - _warBuffedAt)} since the last buff", 300);
+            string why = _warBuffsDroppedAt == wanted ? "the buffs are gone" : $"{Clock(now - _warBuffedAt)} since the last buff";
+            if (_warFightStep == 4)
+                why += $", {Clock(now - wanted)} overdue - '{_warTarget}' still in the target box";
+            BeginWarRebuff(why, 300);   // Advance lets go of a held key
             return;
         }
 
@@ -750,14 +873,15 @@ public sealed partial class AutomationPilot
             _warTarget = name ?? "?";
             _warTargetSeenAt = _warClock.Now(now);
             _warTabPolls = 0;
-            Log?.Invoke(LogLevel.Info, $"{(name != null ? $"Target '{name}'" : "A target (chest icon, name unread)")} - X buff, Shura {war.ShuraHoldMs} ms, then the skill until it is gone.");
+            // Every cycle: Trace, so a war's hundreds of cycles stay out of the Info log.
+            Log?.Invoke(LogLevel.Trace, $"{(name != null ? $"Target '{name}'" : "A target (chest icon, name unread)")} - X buff, Shura {war.ShuraHoldMs} ms, then the skill until it is gone.");
 
             bool clicked = false;
             if (!string.IsNullOrWhiteSpace(war.XBuffIcon)
                 && _analyzer.FindSkillBarIcons(frame, [war.XBuffIcon], war.IconMatchScore)[0].Match is { } x)
             {
                 _overlays.Add(new OverlayItem(x.Bounds, $"{war.XBuffIcon} {x.Score:0.00}", OverlayColor.Green));
-                clicked = WarClick(x.Bounds, $"the X buff '{war.XBuffIcon}' ({x.Score:0.00})");
+                clicked = WarClick(x.Bounds, $"the X buff '{war.XBuffIcon}' ({x.Score:0.00})", LogLevel.Trace);
             }
 
             _warFightStep = 2;
@@ -886,32 +1010,30 @@ public sealed partial class AutomationPilot
 
     /// <summary>The status line in the fight: what it does, whether the war has started, and when the next rebuff is due.</summary>
     private string WarFightDetail(string what, long now)
-        => $"{what}{(_warStarted ? "" : " (war not started yet)")} - rebuff in {Clock(_warBuffedAt + _settings.War.BuffEveryMs - now)}";
+        => $"{what}{(_warStarted ? "" : " (war not started yet)")} - rebuff in {Clock(WarRebuffWantedAt(_warBuffedAt, _settings.War.BuffEveryMs, _warBuffsDroppedAt) - now)}";
 
     // ---------------------------------------------------------------- HP and death
 
-    /// <summary>One HP read (<see cref="ScreenAnalyzer.ReadPlayerHpAsync"/>); HP above 0 sets the alive maximum.</summary>
-    private async Task<(int Cur, int Max)?> ReadWarHpAsync(Mat frame)
+    /// <summary>One HP read (<see cref="ScreenAnalyzer.ReadPlayerHpAsync"/>) through the watch (<see cref="WarHpNext"/>): its verdict and the read.</summary>
+    private async Task<(WarHpVerdict Verdict, (int Cur, int Max)? Hp)> ReadWarHpAsync(Mat frame, bool dead = false)
     {
         var hp = await _analyzer.ReadPlayerHpAsync(frame);
-        _warAliveMax = WarAliveMax(_warAliveMax, hp);
-        return hp;
+        (_warHp, var verdict) = WarHpNext(_warHp, hp, dead);
+        return (verdict, hp);
     }
 
     /// <summary>
-    /// The fight's HP watch (design §4.6): the death read when <see cref="WarDeadReadsNeeded"/> came in a row, else null.
-    /// Unread for <see cref="WarHpUnreadMs"/> on the war clock: a warning and <c>war_hp_unread</c> once per unread spell,
-    /// and the fight goes on as alive.
+    /// The fight's HP read (design §4.6). Unread for <see cref="WarHpUnreadMs"/> on the war clock: a warning and
+    /// <c>war_hp_unread</c> once per unread spell, and the fight goes on as alive.
     /// </summary>
-    private async Task<(int Cur, int Max)?> WatchWarHpAsync(Mat frame, long now)
+    private async Task<(WarHpVerdict Verdict, (int Cur, int Max)? Hp)> WatchWarHpAsync(Mat frame, long now)
     {
-        var hp = await ReadWarHpAsync(frame);
-        _warDeadReads = WarDeadReads(_warDeadReads, hp, _warAliveMax);
+        var (verdict, hp) = await ReadWarHpAsync(frame);
         if (hp != null)
         {
             _warHpUnreadSince = 0;
             _warHpUnreadWarned = false;
-            return _warDeadReads >= WarDeadReadsNeeded ? hp : null;
+            return (verdict, hp);
         }
 
         long clock = _warClock.Now(now);
@@ -926,25 +1048,27 @@ public sealed partial class AutomationPilot
             WarShot(frame, "war_hp_unread");
         }
 
-        return null;
+        return (verdict, hp);
     }
 
-    /// <summary>Dead (design §4.6.2): every key let go, nothing pressed until the HP is above 0 again.</summary>
+    /// <summary>Dead (design §4.6.2): every key let go, nothing pressed until the HP reads back on our feet.</summary>
     private void BeginWarDead(Mat frame, (int Cur, int Max) hp)
     {
         ReleaseHeldSkill();
-        Log?.Invoke(LogLevel.Warning, $"Died in the war (HP {hp.Cur} / {hp.Max} twice in a row) - waiting to revive.");
+        Log?.Invoke(LogLevel.Warning, $"Died in the war (HP {hp.Cur} / {hp.Max} {WarHpReadsInARow} times in a row) - waiting to revive.");
         WarShot(frame, "war_died");
         _warDeadSince = _warClock.Now(Environment.TickCount64);
         _warDeadWarned = false;
         _warHpReadAt = 0;
+        _warHp = _warHp with { ReviveReads = 0 };
         Advance(PilotPhase.WarDead, 500);
     }
 
     /// <summary>
-    /// Dead: the HP read every second; above 0 - back on our feet, every buff again, then the fight. Still dead after 30 s
-    /// on the war clock: a warning and <c>war_dead</c> once per death, and on waiting. The zone check catches a death that
-    /// sends the character to town.
+    /// Dead: the HP read every second; back on our feet (<see cref="WarHpVerdict.Revived"/>: HP above 0 out of the player's
+    /// maximum, twice in a row - the MP line or the bar under the HP bar never pass) - every buff again, then the fight.
+    /// Still dead after 30 s on the war clock: a warning and <c>war_dead</c> once per death, and on waiting. The zone check
+    /// catches a death that sends the character to town.
     /// </summary>
     private async Task TickWarDeadAsync(Mat frame)
     {
@@ -956,7 +1080,8 @@ public sealed partial class AutomationPilot
         if (now >= _warHpReadAt)
         {
             _warHpReadAt = now + 1000;
-            if (await ReadWarHpAsync(frame) is { Cur: > 0 } alive)
+            var (verdict, hp) = await ReadWarHpAsync(frame, dead: true);
+            if (verdict == WarHpVerdict.Revived && hp is { } alive)
             {
                 Log?.Invoke(LogLevel.Info, $"Back on our feet (HP {alive.Cur} / {alive.Max}) after {dead / 1000}s.");
                 BeginWarRebuff("after the death", 1000);

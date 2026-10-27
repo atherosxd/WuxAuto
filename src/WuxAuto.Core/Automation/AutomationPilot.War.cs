@@ -123,8 +123,10 @@ public sealed partial class AutomationPilot
     // ---------------------------------------------------------------- Start
 
     /// <summary>
-    /// Start's dispatch (design §4.1, §5), the first thing of every run: the war windows a Stop or a Fail can leave
-    /// open are closed first (the war timer's close step), then the minimap title decides - Bohai Outpost: into the
+    /// Start's dispatch (design §4.1, §5), the first thing of every run: every key Auto War presses must map to a key
+    /// (<see cref="WarKeys"/>; an unmappable one is refused on every press, which reads like the game being behind another
+    /// window - stop instead); the war windows a Stop or a Fail can leave open are closed (the war timer's close step);
+    /// then the minimap title decides - Bohai Outpost: into the
     /// war; a home town: back to the saved cave; the Labyrinth, LOD or no title: stop; a cave: every buff icon and
     /// Shura must be on the skill bar (once per Start), then - at the saved spot already - the autohunt on and the wait,
     /// or the page check and the remember step. Only with the game in front: behind another window the capture shows
@@ -134,6 +136,12 @@ public sealed partial class AutomationPilot
     {
         long now = Environment.TickCount64;
         var war = _settings.War;
+        if (WarKeyProblem(WarKeys(), _input.IsKnownKey) is { } keyProblem)
+        {
+            WarStop(frame, keyProblem);
+            return;
+        }
+
         if (!_input.IsTargetForeground)
         {
             _detail = "waiting for the game window to be in front";
@@ -204,12 +212,6 @@ public sealed partial class AutomationPilot
             _warBarChecked = true;
         }
 
-        if (string.IsNullOrWhiteSpace(_settings.Lod.ShuraKey))
-        {
-            WarStop(frame, "Set the Shura key (the 'Shura key (LOD)' setting) - Auto War holds it in every fight");
-            return;
-        }
-
         if (_warSpotChecked && WarText.SameZone(title, war.HomeMap) && !string.IsNullOrWhiteSpace(war.HomeMonster))
         {
             // A restart at the spot (a reconnect, a failed trip back): the autohunt may be off - on first, then wait.
@@ -271,6 +273,21 @@ public sealed partial class AutomationPilot
                        + $"{DescribeMissingIcons(missing)} - put them on the bar and press Start again");
         return false;
     }
+
+    /// <summary>
+    /// Every key Auto War presses (<see cref="WarKeyProblem"/> at Start): Shura, the skill, Tab, the autohunt and the
+    /// inventory keys must be set; the buff key and the autohunt settings key may be empty (the buff icons are clicked then).
+    /// </summary>
+    private IEnumerable<WarKey> WarKeys() =>
+    [
+        new("Shura key (LOD)", _settings.Lod.ShuraKey, Required: true),
+        new("Skill key", _settings.Dungeon.SkillKey, Required: true),
+        new("Target key", _settings.Dungeon.TabKey, Required: true),
+        new("Autohunt key", _settings.Dungeon.AutohuntKey, Required: true),
+        new("Inventory key", _settings.Input.InventoryKey, Required: true),
+        new("Buff key (LOD)", _settings.Lod.BuffKey, Required: false),
+        new("Sequence.AutohuntSettingsKey in settings.json", _settings.Sequence.AutohuntSettingsKey, Required: false),
+    ];
 
     /// <summary>"warbuff2 (best 0.84), shura (not seen)": each missing icon with its best score, rounded down.</summary>
     internal static string DescribeMissingIcons(IEnumerable<(string Name, double? Best)> missing)

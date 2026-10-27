@@ -336,7 +336,7 @@ public sealed partial class AutomationPilot
         _warRemembering = false;
         _warRefusedTeleports = 0;
         _warBarChecked = false;
-        _warAliveMax = null;
+        _warHp = default;
         _warShots.Clear();
         _runStart = Environment.TickCount64;
         ResetRunState();

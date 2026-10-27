@@ -123,6 +123,12 @@ public class WarTextTests
 
     [Theory]
     [InlineData(0, 42833, 42833, true)]
+    [InlineData(0, 34493, 42833, true)]    // buffs that raised the maximum dropped at death
+    [InlineData(0, 21417, 42833, true)]    // half of it, rounded up
+    [InlineData(0, 21416, 42833, false)]
+    [InlineData(0, 44974, 42833, true)]    // up to 5 % over it
+    [InlineData(0, 44975, 42833, false)]
+    [InlineData(0, 50000, 42833, false)]
     [InlineData(0, 3000, 42833, false)]    // the bar under the HP bar
     [InlineData(0, 11467, 42833, false)]   // MP read alone
     [InlineData(120, 42833, 42833, false)]

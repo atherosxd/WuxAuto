@@ -454,18 +454,18 @@ public static class WarText
     }
 
     /// <summary>
-    /// An HP read that means "dead": 0 out of the player's own maximum. The MP bar and the "0/3000"
-    /// bar also read 0 / N, so the maximum must match the one seen alive (within 1 %), or, with none
-    /// seen yet, be at least 1000.
+    /// An HP read that means "dead": 0 out of the player's own maximum (<see cref="IsPlayerHpMax"/>). The MP bar and the
+    /// "0/3000" bar also read 0 / N.
     /// </summary>
-    public static bool IsDeadRead((int Cur, int Max) hp, int? aliveMax)
-    {
-        if (hp.Cur != 0)
-            return false;
-        return aliveMax is int alive
-            ? Math.Abs(hp.Max - alive) <= alive / 100
-            : hp.Max >= 1000;
-    }
+    public static bool IsDeadRead((int Cur, int Max) hp, int? aliveMax) => hp.Cur == 0 && IsPlayerHpMax(hp.Max, aliveMax);
+
+    /// <summary>
+    /// A maximum that can be the player's HP maximum: with the maximum seen alive known, from half of it to 5 % over it -
+    /// buffs raise the maximum and most likely drop at a death, so "0 / unbuffed maximum" must count; with none known yet,
+    /// 1000 or more. The MP line and the "0/3000" bar of a 42833 HP character fall outside.
+    /// </summary>
+    public static bool IsPlayerHpMax(int max, int? aliveMax)
+        => aliveMax is int alive ? 2L * max >= alive && 100L * max <= 105L * alive : max >= 1000;
 
     /// <summary>
     /// The enemy named in the target box: a line of 3+ letters (no ':' and not a sentence ending in '.')
@@ -540,11 +540,7 @@ public static class WarText
     /// The AUTO BUFF dialog's title, read the way the keys-out Regular War step reads it: the whole line is "autobuff", at
     /// most one letter off. The item list's "[Auto buff scroll]" line is not it.
     /// </summary>
-    public static bool IsAutoBuffTitle(string line)
-    {
-        string n = TextMatcher.Normalize(line);
-        return n == "autobuff" || TextMatcher.Levenshtein(n, "autobuff") <= 1;
-    }
+    public static bool IsAutoBuffTitle(string line) => TextMatcher.Levenshtein(TextMatcher.Normalize(line), "autobuff") <= 1;
 
     /// <summary>
     /// The autohunt settings' "Regular War" check box label, read the way the keys-out Regular War step reads it: a short

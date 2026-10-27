@@ -11,78 +11,185 @@ public class WarFightTests
 
     // ---------------------------------------------------------------- rebuff
 
+    static long Timer(long buffedAt) => AutomationPilot.WarRebuffWantedAt(buffedAt, BuffEvery, droppedAt: null);
+
     [Fact]
     public void Rebuff_DueAtTheTabPointOnceBuffEveryMsHasPassed()
     {
-        Assert.True(AutomationPilot.WarRebuffDue(Now + BuffEvery, Now, BuffEvery, fightStep: 0));
-        Assert.True(AutomationPilot.WarRebuffDue(Now + BuffEvery + 60_000, Now, BuffEvery, fightStep: 0));
+        Assert.True(AutomationPilot.WarRebuffDue(Now + BuffEvery, Timer(Now), fightStep: 0));
+        Assert.True(AutomationPilot.WarRebuffDue(Now + BuffEvery + 60_000, Timer(Now), fightStep: 0));
     }
 
     [Fact]
     public void Rebuff_NotBeforeBuffEveryMs()
-        => Assert.False(AutomationPilot.WarRebuffDue(Now + BuffEvery - 1, Now, BuffEvery, fightStep: 0));
+        => Assert.False(AutomationPilot.WarRebuffDue(Now + BuffEvery - 1, Timer(Now), fightStep: 0));
 
     [Theory]
     [InlineData(1)]   // reading the target
     [InlineData(2)]   // Shura going down
     [InlineData(3)]   // Shura held
-    [InlineData(4)]   // attacking
-    public void Rebuff_NeverInsideAFightCycle(int step)
-        => Assert.False(AutomationPilot.WarRebuffDue(Now + 2 * BuffEvery, Now, BuffEvery, step));
+    public void Rebuff_NeverBetweenTabAndTheAttack(int step)
+        => Assert.False(AutomationPilot.WarRebuffDue(Now + 2 * BuffEvery, Timer(Now), step));
+
+    [Fact]
+    public void Rebuff_MidAttack_OnlyOnceItIsThirtySecondsOverdue()
+    {
+        // A target that keeps reading (out of reach) keeps step 4 going: the buffs must not wait for it forever.
+        Assert.False(AutomationPilot.WarRebuffDue(Now + BuffEvery, Timer(Now), fightStep: 4));
+        Assert.False(AutomationPilot.WarRebuffDue(Now + BuffEvery + AutomationPilot.WarRebuffOverdueMs - 1, Timer(Now), fightStep: 4));
+        Assert.True(AutomationPilot.WarRebuffDue(Now + BuffEvery + AutomationPilot.WarRebuffOverdueMs, Timer(Now), fightStep: 4));
+    }
+
+    [Fact]
+    public void Rebuff_BuffsSeenGone_WantedFromThenOn_AsTheTimerIs()
+    {
+        long wanted = AutomationPilot.WarRebuffWantedAt(Now, BuffEvery, droppedAt: Now + 60_000);
+        Assert.Equal(Now + 60_000, wanted);
+        Assert.True(AutomationPilot.WarRebuffDue(Now + 60_000, wanted, fightStep: 0));
+        Assert.False(AutomationPilot.WarRebuffDue(Now + 60_000, wanted, fightStep: 4));
+        Assert.True(AutomationPilot.WarRebuffDue(Now + 60_000 + AutomationPilot.WarRebuffOverdueMs, wanted, fightStep: 4));
+        // The timer, when it comes first, still decides.
+        Assert.Equal(Now + BuffEvery, AutomationPilot.WarRebuffWantedAt(Now, BuffEvery, droppedAt: Now + BuffEvery + 5000));
+    }
 
     // ---------------------------------------------------------------- the HP watch
 
-    static readonly (int, int) Dead = (0, 42833);
-    static readonly (int, int) Alive = (41000, 42833);
+    const int Max = 42833;
+    static readonly (int, int) Dead = (0, Max);
+    static readonly (int, int) Full = (41000, Max);
+    static readonly (int, int) MpLine = (8000, 11467);
+    static readonly (int, int) LowBar = (1500, 3000);
 
-    static int Reads(int? aliveMax, params (int Cur, int Max)?[] reads)
-        => reads.Aggregate(0, (count, hp) => AutomationPilot.WarDeadReads(count, hp, aliveMax));
+    static readonly AutomationPilot.WarHpWatch Fresh = default;
+
+    /// <summary>The player's maximum known (learnt from two reads), the buffs-gone check armed.</summary>
+    static readonly AutomationPilot.WarHpWatch Known = default(AutomationPilot.WarHpWatch) with { AliveMax = Max, PendingMax = Max, DropArmed = true };
+
+    /// <summary>Every read through the watch: the last state and every verdict on the way.</summary>
+    static (AutomationPilot.WarHpWatch Watch, List<AutomationPilot.WarHpVerdict> Verdicts) Run(
+        AutomationPilot.WarHpWatch watch, bool dead, params (int Cur, int Max)?[] reads)
+    {
+        var verdicts = new List<AutomationPilot.WarHpVerdict>();
+        foreach (var hp in reads)
+        {
+            (watch, var verdict) = AutomationPilot.WarHpNext(watch, hp, dead);
+            verdicts.Add(verdict);
+        }
+
+        return (watch, verdicts);
+    }
+
+    static AutomationPilot.WarHpVerdict Last(AutomationPilot.WarHpWatch watch, bool dead, params (int Cur, int Max)?[] reads)
+        => Run(watch, dead, reads).Verdicts[^1];
 
     [Fact]
-    public void DeadReads_TwoInARow_IsDeath()
+    public void Seeding_NeedsTwoAliveReadsThatAgree()
     {
-        Assert.Equal(1, Reads(42833, Dead));
-        Assert.Equal(AutomationPilot.WarDeadReadsNeeded, Reads(42833, Dead, Dead));
+        Assert.Null(Run(Fresh, false, Full).Watch.AliveMax);
+        Assert.Equal(Max, Run(Fresh, false, Full, Full).Watch.AliveMax);
+        Assert.Equal(42900, Run(Fresh, false, Full, null, (30000, 42900)).Watch.AliveMax);   // within 1 % (the later one); an unread between
+        Assert.Null(Run(Fresh, false, Full, (40000, 51200)).Watch.AliveMax);                 // they disagree
+        Assert.Null(Run(Fresh, false, Full, Dead, Full).Watch.AliveMax);                     // a death read breaks the pair
+        Assert.Null(Run(Fresh, false, (500, 900), (500, 900)).Watch.AliveMax);              // under 1000
     }
 
     [Fact]
-    public void DeadReads_AnAliveReadBetween_StartsAgain()
-        => Assert.Equal(1, Reads(42833, Dead, Alive, Dead));
-
-    [Fact]
-    public void DeadReads_AnUnreadBetween_NeitherCountsNorBreaksTheRow()
-        => Assert.Equal(2, Reads(42833, Dead, null, Dead));
-
-    [Fact]
-    public void DeadReads_TheBarUnderTheHpBarOrTheMpLine_IsNoDeath_AndBreaksTheRow()
+    public void MpLineAndTheLowBar_NeitherMoveTheMaximumNorCountAsARevive()
     {
-        Assert.Equal(0, Reads(42833, (0, 3000)));
-        Assert.Equal(0, Reads(42833, (0, 11467)));
-        Assert.Equal(1, Reads(42833, Dead, (0, 3000), Dead));
+        var (watch, verdicts) = Run(Known, dead: true, MpLine, MpLine, LowBar, LowBar);
+        Assert.Equal(Max, watch.AliveMax);
+        Assert.All(verdicts, v => Assert.Equal(AutomationPilot.WarHpVerdict.None, v));
+
+        Assert.Equal(Max, Run(Known, false, MpLine, MpLine, LowBar, LowBar).Watch.AliveMax);
     }
 
     [Fact]
-    public void DeadReads_NoAliveMaxYet_OnlyAMaxOf1000OrMoreCounts()
+    public void Maximum_RaisedByTwoAgreeingHigherReads_NeverLowered()
     {
-        Assert.Equal(2, Reads(null, Dead, Dead));
-        Assert.Equal(0, Reads(null, (0, 300), (0, 300)));
+        Assert.Equal(Max, Run(Known, false, (51000, 51200)).Watch.AliveMax);                       // one read is not enough
+        Assert.Equal(51200, Run(Known, false, (51000, 51200), (50000, 51200)).Watch.AliveMax);    // buffed
+        Assert.Equal(Max, Run(Known, false, (30000, 34493), (30000, 34493), (30000, 34493)).Watch.AliveMax);
     }
 
     [Fact]
-    public void AliveMax_SetByEveryReadAboveZero_KeptOtherwise()
+    public void Death_TwoDeathReadsInARow()
     {
-        Assert.Equal(42833, AutomationPilot.WarAliveMax(null, Alive));
-        Assert.Equal(51200, AutomationPilot.WarAliveMax(42833, (51200, 51200)));   // buffed: a higher maximum
-        Assert.Equal(42833, AutomationPilot.WarAliveMax(42833, (0, 3000)));
-        Assert.Equal(42833, AutomationPilot.WarAliveMax(42833, null));
-        Assert.Null(AutomationPilot.WarAliveMax(null, Dead));
+        Assert.Equal(AutomationPilot.WarHpVerdict.None, Last(Known, false, Dead));
+        Assert.Equal(AutomationPilot.WarHpVerdict.Dead, Last(Known, false, Dead, Dead));
+        Assert.Equal(AutomationPilot.WarHpVerdict.Dead, Last(Known, false, (0, 34493), (0, 34493)));   // the buffs went with the death
+        Assert.Equal(AutomationPilot.WarHpVerdict.Dead, Last(Known, false, Dead, null, Dead));         // an unread neither counts nor breaks
+        Assert.Equal(AutomationPilot.WarHpVerdict.None, Last(Known, false, Dead, Full, Dead));
+        Assert.Equal(AutomationPilot.WarHpVerdict.None, Last(Known, false, Dead, (0, 3000), Dead));
+        Assert.Equal(AutomationPilot.WarHpVerdict.None, Last(Known, false, (0, 3000), (0, 3000)));
     }
 
     [Fact]
-    public void AliveMax_SeededBeforeTheFight_KeepsTheBarUnderTheHpBarFromCountingAsDeath()
+    public void Death_NoMaximumYet_OnlyAMaxOf1000OrMoreCounts()
     {
-        int? max = AutomationPilot.WarAliveMax(null, Alive);   // the read on arrival
-        Assert.Equal(0, Reads(max, (0, 3000), (0, 3000)));
+        Assert.Equal(AutomationPilot.WarHpVerdict.Dead, Last(Fresh, false, Dead, Dead));
+        Assert.Equal(AutomationPilot.WarHpVerdict.None, Last(Fresh, false, (0, 300), (0, 300)));
+    }
+
+    [Fact]
+    public void Revive_TwoAliveReadsOfThePlayersMaximum()
+    {
+        Assert.Equal(AutomationPilot.WarHpVerdict.None, Last(Known, true, (900, 34493)));
+        Assert.Equal(AutomationPilot.WarHpVerdict.Revived, Last(Known, true, (900, 34493), (2000, 34493)));
+        Assert.Equal(AutomationPilot.WarHpVerdict.None, Last(Known, true, (900, 34493), Dead));
+        Assert.Equal(AutomationPilot.WarHpVerdict.None, Last(Known, true, (900, 34493), MpLine));
+        Assert.Equal(AutomationPilot.WarHpVerdict.None, Last(Known, false, Full, Full));   // only while dead
+    }
+
+    [Fact]
+    public void BuffsDropped_TwoAliveReadsUnderNineTenths_OncePerDrop()
+    {
+        var (watch, verdicts) = Run(Known, false, (30000, 34493), (30000, 34493), (30000, 34493));
+        Assert.Equal(new[] { AutomationPilot.WarHpVerdict.None, AutomationPilot.WarHpVerdict.BuffsDropped, AutomationPilot.WarHpVerdict.None }, verdicts);
+        Assert.Equal(Max, watch.AliveMax);
+
+        // Back up (rebuffed) arms it again.
+        Assert.Equal(AutomationPilot.WarHpVerdict.BuffsDropped, Last(watch, false, Full, (30000, 34493), (30000, 34493)));
+    }
+
+    [Fact]
+    public void BuffsDropped_NotBeforeAReadAtTheMaximum_NorFromTheMpLine()
+    {
+        var disarmed = Known with { DropArmed = false };
+        Assert.Equal(AutomationPilot.WarHpVerdict.None, Last(disarmed, false, (30000, 34493), (30000, 34493)));
+        Assert.Equal(AutomationPilot.WarHpVerdict.None, Last(Known, false, MpLine, MpLine));
+    }
+
+    // ---------------------------------------------------------------- keys
+
+    static readonly AutomationPilot.WarKey[] Keys =
+    [
+        new("Shura key (LOD)", "E", Required: true),
+        new("Buff key (LOD)", "", Required: false),
+        new("Skill key", "1", Required: false),
+    ];
+
+    static bool Known1(string key) => key is "E" or "1" or "O";
+
+    [Fact]
+    public void Keys_AllKnownOrOptionalAndEmpty_NoProblem()
+        => Assert.Null(AutomationPilot.WarKeyProblem(Keys, Known1));
+
+    [Fact]
+    public void Keys_ANameThatDoesNotMap_IsNamedWithItsSetting()
+    {
+        var keys = Keys.Append(new AutomationPilot.WarKey("Target key", "Tabb", Required: false)).ToArray();
+        string? problem = AutomationPilot.WarKeyProblem(keys, Known1);
+        Assert.NotNull(problem);
+        Assert.Contains("'Tabb'", problem);
+        Assert.Contains("Target key", problem);
+    }
+
+    [Fact]
+    public void Keys_ARequiredKeyLeftEmpty_IsNamed()
+    {
+        string? problem = AutomationPilot.WarKeyProblem([new("Shura key (LOD)", " ", Required: true)], Known1);
+        Assert.NotNull(problem);
+        Assert.Contains("Shura key (LOD)", problem);
     }
 
     // ---------------------------------------------------------------- the war clock

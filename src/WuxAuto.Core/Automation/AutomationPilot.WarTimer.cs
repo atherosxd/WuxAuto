@@ -446,21 +446,22 @@ public sealed partial class AutomationPilot
     }
 
     /// <summary>
-    /// A click of the war timer / join steps; a dry run logs where it would click and sends nothing. False when
-    /// the game is not in front (<see cref="Click"/> waits; the tick tries again).
+    /// A click of the war steps; a dry run logs where it would click and sends nothing. False when the game is not in
+    /// front (<see cref="Click"/> waits; the tick tries again). <paramref name="level"/>: the log line's level (Trace for
+    /// the clicks of every fight cycle and buff round).
     /// </summary>
-    private bool WarClick(PixelRect target, string what)
+    private bool WarClick(PixelRect target, string what, LogLevel level = LogLevel.Info)
     {
         if (_input.IsDryRun)
         {
-            Log?.Invoke(LogLevel.Info, $"Dry run - would click {what} at {target.CenterX},{target.CenterY}.");
+            Log?.Invoke(level, $"Dry run - would click {what} at {target.CenterX},{target.CenterY}.");
             return true;
         }
 
         if (!Click(target))
             return false;
 
-        Log?.Invoke(LogLevel.Info, $"Clicked {what} at {target.CenterX},{target.CenterY}.");
+        Log?.Invoke(level, $"Clicked {what} at {target.CenterX},{target.CenterY}.");
         return true;
     }
 
