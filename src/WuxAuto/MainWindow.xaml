@@ -370,7 +370,7 @@
                             <TextBox Grid.Row="4" Grid.Column="3" Style="{StaticResource WideField}" Text="{Binding Settings.Dungeon.ManualAttackIntervalMs}" />
 
                             <TextBlock Grid.Row="5" Grid.Column="0" Text="Hold skill (ms)" Style="{StaticResource FieldLabel}"
-                                       ToolTip="Laby, stage 5: the first attack on the boss holds the skill key down this long (the character runs at the boss and keeps attacking), then the Manual attacks taps follow. 0 = taps only." />
+                                       ToolTip="Laby: on stage 5 the first attack on the boss holds the skill key down this long (the character runs at the boss and keeps attacking), then the Manual attacks taps follow; on stages 1-4 the same hold comes before the autohunt (see the check box). 0 = no hold." />
                             <TextBox Grid.Row="5" Grid.Column="1" Style="{StaticResource WideField}" Text="{Binding Settings.Dungeon.HoldSkillMs}" />
 
                             <WrapPanel Grid.Row="6" Grid.Column="0" Grid.ColumnSpan="4">
@@ -380,6 +380,8 @@
                                           ToolTip="Autohunt off after stage 4, on again at the last boss." />
                                 <CheckBox Content="Ctrl + skill key too" IsChecked="{Binding Settings.Dungeon.CtrlSkill}"
                                           ToolTip="Manual attacks (Laby stage 5 and the LOD skill spam): every skill press sends the skill key and then Ctrl + skill key, e.g. 1 then Ctrl+1. With Hold skill (LOD) the held key is let go for a Ctrl + skill tap every 0.3 s." />
+                                <CheckBox Content="Hold skill before autohunt (stages 1-4)" IsChecked="{Binding Settings.Dungeon.HoldBeforeAutohunt}"
+                                          ToolTip="Laby, stages 1-4: with the boss in view, hold the skill key (Hold skill) once before the autohunt goes on, then J and the select clicks. Off = J right after the spawn wait, as before." />
                             </WrapPanel>
                             <WrapPanel Grid.Row="7" Grid.Column="0" Grid.ColumnSpan="4">
                                 <CheckBox Content="Click the stage 5 gate" IsChecked="{Binding Settings.Dungeon.AimGate}"
