@@ -876,15 +876,7 @@ public sealed partial class AutomationPilot
         string? title = await ReadMinimapTitleAsync(frame);
         if (WarText.SameZone(title, war.HomeMap))
         {
-            _warRefusedTeleports = 0;
-            _warSpotChecked = true;
-            _zoneConfirmedAt = now;
-            // The combat log before the walk: the arrival is the "Arrived" line that is not in it - taken now, before
-            // the map covers the log, so a short walk's line right after the '>' click is not missed.
-            _warArriveBaseline = Normalized(await ReadCombatLogAsync(frame));
-            Log?.Invoke(LogLevel.Success, $"Back in {war.HomeMap} - walking to '{war.HomeMonster}'.");
-            ResetWarMapPick();
-            Advance(PilotPhase.ClickMap, 500);
+            await WarBackInCaveAsync(frame, now);
             return;
         }
 
@@ -909,6 +901,25 @@ public sealed partial class AutomationPilot
         }
 
         Fail(frame, $"'{war.HomeMap}' never showed on the minimap after the teleport ({waited / 1000}s; it reads '{title}').");
+    }
+
+    /// <summary>
+    /// The saved cave is on the minimap - after the return teleport (WarBack), or the game took the character back there
+    /// by itself after a war (<see cref="WarZoneCheckAsync"/>): this Start is at its spot; the map pick of the saved monster
+    /// comes next.
+    /// </summary>
+    private async Task WarBackInCaveAsync(Mat frame, long now)
+    {
+        var war = _settings.War;
+        _warRefusedTeleports = 0;
+        _warSpotChecked = true;
+        _zoneConfirmedAt = now;
+        // The combat log before the walk: the arrival is the "Arrived" line that is not in it - taken now, before
+        // the map covers the log, so a short walk's line right after the '>' click is not missed.
+        _warArriveBaseline = Normalized(await ReadCombatLogAsync(frame));
+        Log?.Invoke(LogLevel.Success, $"Back in {war.HomeMap} - walking to '{war.HomeMonster}'.");
+        ResetWarMapPick();
+        Advance(PilotPhase.ClickMap, 500);
     }
 
     /// <summary>The combat log's lines (<see cref="RegionSettings.AttackMessage"/>, OCR x1.5), top to bottom.</summary>
@@ -993,7 +1004,4 @@ public sealed partial class AutomationPilot
 
         BeginWarWait("autohunt not confirmed on");
     }
-
-    // stubs - replaced by Tasks 6-8
-    private void BeginWarEnter(string why) => Fail(null, $"Auto War step not built yet: {why}");
 }

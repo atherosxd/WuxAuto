@@ -165,6 +165,27 @@ public class WarTextTests
     [InlineData("[Slayer Scroll] 171 (time(s))", false)]
     public void IsAutoBuffScrollLine(string line, bool expected) => Assert.Equal(expected, WarText.IsAutoBuffScrollLine(line));
 
+    [Theory]
+    [InlineData("AUTO BUFF", true)]
+    [InlineData("Auto buff", true)]
+    [InlineData("AUTO BUF", true)]                          // one letter off
+    [InlineData("AUT0 BUFF", true)]
+    [InlineData("[Auto buff scroll]  02.11.2026", false)]   // the item list's line, not the dialog
+    [InlineData("Auto buff scroll", false)]
+    [InlineData("BUFF", false)]
+    [InlineData("", false)]
+    public void IsAutoBuffTitle(string line, bool expected) => Assert.Equal(expected, WarText.IsAutoBuffTitle(line));
+
+    [Theory]
+    [InlineData("Regular War", true)]
+    [InlineData("Regu1ar War", true)]
+    [InlineData("[] Regular War", true)]
+    [InlineData("Regular", true)]
+    [InlineData("Regular War participation is automatic", false)]   // a sentence, not the box's label
+    [InlineData("[Tribe] Victory!", false)]
+    [InlineData("", false)]
+    public void IsRegularWarLine(string line, bool expected) => Assert.Equal(expected, WarText.IsRegularWarLine(line));
+
     [Fact]
     public void NewLines_IsAMultisetDifference()
     {

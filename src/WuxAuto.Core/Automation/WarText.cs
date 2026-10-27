@@ -537,6 +537,26 @@ public static class WarText
     }
 
     /// <summary>
+    /// The AUTO BUFF dialog's title, read the way the keys-out Regular War step reads it: the whole line is "autobuff", at
+    /// most one letter off. The item list's "[Auto buff scroll]" line is not it.
+    /// </summary>
+    public static bool IsAutoBuffTitle(string line)
+    {
+        string n = TextMatcher.Normalize(line);
+        return n == "autobuff" || TextMatcher.Levenshtein(n, "autobuff") <= 1;
+    }
+
+    /// <summary>
+    /// The autohunt settings' "Regular War" check box label, read the way the keys-out Regular War step reads it: a short
+    /// line (at most 14 letters and digits) that starts with "regular" or is at most two letters off "regularwar".
+    /// </summary>
+    public static bool IsRegularWarLine(string line)
+    {
+        string n = TextMatcher.Normalize(line);
+        return n.Length <= 14 && (n.StartsWith("regular", StringComparison.Ordinal) || TextMatcher.Levenshtein(n, "regularwar") <= 2);
+    }
+
+    /// <summary>
     /// The lines of <paramref name="after"/> not used up by a line of <paramref name="before"/>, in
     /// <paramref name="after"/>'s order. Each line of <paramref name="before"/> is used up once: first by an equal line,
     /// then - for the lines left on both sides - by one at most one letter off (Levenshtein), so an old log line that

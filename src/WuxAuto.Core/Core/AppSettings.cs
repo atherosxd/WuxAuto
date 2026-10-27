@@ -267,6 +267,12 @@ public sealed class RegionSettings
     /// 20261024_170342_166_lod_no_entries (frame x 1149-1215, y 1-56; crop 1152,4 61x50).
     /// </summary>
     public NormRect MenuButton { get; set; } = new(0.30, 0.0, 0.40, 0.08);
+
+    /// <summary>
+    /// Auto War: the item status list at the bottom right ("[Auto buff scroll] dd.mm.yyyy", the keys, the scrolls) - the
+    /// band the Laby/LOD key check reads (inline in CheckKeysAsync).
+    /// </summary>
+    public NormRect ItemList { get; set; } = new(0.62, 0.50, 0.38, 0.50);
 }
 
 /// <summary>Auto LOD (user, 2026-10-21) - see AutomationPilot.Lod.cs.</summary>

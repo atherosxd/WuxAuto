@@ -336,6 +336,7 @@ public sealed partial class AutomationPilot
         _warRemembering = false;
         _warRefusedTeleports = 0;
         _warBarChecked = false;
+        _warAliveMax = null;
         _warShots.Clear();
         _runStart = Environment.TickCount64;
         ResetRunState();
@@ -772,6 +773,18 @@ public sealed partial class AutomationPilot
                     break;
                 case PilotPhase.WarJoin:
                     await TickWarJoinAsync(frame);
+                    break;
+                case PilotPhase.WarEnter:
+                    await TickWarEnterAsync(frame);
+                    break;
+                case PilotPhase.WarBuff:
+                    await TickWarBuffAsync(frame);
+                    break;
+                case PilotPhase.WarFight:
+                    await TickWarFightAsync(frame);
+                    break;
+                case PilotPhase.WarDead:
+                    await TickWarDeadAsync(frame);
                     break;
                 case PilotPhase.WarRemember:
                     await TickWarRememberAsync(frame);
