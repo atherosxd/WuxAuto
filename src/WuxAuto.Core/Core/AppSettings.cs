@@ -264,12 +264,21 @@ public sealed class LodSettings
     /// <summary>The boss name on the target bar (matched fuzzily, whole words).</summary>
     public string BossName { get; set; } = "Bai Gu Great";
 
-    /// <summary>Where to walk to; the boss is near and may come to the character.</summary>
+    /// <summary>
+    /// Walk to <see cref="TargetX"/>/<see cref="TargetY"/> after the south turn, pressing Tab (UI "Walk
+    /// to the boss spot (LOD)"). Off (default; user, 2026-10-27: "instead of trying to go to the center
+    /// of the map, stay still on the same place upon teleport, just keep tabbing until the boss name
+    /// shows"): the character stays where it is and Tab is pressed every <see cref="TabEveryMs"/>. The
+    /// south turn happens either way (user: so the ring round the boss's feet can be targeted).
+    /// </summary>
+    public bool WalkToBossSpot { get; set; }
+
+    /// <summary>Where to walk to with <see cref="WalkToBossSpot"/>; the boss is near and may come to the character.</summary>
     public int TargetX { get; set; } = 1191;
     public int TargetY { get; set; } = 2413;
     public int TargetTolerance { get; set; } = 60;
 
-    /// <summary>Tab while walking (user: every 1-2 s).</summary>
+    /// <summary>Tab while waiting for the boss (or walking to it; user: every 1-2 s).</summary>
     public int TabEveryMs { get; set; } = 1500;
 
     /// <summary>Tab while turning south - spammed (user).</summary>

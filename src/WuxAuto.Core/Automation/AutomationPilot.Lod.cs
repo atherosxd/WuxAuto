@@ -6,11 +6,12 @@ using LogLevel = WuxAuto.Core.LogLevel;
 namespace WuxAuto.Automation;
 
 /// <summary>
-/// Auto LOD (user, 2026-10-21): teleport to the Ultimate Den of Rebirth, face south, walk towards
-/// the boss spot pressing Tab, and once "Bai Gu Great..." is targeted spam the skill key until it is
-/// dead. The boss respawns, so the map is unlimited until its timer runs out and the game sends the
-/// character to town (user) - the zone guard then teleports in again. Killed by the boss, the
-/// character is put back at the map's starting point: face south and walk in again.
+/// Auto LOD (user, 2026-10-21): teleport to the Ultimate Den of Rebirth, face south, press Tab where
+/// the teleport put the character (since 2026-10-27; <see cref="LodSettings.WalkToBossSpot"/> walks to
+/// the boss spot meanwhile, as before), and once "Bai Gu Great..." is targeted spam the skill key until
+/// it is dead. The boss respawns, so the map is unlimited until its timer runs out and the game sends
+/// the character to town (user) - the zone guard then teleports in again. Killed by the boss, the
+/// character is put back at the map's starting point: face south and Tab (or walk in) again.
 /// </summary>
 public sealed partial class AutomationPilot
 {
@@ -250,7 +251,7 @@ public sealed partial class AutomationPilot
             .Where(char.IsLetter).Select(char.ToLowerInvariant).ToArray());
     }
 
-    /// <summary>After the arrival zoom (or a respawn): buff, face south, then the walk.</summary>
+    /// <summary>After the arrival zoom (or a respawn): buff, face south, then Tab for the boss (LodRun).</summary>
     private void BeginFaceSouth(bool buff = true)
     {
         // Buffs first (user: "upon teleporting, do the auto buff then the other"); a blocked key is
@@ -264,7 +265,9 @@ public sealed partial class AutomationPilot
         _bestFlashlightStep = 0;
         _tapsSinceBest.Clear();
         _refineDir = 0;
-        Log?.Invoke(LogLevel.Info, "Turning to face south for the walk to the boss.");
+        Log?.Invoke(LogLevel.Info, _settings.Lod.WalkToBossSpot
+            ? "Turning to face south for the walk to the boss."
+            : "Turning to face south, then tabbing for the boss from here.");
         Advance(PilotPhase.FaceNorth, 400);
     }
 
@@ -414,7 +417,7 @@ public sealed partial class AutomationPilot
         _lodApproached = false;
     }
 
-    /// <summary>Back to finding the boss: the walk/Tab, or the south turn first if the heading is unknown.</summary>
+    /// <summary>Back to finding the boss: Tab (and the walk with WalkToBossSpot), or the south turn first if the heading is unknown.</summary>
     private void LeaveLodAttack()
     {
         _lastCoords = null;
@@ -438,7 +441,10 @@ public sealed partial class AutomationPilot
         return true;
     }
 
-    /// <summary>Walk towards the boss spot, Tab every TabEveryMs; the boss name ends the walk.</summary>
+    /// <summary>
+    /// Tab every TabEveryMs until the boss name shows. By default the character stays where it is
+    /// (user, 2026-10-27); with <see cref="LodSettings.WalkToBossSpot"/> it walks to the boss spot meanwhile.
+    /// </summary>
     private async Task TickLodRunAsync(Mat frame)
     {
         var lod = _settings.Lod;
@@ -462,6 +468,21 @@ public sealed partial class AutomationPilot
             Log?.Invoke(LogLevel.Success, $"'{boss.Text}' targeted - spamming skill {SkillText(_settings.Dungeon.SkillKey)} ({_lodKills} kill(s) so far).");
             BeginLodFight();
             Advance(PilotPhase.LodAttack, 0);
+            return;
+        }
+
+        // Stay put (user, 2026-10-27: "stay still on the same place upon teleport, just keep tabbing
+        // until the boss name shows") - no walk clicks, no coordinate reads.
+        if (!lod.WalkToBossSpot)
+        {
+            if (!_lodWaitLogged)
+            {
+                _lodWaitLogged = true;
+                Log?.Invoke(LogLevel.Info, $"Staying here - pressing Tab every {lod.TabEveryMs / 1000.0:0.#}s until '{lod.BossName}' shows.");
+            }
+
+            _detail = $"standing still, tabbing for '{lod.BossName}'";
+            _waitUntil = now + 300;
             return;
         }
 
@@ -553,8 +574,9 @@ public sealed partial class AutomationPilot
 
     /// <summary>
     /// Spam the skill on the targeted boss. A kill sends the character to town (the zone guard sees
-    /// it). A jump in the coordinates = the boss killed us and we are back at the start: walk in
-    /// again. The name gone for BossGoneMs (Tab pressed meanwhile) = lost target: walk/Tab again.
+    /// it). A jump in the coordinates = the boss killed us and we are back at the start: face south
+    /// and Tab again. The name gone for BossGoneMs (Tab pressed meanwhile) = lost target: back to
+    /// LodRun (Tab; the walk too with WalkToBossSpot).
     /// </summary>
     private async Task TickLodAttackAsync(Mat frame)
     {
@@ -658,7 +680,7 @@ public sealed partial class AutomationPilot
             {
                 if (_lodAttackCoords is (int ax, int ay) && coords.DistanceTo(ax, ay) > lod.TeleportJump)
                 {
-                    Log?.Invoke(LogLevel.Warning, $"Moved to {coords} (from {ax},{ay}) - killed by the boss? Walking back in.");
+                    Log?.Invoke(LogLevel.Warning, $"Moved to {coords} (from {ax},{ay}) - killed by the boss? Turning south again from the start.");
                     DebugArtifacts.SaveFrame(frame, _overlays, "lod_died");
                     Advance(PilotPhase.LodRespawn, _settings.Lod.RespawnSettleMs);
                     return;
@@ -681,7 +703,7 @@ public sealed partial class AutomationPilot
 
         if (now - _lodBossSeenAt > lod.BossGoneMs)
         {
-            Log?.Invoke(LogLevel.Warning, $"'{lod.BossName}' not seen for {lod.BossGoneMs / 1000}s - walking and tabbing again.");
+            Log?.Invoke(LogLevel.Warning, $"'{lod.BossName}' not seen for {lod.BossGoneMs / 1000}s - {(lod.WalkToBossSpot ? "walking and tabbing" : "tabbing")} again.");
             LeaveLodAttack();
             return;
         }
@@ -818,7 +840,7 @@ public sealed partial class AutomationPilot
         var coords = await _analyzer.ReadCoordinatesAsync(frame);
         if (coords != null && _lodAttackCoords is (int ax, int ay) && coords.DistanceTo(ax, ay) > lod.TeleportJump)
         {
-            Log?.Invoke(LogLevel.Warning, $"Moved to {coords} (from {ax},{ay}) while walking up to '{lod.BossName}' - killed by the boss? Walking back in.");
+            Log?.Invoke(LogLevel.Warning, $"Moved to {coords} (from {ax},{ay}) while walking up to '{lod.BossName}' - killed by the boss? Turning south again from the start.");
             DebugArtifacts.SaveFrame(frame, _overlays, "lod_died");
             Advance(PilotPhase.LodRespawn, lod.RespawnSettleMs);
             return;

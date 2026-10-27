@@ -274,7 +274,7 @@ public sealed partial class AutomationPilot
         PilotPhase.ZoomOut => "zooming out",
         PilotPhase.AimGate => "tilting the camera, looking for the gate",
         PilotPhase.RunToTarget => "running to the staging point",
-        PilotPhase.LodRun => "walking to the LOD boss, pressing Tab",
+        PilotPhase.LodRun => _settings.Lod.WalkToBossSpot ? "walking to the LOD boss, pressing Tab" : "waiting for the LOD boss, pressing Tab",
         PilotPhase.LodAttack => "spamming the skill on the LOD boss",
         PilotPhase.LodApproach => "walking up to the LOD boss (Ctrl+click on its ring)",
         PilotPhase.LodRespawn => "back at the start - settling",
@@ -784,7 +784,7 @@ public sealed partial class AutomationPilot
                 return;
             }
 
-            Log?.Invoke(LogLevel.Warning, $"Already at {Destination} - carrying on from the walk to the boss.");
+            Log?.Invoke(LogLevel.Warning, $"Already at {Destination}, no boss targeted - turning south and tabbing for it.");
             BeginFaceSouth();
             return;
         }

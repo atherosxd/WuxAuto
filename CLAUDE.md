@@ -130,7 +130,7 @@ words and the map scroll-arrow result. `--crop` writes `<frame>.crop.png` next t
 Core tests and the refactor parity gate (M1, 2026-10-27):
 
 ```powershell
-dotnet test tests\WuxAuto.Core.Tests        # xUnit, platform-free Core only (9 tests, ~10 s; the pilot tests tick a
+dotnet test tests\WuxAuto.Core.Tests        # xUnit, platform-free Core only (11 tests, ~10 s; the pilot tests tick a
                                            # blank Mat with a scripted OCR scene - see tests/ in section 3)
 # probe baseline: runs every SelfTest probe over a frozen, local-only frame set (never committed)
 # and writes normalised output; run it before and after a refactor and diff the two
@@ -204,7 +204,8 @@ tests/WuxAuto.Core.Tests    xUnit tests of Core (AppPathsTests, which round-trip
                             asked, FakeGameInput records every call - and asserts the input order: hold on → Tab, KeyDown/KeyUp 1,
                             Ctrl+1, J, centre click, "boss selected on click 1" → WatchBoss; hold off → J, Tab, click. No templates
                             (AppPaths points at an empty temp root), so the boss is found by name; needs OpenCvSharp4.runtime.win
-                            in the test project); `dotnet test`
+                            in the test project; LodStandStillTests: the same doubles from `Start(LodRun)` in AutoLod - only
+                            Tab until "[LOD] Bai Gu Great" reads, then LodAttack; `WalkToBossSpot` on → a walk click); `dotnet test`
 tests/probe-baseline.ps1    runs every SelfTest probe over a frozen frame set and writes normalised
                             output for before/after diffs (refactor parity check, section 2)
 tests/WuxAuto.UiShot        renders the window to a PNG
@@ -443,9 +444,16 @@ the name — `ZoneMatches` — so a plain "[Den of Rebirth]" cannot pass) → zo
 minimap background. It was first turned 180° by mistake (I misread its orientation from pixel
 brightness) and the pilot "lined up" facing north at ~0.82 — user caught it. flashlight3 only reached
 0.78; the arrival heading is about WSW) →
-`LodRun`: SimpleSteer with `_headingBase` = π (screen-up = world-south) towards **1191, 2413**
-(`Lod.TargetX/Y`, tolerance 60), Tab every `Lod.TabEveryMs` (1.5 s) → name **`Lod.BossName` "Bai Gu Great"**
-on screen → `LodAttack`: spam `Dungeon.SkillKey` every 0.3 s — or hold it down (`Lod.HoldSkill`, "Hold skill (LOD)"; released on every phase change, Stop, panic and failure) — Tab when the name is missing.
+`LodRun`: **stands still** where the teleport put the character and taps Tab every `Lod.TabEveryMs` (1.5 s)
+→ name **`Lod.BossName` "Bai Gu Great"** on screen → `LodAttack`: spam `Dungeon.SkillKey` every 0.3 s — or hold it down (`Lod.HoldSkill`, "Hold skill (LOD)"; released on every phase change, Stop, panic and failure) — Tab when the name is missing.
+* **Stand still, no walk** (user, 2026-10-27: "instead of trying to go to the Center of the map, stay still
+  on the same place upon teleport. just keep tabbing until the boss name shows. but retain the rotate to
+  south so you will be able to target on the ring"): `LodRun` sends no clicks and reads no coordinates; the
+  south turn on arrival / after a respawn stays. `Lod.WalkToBossSpot` (off, check box "Walk to the boss
+  spot (LOD)"; a saved file without it loads off) brings back the old walk: SimpleSteer with `_headingBase`
+  = π (screen-up = world-south) towards **1191, 2413** (`Lod.TargetX/Y`, tolerance 60) while tabbing.
+  Pinned offline by `tests/WuxAuto.Core.Tests/LodStandStillTests` (only Tab until the name, then
+  `LodAttack`; the switch on → a walk click). Not yet seen live.
 * **Ctrl + skill key** (user, 2026-10-26: "when manually attacking couple it with ctrl+ skill key";
   `Dungeon.CtrlSkill` on, check box "Ctrl + skill key too"): every press of the spam is `TapSkill` =
   the plain key, 60 ms (`CtrlSkillGapMs`), then `WindowInput.CtrlKeyTap` (Ctrl down, 40 ms, key tap,
@@ -485,9 +493,9 @@ on screen → `LodAttack`: spam `Dungeon.SkillKey` every 0.3 s — or hold it do
   way without counting a kill; no Tab in that 2 s gap either (Tab during an attack only when the loot
   key is empty).
 * **Boss name in view while turning south → stop the turn and attack** (user); the heading is then
-  unknown, so the next time the boss is lost the pilot turns south first (no buff) before walking.
+  unknown, so the next time the boss is lost the pilot turns south first (no buff) before tabbing again.
 * **Killed by the boss → put back at the map's starting point** (coordinate jump > `Lod.TeleportJump`
-  400 while attacking) → `LodRespawn` (two equal coordinate readings) → face south → walk again.
+  400 while attacking) → `LodRespawn` (two equal coordinate readings) → face south → `LodRun` again.
 * Name gone `Lod.BossGoneMs` (10 s) while attacking → back to `LodRun` (lost target).
 * **Boss name or treasure icon = targeted** (user). The name is matched per whole OCR **line** — the best
   hit was sometimes a single word ("[LOD]") too short to pass, and the pilot walked or turned with the
@@ -526,7 +534,7 @@ on screen → `LodAttack`: spam `Dungeon.SkillKey` every 0.3 s — or hold it do
   first page reached without it → fail. The list's "3 / 3" counter is not read by OCR, so it is not used.
 * `CheckZone` on Start in the LOD zone (user): boss name in view → **rebuff** (`StopLodAttack` + O, a fight may be
   running) → attack; otherwise Tab up to 3× (1.5 s apart) and look again; still nothing → buff, face south
-  and walk. Tab is also spammed while turning south (`TurnTabEveryMs` 400 ms, user; the turn ticks every
+  and `LodRun`. Tab is also spammed while turning south (`TurnTabEveryMs` 400 ms, user; the turn ticks every
   ~0.5 s, so in practice once per tap).
 * The minimap zone title is cut off at the panel edge ("[The Labyrinth (Adep"): `ZoneMatches` accepts
   10+ letters of the destination's start ("[Ultimate Den of Re"); all zone checks (guard, CheckZone,
@@ -695,7 +703,7 @@ would confirm the move instead.
 
 Key `DungeonSettings` defaults. The settings panel's **Dungeon** section (2026-10-21) edits Skill key,
 Autohunt key, Target key, Font size % and the switches Tab + skill at the last waypoint, Autohunt off
-for the run, Ctrl + skill key too, Click the stage 5 gate, Auto reconnect, Hold skill (LOD), Walk up to the boss (LOD), TAB target: Default, Autohunt off in town, Run skill on in town (and the Run key field, default W); everything else only via `settings.json`.
+for the run, Ctrl + skill key too, Click the stage 5 gate, Auto reconnect, Hold skill (LOD), Walk up to the boss (LOD), Walk to the boss spot (LOD), TAB target: Default, Autohunt off in town, Run skill on in town (and the Run key field, default W); everything else only via `settings.json`.
 `tests/WuxAuto.UiShot -- <png> --settings --bottom` renders that panel (`--mini` renders the Mini window instead, `--kill-alert` fills the last-kill line, `--kill-sound` shows a picked kill sound + the Default button); it restores `settings.json`
 afterwards (it ticks check boxes for the picture and the window saves on close — that once switched
 Dry run on in the real settings).
