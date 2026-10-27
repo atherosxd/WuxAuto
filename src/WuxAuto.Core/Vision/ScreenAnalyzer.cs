@@ -491,6 +491,17 @@ public sealed class ScreenAnalyzer : IDisposable
     }
 
     /// <summary>
+    /// Every copy of the Run skill icon (<paramref name="template"/>) in <paramref name="roi"/> at
+    /// <paramref name="minScore"/> or better, each with its <see cref="RingFraction"/>, and the verdict
+    /// (<see cref="RunSkillState.Decide"/>). Null when the icon is not there.
+    /// </summary>
+    public RunSkillState? FindRunSkill(Mat frame, string template, PixelRect roi, double minScore, double ringMin)
+    {
+        var hits = FindIcons(frame, template, roi, minScore, maxResults: 4);
+        return RunSkillState.Decide(hits.Select(h => new RunSkillCopy(h, RingFraction(frame, h.Bounds))), ringMin);
+    }
+
+    /// <summary>
     /// The magenta ring the game draws on the floor under the selected monster (user crop:
     /// H 143-150, S 95-145, V 195-255). Searched in the game world only - the HUD has a few
     /// magenta pixels in fixed places (hotbar, buff icons). On 267 saved frames every hit of

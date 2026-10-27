@@ -158,41 +158,68 @@ internal static class FrameProbe
     }
 
     /// <summary>
-    /// Fast check over a folder of saved frames: the Run skill icon on the skill bar and the gold
-    /// ring round it (on / off), as the pilot judges it in town. A crop round every hit lands in
+    /// Fast check over a folder of saved frames: every Run skill icon on the skill bar, the gold ring
+    /// round each and the pilot's verdict in town (<c>ScreenAnalyzer.FindRunSkill</c>, the call the
+    /// RunSkill phase makes): ON, or off and the copy it would click. "(leftmost-only rule: ...)" marks
+    /// a frame the check before 2026-10-27 decided otherwise - it measured only the leftmost of two
+    /// equal copies and so clicked Run off when the ring was on the other slot. Without the icon the
+    /// best score below RunSkillMatchScore is shown. A crop round the picked copy lands in
     /// %TEMP%\wuxauto-runskill\&lt;frame&gt;.png to check by eye. Run with: --runskill &lt;dir&gt;
     /// </summary>
     public static int RunSkill(string dir)
     {
         var settings = SettingsStore.Load();
+        var seq = settings.Sequence;
         using var analyzer = new ScreenAnalyzer(settings, new OcrService());
-        string template = settings.Sequence.RunSkillTemplate;
         string outDir = Path.Combine(Path.GetTempPath(), "wuxauto-runskill");
         Directory.CreateDirectory(outDir);
+        int on = 0, off = 0, missing = 0, changed = 0;
         foreach (string path in Directory.GetFiles(dir, "*.png").Where(p => !p.EndsWith(".scan.png") && !p.EndsWith(".crop.png")).Order())
         {
             using var frame = Cv2.ImRead(path, ImreadModes.Color);
             if (frame.Empty())
                 continue;
 
+            string name = $"{Path.GetFileName(path)} {frame.Width}x{frame.Height}";
             var roi = settings.Regions.Hotbar.ToPixels(frame.Width, frame.Height);
-            var (hit, ms) = analyzer.FindIconAnyScale(frame, template, roi, 0.30);
-            string verdict = "-";
-            string ringText = "";
-            if (hit != null)
+            var watch = System.Diagnostics.Stopwatch.StartNew();
+            var run = analyzer.FindRunSkill(frame, seq.RunSkillTemplate, roi, seq.RunSkillMatchScore, seq.RunSkillRingMin);
+            long ms = watch.ElapsedMilliseconds;
+            if (run == null)
             {
-                double ring = analyzer.RingFraction(frame, hit.Bounds);
-                ringText = $" ring {ring:0.00}";
-                verdict = hit.Score < settings.Sequence.RunSkillMatchScore ? "below score"
-                    : ring >= settings.Sequence.RunSkillRingMin ? "ON" : "off -> click";
-                var box = hit.Bounds.Inflate(hit.Bounds.Width / 2).Clamp(frame.Width, frame.Height);
-                using var crop = new Mat(frame, new Rect(box.X, box.Y, box.Width, box.Height));
-                Cv2.ImWrite(Path.Combine(outDir, Path.GetFileName(path)), crop);
+                missing++;
+                var (best, _) = analyzer.FindIconAnyScale(frame, seq.RunSkillTemplate, roi, 0.30);
+                string below = best == null ? "" : $" (best {best.Score:0.000} at {best.Bounds.CenterX},{best.Bounds.CenterY}, below {seq.RunSkillMatchScore:0.00})";
+                Console.WriteLine($"{name} | not on the bar{below} ({ms} ms)");
+                continue;
             }
 
-            Console.WriteLine($"{Path.GetFileName(path)} {frame.Width}x{frame.Height} | {template}: {(hit == null ? "not found" : $"{hit.Score:0.000} at {hit.Bounds.CenterX},{hit.Bounds.CenterY} {hit.Bounds.Width}x{hit.Bounds.Height} scale {hit.Scale:0.00}")}{ringText} -> {verdict} ({ms:0} ms)");
+            var pick = run.Pick.Icon;
+            string verdict = run.On
+                ? $"ON (ring round {pick.Bounds.CenterX},{pick.Bounds.CenterY})"
+                : $"off -> click {pick.Bounds.CenterX},{pick.Bounds.CenterY}";
+            if (run.On) on++; else off++;
+
+            // The old check's copy is the one Decide picks when no ring counts: best score, ties -> leftmost.
+            var old = RunSkillState.Decide(run.Copies, double.PositiveInfinity)!.Pick;
+            bool oldOn = old.Ring >= seq.RunSkillRingMin;
+            string was = "";
+            if (oldOn != run.On)
+            {
+                changed++;
+                was = $" (leftmost-only rule: {(oldOn ? "ON" : $"off -> click {old.Icon.Bounds.CenterX},{old.Icon.Bounds.CenterY}")})";
+            }
+
+            string copies = string.Join(", ", run.Copies.Select(c =>
+                $"{c.Icon.Score:0.000} at {c.Icon.Bounds.CenterX},{c.Icon.Bounds.CenterY} {c.Icon.Bounds.Width}x{c.Icon.Bounds.Height} ring {c.Ring:0.00}"));
+            Console.WriteLine($"{name} | {copies} -> {verdict}{was} ({ms} ms)");
+
+            var box = pick.Bounds.Inflate(pick.Bounds.Width / 2).Clamp(frame.Width, frame.Height);
+            using var crop = new Mat(frame, new Rect(box.X, box.Y, box.Width, box.Height));
+            Cv2.ImWrite(Path.Combine(outDir, Path.GetFileName(path)), crop);
         }
 
+        Console.WriteLine($"{on} on, {off} off, {missing} without the icon; {changed} decided otherwise by the leftmost-only rule");
         return 0;
     }
 
