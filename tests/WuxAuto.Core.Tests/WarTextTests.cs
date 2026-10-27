@@ -173,6 +173,17 @@ public class WarTextTests
         Assert.Equal(new[] { "a" }, WarText.NewLines(["a"], ["a", "a"]));
     }
 
+    [Fact]
+    public void NewLines_AnOldLineReReadWithOneLetterOfNoise_IsNotNew()
+    {
+        Assert.Empty(WarText.NewLines(["arrivedgoblinelite"], ["arrivedgob1inelite"]));
+        // the noisy old line is used up once: a second, real arrival line is new
+        Assert.Equal(new[] { "arrivedgoblinelite" }, WarText.NewLines(["arrivedgob1inelite"], ["arrivedgoblinelite", "arrivedgoblinelite"]));
+        // an exact match is not taken away by a one-letter match read before it
+        Assert.Equal(new[] { "arrivedgoblinelitf" }, WarText.NewLines(["arrivedgoblinelite"], ["arrivedgoblinelitf", "arrivedgoblinelite"]));
+        Assert.Equal(new[] { "arriveddarkspider" }, WarText.NewLines(["arrivedgoblinelite"], ["arrivedgoblinelite", "arriveddarkspider"]));
+    }
+
     [Theory]
     [InlineData("Bohai Outpost (Adept)", true)]
     [InlineData("Bohai Outpost (Adep", true)]
@@ -277,6 +288,9 @@ public class WarTextTests
     [InlineData("[Coliseum", "[Coliseum]")]                         // a short name read whole, ']' dropped
     [InlineData("[Maya Cliff)", "[Maya Cliff]")]                     // list entries at 1024x768 read some ']' as ')'
     [InlineData("[Dark Soul Cave IF", "[Dark Soul Cave IF (WD)]")]  // page 3 at 2048x1152 (OCR reads "1F" as "IF"), cut
+    [InlineData("[Dark Soul Cave 1F", "[Dark Soul Cave IF (WD)]")]  // I / l / | fold to 1, O to 0
+    [InlineData("[Dark Soul Cave lF (WD)]", "[Dark Soul Cave 1F (WD)]")]
+    [InlineData("[Bohai 0utpost (Adept)]", "[Bohai Outpost (Adept)]")]
     public void SameZone_TheSavedMap(string read, string home) => Assert.True(WarText.SameZone(read, home));
 
     [Theory]
@@ -329,8 +343,60 @@ public class WarTextTests
     [InlineData("Red Mandolin Maiden 145 25", "Red Mandolin Maiden", "Red Mandolin Maiden")]
     [InlineData("Bandit (Elite) 120 4", "Bandit (Elite)", "Bandit (Elite)")]
     [InlineData("S undersword", "Sundersword", "S undersword")]                // a real 1024x768 read: the split stays (later checks normalise)
+    [InlineData("Bone Wolf Bonewolf 120", "Bonewolf", "Bone Wolf")]            // a tie goes to the run with more words
     public void MonsterNameFromListLine_TheListsSpellingOfTheName(string line, string target, string expected)
         => Assert.Equal(expected, WarText.MonsterNameFromListLine(line, target));
+
+    [Theory]
+    [InlineData("[Dark Soul Cave X]", "[Dark Soul Cave X]", true)]
+    [InlineData("[Dark Soul Cave X)", "[Dark Soul Cave X]", true)]          // 1024x768 reads ']' as ')'
+    [InlineData("[Dark Soul Cave X|", "[Dark Soul Cave X]", true)]          // ... or as '|': a closing '|' is a bracket
+    [InlineData("[Dark Soul Cave X|", "[Dark Soul Cave X1]", false)]
+    [InlineData("[Dark Soul Cave 1F (WD)]", "[Dark Soul Cave IF (WD)]", true)]
+    [InlineData("[Dark Soul Cave X)", "[Dark Soul Cave XI]", false)]        // an entry is complete text, never a cut read
+    [InlineData("[Dark Soul Cave X", "[Dark Soul Cave XI]", false)]
+    [InlineData("[Dark Soul Cave IX]", "[Dark Soul Cave X]", false)]
+    [InlineData("[Dark Soul Cave X]", "[Dark Soul Cave IX]", false)]
+    [InlineData("[Dark Soul Cave 2F (WD)]", "[Dark Soul Cave IF (WD)]", false)]
+    [InlineData("", "[Dark Soul Cave X]", false)]
+    [InlineData("[Dark Soul Cave X]", "", false)]
+    public void SameEntry_ListEntriesAreCompleteText(string entry, string saved, bool same)
+        => Assert.Equal(same, WarText.SameEntry(entry, saved));
+
+    [Fact]
+    public void BestListEntryFolded_TheMinimapsOneReadAsTheListsI()
+    {
+        string[] page3 = ["[Mystical Grounds (WD)]", "[Dark Soul Cave IF (WD)]", "[Dark Soul Cave 2F (WD)]"];
+        Assert.Equal("[Dark Soul Cave IF (WD)]", WarText.BestListEntryFolded("[Dark Soul Cave 1F", page3, out bool amb));
+        Assert.False(amb);
+        Assert.Equal("[Dark Soul Cave 2F (WD)]", WarText.BestListEntryFolded("[Dark Soul Cave 2F", page3, out amb));
+        Assert.False(amb);
+    }
+
+    [Fact]
+    public void BestListEntryFolded_TwoEntriesThatFoldTheSame_AreAmbiguous()
+    {
+        WarText.BestListEntryFolded("[Cave I]", ["[Cave I]", "[Cave 1]"], out bool amb);
+        Assert.True(amb);
+    }
+
+    [Fact]
+    public void BestListEntryFolded_KeepsIXAndXApart()
+    {
+        Assert.Equal("[Dark Soul Cave X]", WarText.BestListEntryFolded("[Dark Soul Cave X]", ["[Dark Soul Cave IX]", "[Dark Soul Cave X]"], out bool amb));
+        Assert.False(amb);
+    }
+
+    [Theory]
+    [InlineData("[Dark Soul Cave 2F (WD)", true)]     // a digit in the name (page 3)
+    [InlineData("[Piercing City]", true)]
+    [InlineData("[The Labyrinth (Adep", true)]
+    [InlineData("[3592 , 7297", false)]                // the coordinates line
+    [InlineData("[3489. 6867", false)]
+    [InlineData("10362 , 13793", false)]
+    [InlineData("[12]", false)]
+    [InlineData("Piercing City", false)]
+    public void IsZoneTitleLine(string line, bool title) => Assert.Equal(title, WarText.IsZoneTitleLine(line));
 
     [Theory]
     [InlineData("145 25", "Goblin Elite")]

@@ -31,22 +31,28 @@ public sealed partial class AutomationPilot
     private bool _warMapCloseClicked;
 
     // Per Start (Start clears them).
-    private bool _warSpotChecked;          // this Start remembered the cave and monster
+    private bool _warSpotChecked;          // this Start is at the saved spot: remembered it, or came back to it
     private bool _warRemembering;          // Start in a cave began remembering it, not saved yet
     private int _warRefusedTeleports;      // return teleports in a row that left the character in town
+    private bool _warBarChecked;           // the skill bar held every icon (checked once per Start: buffs on cooldown after a war score lower)
 
     // Per run (ResetRunState clears them).
     private string? _warTitle;             // the minimap title read at Start (the cave)
     private bool _warWindowsChecked;       // Start closed the war windows a Stop / Fail may have left open
-    private int _warListStep;              // the page check: 0 read the list, 1 close it
-    private double _warListScale;          // the OCR scale that read the list's title
-    private string? _warListEntry;         // the cave's entry on the page ...
-    private string? _warListStopWhy;       // ... or why there is none (set by any read that showed the list)
-    private bool _warListAmbiguous;        // that why is two caves fitting, not a missing one
-    private string _warListSeen = string.Empty;   // that read's entries, for the log
+    private IReadOnlyList<string>? _warArriveBaseline;   // the combat log (normalised) before the walk to the monster
+
+    // One visit of the teleport list's page (ResetWarList): its reads, the verdict, then closing it.
+    private readonly List<WarListRead?> _warListReads = new();
+    private WarListVerdict _warListVerdict;
+    private WarListRead? _warListOutcome;  // the read the verdict rests on
+    private string _warListSeen = string.Empty;   // the entries of the last read that showed the list, for the log
+    private double _warListScale;          // the OCR scale that last read the list's title
+    private int _warListStep;              // 0 read the page, 1 close the list, 2 close the inventory
     private int _warListCloseClicks;
     private bool _warListCloseLooked;      // still open after a click: looked once more before clicking again
-    private IReadOnlyList<string>? _warArriveBaseline;   // the combat log (normalised) before the walk to the monster
+    private int _warListGoneReads;         // reads in a row without the list's title
+    private int _warInventoryTaps;
+    private bool _warInventoryLooked;
 
     /// <summary>True while Start runs the tribe war (<see cref="WuxAuto.Core.RunMode.AutoWar"/>).</summary>
     private bool IsWar => _settings.Sequence.Mode == WuxAuto.Core.RunMode.AutoWar;
@@ -58,6 +64,11 @@ public sealed partial class AutomationPilot
     private bool HasWarSpot => !string.IsNullOrWhiteSpace(_settings.War.HomeMap) && !string.IsNullOrWhiteSpace(_settings.War.HomeMonster);
 
     private string NotACaveMessage => $"Auto War must be started inside a cave on page {_settings.War.ListPage} of the teleport scroll";
+
+    /// <summary>What the teleport list is paged for, as the chevron step names it (Start's cave check has no destination).</summary>
+    private string ListPagingTarget => IsWar && _warListCheck
+        ? $"page {_settings.War.ListPage} (Auto War's cave check)"
+        : $"'{CurrentDestination}'";
 
     // War snapshots taken per tag this Start, at most 3 each (WarShot); Start clears it.
     private readonly Dictionary<string, int> _warShots = new(StringComparer.Ordinal);
@@ -87,15 +98,27 @@ public sealed partial class AutomationPilot
     }
 
     /// <summary>
-    /// The zone guard's test in Auto War (the cave of the map pick): <see cref="WarText.SameZone"/> - never the
-    /// 10-letter run that takes "[Dark Soul Cave IX]" for "[Dark Soul Cave X]". During Start's check the title Start
-    /// read also counts as it was read (no teleport since, so it is this cave even when OCR noise made the list pick
-    /// it by its closest entry).
+    /// The zone guard read another zone 3 times in a row during the map pick: start over from Focus (the Start
+    /// dispatch sorts out where the character is), counted with Fail's restarts - <see cref="SequenceSettings.MaxRestarts"/>
+    /// in 30 min - so a title that keeps reading as another zone ends in a stop instead of a loop.
     /// </summary>
-    private bool WarZoneConfirmed(string? title)
-        => WarText.SameZone(title, Destination)
-           || (_warMapVerify && title != null && _warTitle != null
-               && TextMatcher.Normalize(title) == TextMatcher.Normalize(_warTitle));
+    private void WarStartOver(Mat frame, string? title)
+    {
+        long now = Environment.TickCount64;
+        int max = _settings.Sequence.MaxRestarts;
+        _restartTimes.RemoveAll(t => now - t > 30 * 60 * 1000);
+        if (_restartTimes.Count >= max)
+        {
+            WarStop(frame, $"The minimap reads '{title}', not '{Destination}', after {max} restarts in 30 min - press Start again inside the cave");
+            return;
+        }
+
+        _restartTimes.Add(now);
+        Log?.Invoke(LogLevel.Warning, $"In '{title}' instead of {Destination} during {_phase} - starting over ({_restartTimes.Count}/{max} in 30 min).");
+        ResetRunState();
+        _runStart = now;
+        Advance(PilotPhase.Focus, 1500);
+    }
 
     // ---------------------------------------------------------------- Start
 
@@ -103,9 +126,9 @@ public sealed partial class AutomationPilot
     /// Start's dispatch (design §4.1, §5), the first thing of every run: the war windows a Stop or a Fail can leave
     /// open are closed first (the war timer's close step), then the minimap title decides - Bohai Outpost: into the
     /// war; a home town: back to the saved cave; the Labyrinth, LOD or no title: stop; a cave: every buff icon and
-    /// Shura must be on the skill bar, then back to waiting (this Start already remembered this cave) or the page
-    /// check and the remember step. Only with the game in front: behind another window the capture shows that
-    /// window's minimap, and a cave read there would be remembered.
+    /// Shura must be on the skill bar (once per Start), then - at the saved spot already - the autohunt on and the wait,
+    /// or the page check and the remember step. Only with the game in front: behind another window the capture shows
+    /// that window's minimap, and a cave read there would be remembered.
     /// </summary>
     private async Task TickWarCheckZoneAsync(Mat frame)
     {
@@ -174,8 +197,12 @@ public sealed partial class AutomationPilot
 
         // A cave (or a map that the page check rules out).
         _warTitle = title;
-        if (!WarSkillBarReady(frame))
-            return;
+        if (!_warBarChecked)
+        {
+            if (!WarSkillBarReady(frame))
+                return;
+            _warBarChecked = true;
+        }
 
         if (string.IsNullOrWhiteSpace(_settings.Lod.ShuraKey))
         {
@@ -185,7 +212,10 @@ public sealed partial class AutomationPilot
 
         if (_warSpotChecked && WarText.SameZone(title, war.HomeMap) && !string.IsNullOrWhiteSpace(war.HomeMonster))
         {
-            BeginWarWait("back in the cave");
+            // A restart at the spot (a reconnect, a failed trip back): the autohunt may be off - on first, then wait.
+            Log?.Invoke(LogLevel.Info, $"Back in {war.HomeMap} - making sure the autohunt is on, then waiting for the war.");
+            ResetAutohuntCheck();
+            Advance(PilotPhase.WarHuntOn, 200);
             return;
         }
 
@@ -193,10 +223,8 @@ public sealed partial class AutomationPilot
         _warRemembering = true;
         _warPendingMap = null;
         _warListCheck = true;
-        _warListStep = 0;
-        _warListEntry = null;
-        _warListStopWhy = null;
         _returning = false;
+        ResetWarList();
         ResetTeleportPaging();
         Advance(PilotPhase.OpenInventory, 300);
     }
@@ -252,6 +280,106 @@ public sealed partial class AutomationPilot
 
     // ---------------------------------------------------------------- the teleport list
 
+    /// <summary>One read of the teleport list's page: the entry it is sure of, or why it has none (two caves fit, or none).</summary>
+    internal readonly record struct WarListRead(string? Entry, bool Ambiguous, string? Why);
+
+    /// <summary>What the reads of a page say: read again, the entry, two caves fit, none fits, or the list never showed.</summary>
+    internal enum WarListVerdict
+    {
+        ReadAgain,
+        Pick,
+        Ambiguous,
+        Missing,
+        NoList,
+    }
+
+    /// <summary>
+    /// The verdict of the reads of one page so far (null = that read did not show the list's title) and the read it rests
+    /// on: two caves fitting in any read is final (a later read at another scale that loses one of them proves nothing);
+    /// else the first read sure of an entry; else read again until <paramref name="maxReads"/>; then "missing" from the
+    /// last read that showed the list, or "no list".
+    /// </summary>
+    internal static (WarListVerdict Verdict, int Read) DecideListReads(IReadOnlyList<WarListRead?> reads, int maxReads)
+    {
+        for (int i = 0; i < reads.Count; i++)
+        {
+            if (reads[i] is { Ambiguous: true })
+                return (WarListVerdict.Ambiguous, i);
+        }
+
+        for (int i = 0; i < reads.Count; i++)
+        {
+            if (reads[i] is { Entry: not null })
+                return (WarListVerdict.Pick, i);
+        }
+
+        if (reads.Count < maxReads)
+            return (WarListVerdict.ReadAgain, -1);
+
+        for (int i = reads.Count - 1; i >= 0; i--)
+        {
+            if (reads[i] != null)
+                return (WarListVerdict.Missing, i);
+        }
+
+        return (WarListVerdict.NoList, -1);
+    }
+
+    /// <summary>
+    /// One read of the list's page for <paramref name="name"/>, every comparison on <see cref="WarText.FoldedKey"/>s.
+    /// Start (<paramref name="returnTrip"/> false, the name is the minimap title, maybe cut): <see cref="WarText.BestListEntryFolded"/>,
+    /// and only an entry the title reads as (<see cref="WarText.SameZone"/>) - BestListEntry's score rule alone takes
+    /// "[Dark Soul Cave Y]" for "[Dark Soul Cave X]". The trip back (the name is the saved entry): only an entry equal to
+    /// it (<see cref="WarText.SameEntry"/>; entries are never cut); two such = ambiguous.
+    /// </summary>
+    internal static WarListRead JudgeListRead(string name, IReadOnlyList<string> entries, int page, bool returnTrip)
+    {
+        string notHere = $"'{name}' is not on page {page} of the teleport scroll";
+        if (returnTrip)
+        {
+            var same = entries.Where(e => WarText.SameEntry(e, name)).ToList();
+            if (same.Count == 1)
+                return new WarListRead(same[0], false, null);
+            if (same.Count > 1)
+                return new WarListRead(null, true, $"'{name}' could be '{same[0]}' or '{same[1]}' on page {page} of the teleport scroll - not guessing which cave");
+
+            string? closest = WarText.BestListEntryFolded(name, entries, out _);
+            return new WarListRead(null, false, closest == null
+                ? notHere
+                : $"The closest entry on page {page} of the teleport scroll is '{closest}', not '{name}' - not clicking it");
+        }
+
+        string? entry = WarText.BestListEntryFolded(name, entries, out bool ambiguous);
+        if (entry == null)
+            return new WarListRead(null, false, notHere);
+        if (ambiguous)
+            return new WarListRead(null, true, $"'{name}' could be {TwoBest(name, entries, entry)} on page {page} of the teleport scroll - not guessing which cave");
+        if (!WarText.SameZone(name, entry))
+            return new WarListRead(null, false, $"The minimap reads '{name}', the closest entry on page {page} is '{entry}' - not sure it is this cave");
+        return new WarListRead(entry, false, null);
+    }
+
+    /// <summary>"'a' or 'b'": the pick and the entry that reads next most like <paramref name="name"/>.</summary>
+    private static string TwoBest(string name, IReadOnlyList<string> entries, string best)
+    {
+        string? second = entries
+            .Where(e => e != best)
+            .OrderByDescending(e => TextMatcher.Similarity(WarText.FoldedKey(e), WarText.FoldedKey(name)))
+            .FirstOrDefault();
+        return second == null ? $"'{best}'" : $"'{best}' or '{second}'";
+    }
+
+    /// <summary>A fresh visit of the teleport list's page: no reads, nothing to close.</summary>
+    private void ResetWarList()
+    {
+        _warListReads.Clear();
+        _warListVerdict = WarListVerdict.ReadAgain;
+        _warListOutcome = null;
+        _warListSeen = string.Empty;
+        _warListScale = TeleportListScale(0);
+        _warListStep = 0;
+    }
+
     /// <summary>The teleport phases page from the first page; a fresh list visit starts there.</summary>
     private void ResetTeleportPaging()
     {
@@ -277,55 +405,44 @@ public sealed partial class AutomationPilot
         return (title, title == null ? [] : WarText.TeleportListEntries(lines, title.Value.Bounds));
     }
 
-    /// <summary>"'a' or 'b'": the pick and the entry that reads next most like <paramref name="name"/>.</summary>
-    private static string TwoBest(string name, IReadOnlyList<(string Text, PixelRect Bounds)> entries, string best)
-    {
-        string? second = entries.Select(e => e.Text)
-            .Where(e => e != best)
-            .OrderByDescending(e => TextMatcher.Similarity(e, name))
-            .FirstOrDefault();
-        return second == null ? $"'{best}'" : $"'{best}' or '{second}'";
-    }
+    /// <summary>One read of the open teleport list on this frame: where its title and the picked entry are, and the judgement.</summary>
+    private sealed record WarListPick(PixelRect Title, PixelRect EntryBounds, WarListRead Read, string Seen);
 
-    /// <summary>One read of the open teleport list: the title, and the entry when sure, else why there is none.</summary>
-    private sealed record WarListPick(PixelRect Title, string? Entry, PixelRect EntryBounds, string? Why, bool Ambiguous, string Seen);
-
-    /// <summary>
-    /// One read of the open teleport list for <paramref name="name"/>: <see cref="WarText.BestListEntry"/>, and with
-    /// <paramref name="sameZone"/> only an entry that reads as the name itself (<see cref="WarText.SameZone"/> - the
-    /// prefix rule alone would take "[Dark Soul Cave XI]" for a misread "[Dark Soul Cave X]"). Missing, ambiguous or
-    /// not the same: <see cref="WarListPick.Why"/>. Null when the list's title does not show.
-    /// </summary>
-    private async Task<WarListPick?> ReadWarListPickAsync(Mat frame, double scale, string name, bool sameZone)
+    /// <summary>One read of the list's page at <paramref name="scale"/> (<see cref="JudgeListRead"/>); null when its title does not show.</summary>
+    private async Task<WarListPick?> ReadWarListPickAsync(Mat frame, double scale, string name, bool returnTrip)
     {
         var (title, entries) = await ReadTeleportListAsync(frame, scale);
         if (title == null)
             return null;
 
-        int page = _settings.War.ListPage;
+        var read = JudgeListRead(name, entries.Select(e => e.Text).ToList(), _settings.War.ListPage, returnTrip);
+        var entryBounds = read.Entry == null ? default : entries.First(e => e.Text == read.Entry).Bounds;
         string seen = entries.Count == 0 ? "no entries read" : string.Join(" | ", entries.Select(e => e.Text));
-        string? entry = WarText.BestListEntry(name, entries.Select(e => e.Text).ToList(), out bool ambiguous);
-        string? why = entry == null
-            ? $"'{name}' is not on page {page} of the teleport scroll"
-            : ambiguous
-                ? $"'{name}' could be {TwoBest(name, entries, entry)} on page {page} of the teleport scroll - not guessing which cave"
-                : sameZone && !WarText.SameZone(entry, name)
-                    ? $"The closest entry on page {page} of the teleport scroll is '{entry}', not '{name}' - not clicking it"
-                    : null;
-        return why != null
-            ? new WarListPick(title.Value.Bounds, null, default, why, entry != null && ambiguous, seen)
-            : new WarListPick(title.Value.Bounds, entry, entries.First(e => e.Text == entry).Bounds, null, false, seen);
+        return new WarListPick(title.Value.Bounds, entryBounds, read, seen);
+    }
+
+    /// <summary>Adds this tick's read of the page and returns what the reads say now.</summary>
+    private (WarListVerdict Verdict, int Read) AddListRead(WarListPick? pick, double scale)
+    {
+        _warListReads.Add(pick?.Read);
+        if (pick != null)
+        {
+            _warListScale = scale;
+            _warListSeen = pick.Seen;
+        }
+
+        return DecideListReads(_warListReads, 3);
     }
 
     /// <summary>
     /// Start's page check (design §4.1.1), ticked in FindDestination: page to <see cref="WarSettings.ListPage"/>, read
-    /// it (up to 3 reads at other OCR scales while the cave is missing or ambiguous; the last read that showed the list
-    /// decides), close the list with its X - never an entry - then stop or remember the entry that
-    /// <see cref="WarText.BestListEntry"/> gives for Start's title.
+    /// it (<see cref="JudgeListRead"/>, up to 3 reads at other OCR scales while the cave is missing;
+    /// <see cref="DecideListReads"/>), close the list with its X - never an entry - and the inventory, then remember the
+    /// entry or stop.
     /// </summary>
     private async Task TickWarListCheckAsync(Mat frame)
     {
-        if (_warListStep == 1)
+        if (_warListStep > 0)
         {
             await TickWarListCloseAsync(frame);
             return;
@@ -333,67 +450,155 @@ public sealed partial class AutomationPilot
 
         long now = Environment.TickCount64;
         var war = _settings.War;
+        if (!_input.IsTargetForeground)
+        {
+            _detail = "waiting for the game window to be in front";
+            _waitUntil = now + 500;
+            return;
+        }
+
         if (_pages + 1 < war.ListPage)
         {
             Advance(PilotPhase.FindChevron, _settings.Sequence.RetryDelayMs);
             return;
         }
 
-        double scale = TeleportListScale(_attempts);
-        var pick = await ReadWarListPickAsync(frame, scale, _warTitle ?? string.Empty, sameZone: false);
-        if (pick != null)
+        double scale = TeleportListScale(_warListReads.Count);
+        var pick = await ReadWarListPickAsync(frame, scale, _warTitle ?? string.Empty, returnTrip: false);
+        var (verdict, read) = AddListRead(pick, scale);
+        if (verdict == WarListVerdict.ReadAgain)
         {
-            _warListScale = scale;
-            _warListStopWhy = pick.Why;
-            _warListSeen = pick.Seen;
-        }
-
-        if (pick?.Entry == null && ++_attempts < 3)
-        {
-            _detail = $"reading page {war.ListPage} of the teleport scroll ({_attempts}/3)";
+            _detail = $"reading page {war.ListPage} of the teleport scroll ({_warListReads.Count}/3)";
             _waitUntil = now + 700;
             return;
         }
 
-        if (pick?.Entry == null && _warListStopWhy == null)
-        {
-            Fail(frame, $"The teleport scroll shows no '{WarText.TeleportScrollTitle}' title on page {war.ListPage} - the list did not open?");
-            return;
-        }
-
-        Log?.Invoke(LogLevel.Info, $"Page {war.ListPage} of the teleport scroll: {_warListSeen}.");
-        _warListEntry = pick?.Entry;
-        if (_warListEntry != null)
-            _warListStopWhy = null;
-
-        // Closed first, whatever the outcome: its X, never an entry. This frame's title when it shows one,
-        // else the close step looks for it on the next frame.
-        _warListStep = 1;
-        _warListCloseClicks = 0;
-        _warListCloseLooked = false;
-        if (pick != null)
-            ClickTeleportListClose(frame, pick.Title);
-        else
-            _waitUntil = now + 300;
+        BeginWarListClose(frame, verdict, read, pick);
     }
 
     /// <summary>
-    /// The list check's close: the title gone = closed, then on with the decision. Still there right after a click:
-    /// one more look first - the window may only be slow to close, and a second click where its X was would then land
-    /// in the world (a click there walks the character). At most 3 clicks, each decided on a fresh frame.
+    /// The trip back's teleport pick (design §4.8.1), ticked in FindDestination: page to
+    /// <see cref="WarSettings.ListPage"/>, then click the saved map's entry (<see cref="JudgeListRead"/>: equal to it,
+    /// never a guess) on the frame it was read on. Otherwise, after the list and the inventory are closed: two caves fitting
+    /// stop the pilot (Start checked the cave was unique); missing or no list - an OCR or paging miss, or the cave gone
+    /// from the list - fails, so the restart tries again.
+    /// </summary>
+    private async Task TickWarDestinationAsync(Mat frame)
+    {
+        if (_warListStep > 0)
+        {
+            await TickWarListCloseAsync(frame);
+            return;
+        }
+
+        long now = Environment.TickCount64;
+        var war = _settings.War;
+        if (!_input.IsTargetForeground)
+        {
+            _detail = "waiting for the game window to be in front";
+            _waitUntil = now + 500;
+            return;
+        }
+
+        if (_pages + 1 < war.ListPage)
+        {
+            Advance(PilotPhase.FindChevron, _settings.Sequence.RetryDelayMs);
+            return;
+        }
+
+        double scale = TeleportListScale(_warListReads.Count);
+        var pick = await ReadWarListPickAsync(frame, scale, war.HomeMap, returnTrip: true);
+        var (verdict, read) = AddListRead(pick, scale);
+        if (verdict == WarListVerdict.ReadAgain)
+        {
+            _detail = $"reading page {war.ListPage} of the teleport scroll for '{war.HomeMap}' ({_warListReads.Count}/3)";
+            _waitUntil = now + 700;
+            return;
+        }
+
+        // The first read sure of the entry ends the reading, so a pick is always this frame's read.
+        if (verdict == WarListVerdict.Pick && pick is { Read.Entry: { } entry })
+        {
+            _overlays.Add(new OverlayItem(pick.EntryBounds, entry, OverlayColor.Green));
+            if (!WarClick(pick.EntryBounds, $"'{entry}' in the teleport scroll"))
+            {
+                // Not sent (the game went behind another window): this read decides nothing, read again.
+                _warListReads.RemoveAt(_warListReads.Count - 1);
+                return;
+            }
+
+            _preLoadHash = FrameSignature.Compute(frame, new PixelRect(0, 0, frame.Width, frame.Height));
+            Advance(PilotPhase.WaitForLoad, _settings.Input.AfterClickMs);
+            return;
+        }
+
+        BeginWarListClose(frame, verdict, read, pick);
+    }
+
+    /// <summary>
+    /// The reads have decided (anything but a click on the entry): keep the verdict, then close the list - with its X on
+    /// this frame when this read showed the title, else from the next frame - and the inventory, then
+    /// <see cref="WarListFinish"/>.
+    /// </summary>
+    private void BeginWarListClose(Mat frame, WarListVerdict verdict, int read, WarListPick? pick)
+    {
+        _warListVerdict = verdict;
+        _warListOutcome = read >= 0 ? _warListReads[read] : null;
+        if (_warListReads.Any(r => r != null))
+            Log?.Invoke(LogLevel.Info, $"Page {_settings.War.ListPage} of the teleport scroll: {_warListSeen}.");
+
+        _warListStep = 1;
+        _warListCloseClicks = 0;
+        _warListCloseLooked = false;
+        _warListGoneReads = 0;
+        _warInventoryTaps = 0;
+        _warInventoryLooked = false;
+        if (pick != null)
+            TryClickListClose(frame, pick.Title);
+        else
+            _waitUntil = Environment.TickCount64 + 300;
+    }
+
+    /// <summary>
+    /// Closing the list (step 1), then the inventory (step 2), one look per tick, game in front only. The list counts as
+    /// closed after 2 reads in a row without its title. Still there right after a click: one more look first - the window
+    /// may only be slow to close, and a second click where its X was would then land in the world (a click there walks
+    /// the character). At most 3 clicks; no X found = left open with a warning.
     /// </summary>
     private async Task TickWarListCloseAsync(Mat frame)
     {
         long now = Environment.TickCount64;
-        var (title, _) = await ReadTeleportListAsync(frame, _warListScale);
-        if (title == null)
+        if (!_input.IsTargetForeground)
         {
-            if (_warListCloseClicks > 0)
-                Log?.Invoke(LogLevel.Info, "The teleport scroll is closed.");
-            WarListDecided(frame);
+            _detail = "waiting for the game window to be in front";
+            _waitUntil = now + 500;
             return;
         }
 
+        if (_warListStep == 2)
+        {
+            TickWarInventoryClose(frame);
+            return;
+        }
+
+        var (title, _) = await ReadTeleportListAsync(frame, _warListScale);
+        if (title == null)
+        {
+            if (++_warListGoneReads < 2)
+            {
+                _detail = "checking the teleport scroll is closed";
+                _waitUntil = now + 400;
+                return;
+            }
+
+            if (_warListCloseClicks > 0)
+                Log?.Invoke(LogLevel.Info, "The teleport scroll is closed.");
+            _warListStep = 2;
+            _waitUntil = now + 200;
+            return;
+        }
+
+        _warListGoneReads = 0;
         if (_warListCloseClicks > 0 && !_warListCloseLooked)
         {
             _warListCloseLooked = true;
@@ -406,104 +611,127 @@ public sealed partial class AutomationPilot
         {
             Log?.Invoke(LogLevel.Warning, $"The teleport scroll is still open after {_warListCloseClicks} clicks on its X - leaving it open.");
             WarShot(frame, "war_list_open");
-            WarListDecided(frame);
+            _warListStep = 2;
+            _waitUntil = now + 200;
             return;
         }
 
-        _warListCloseLooked = false;
-        ClickTeleportListClose(frame, title.Value.Bounds);
+        TryClickListClose(frame, title.Value.Bounds);
     }
 
-    /// <summary>One click on the X right of the TELEPORT SCROLL title; a dry run goes on with the decision.</summary>
-    private void ClickTeleportListClose(Mat frame, PixelRect title)
+    /// <summary>
+    /// One click on the X right of the TELEPORT SCROLL title - a bright blob there (<see cref="ScreenAnalyzer.FindCloseBlobRightOf"/>),
+    /// never a guessed point. None: the list is left open with a warning. A dry run goes on to the inventory step.
+    /// </summary>
+    private void TryClickListClose(Mat frame, PixelRect title)
     {
-        var close = _analyzer.FindCloseButtonRightOf(frame, title);
+        long now = Environment.TickCount64;
         _overlays.Add(new OverlayItem(title, WarText.TeleportScrollTitle, OverlayColor.Blue));
-        _overlays.Add(new OverlayItem(close, "close", OverlayColor.Green));
-        if (!WarClick(close, "the X of the teleport scroll"))
+        var close = _analyzer.FindCloseBlobRightOf(frame, title);
+        if (close == null)
+        {
+            Log?.Invoke(LogLevel.Warning, $"No close button shows right of the {WarText.TeleportScrollTitle} title - leaving the list open.");
+            WarShot(frame, "war_list_open");
+            _warListStep = 2;
+            _waitUntil = now + 200;
+            return;
+        }
+
+        _overlays.Add(new OverlayItem(close.Value, "close", OverlayColor.Green));
+        if (!WarClick(close.Value, "the X of the teleport scroll"))
             return;     // the game is not in front: the close step looks again
 
         if (_input.IsDryRun)
         {
             // Nothing was clicked: looking again would only find the same window.
-            WarListDecided(frame);
+            _warListStep = 2;
             return;
         }
 
         _warListCloseClicks++;
-        _waitUntil = Environment.TickCount64 + 700;
-    }
-
-    /// <summary>The list is closed (or left open with a warning): stop, or remember the cave's entry.</summary>
-    private void WarListDecided(Mat frame)
-    {
-        if (_warListStopWhy != null || _warListEntry == null)
-        {
-            WarStop(frame, _warListStopWhy ?? NotACaveMessage);
-            return;
-        }
-
-        _warPendingMap = _warListEntry;
-        _warListCheck = false;
-        Log?.Invoke(LogLevel.Success, $"'{_warTitle}' is '{_warListEntry}' on page {_settings.War.ListPage} of the teleport scroll.");
-        Advance(PilotPhase.WarRemember, 500);
+        _warListCloseLooked = false;
+        _warListGoneReads = 0;
+        _waitUntil = now + 700;
     }
 
     /// <summary>
-    /// The trip back's teleport pick (design §4.8.1), ticked in FindDestination: page to
-    /// <see cref="WarSettings.ListPage"/>, then click the saved map's entry - only one that reads as that map
-    /// (<see cref="ReadWarListPickAsync"/> with <c>sameZone</c>), on the frame it was read on; never a guess. After 3
-    /// reads at other OCR scales: two caves that fit stop the pilot (Start checked the cave was unique); missing or
-    /// not the same - an OCR or paging miss, or the cave gone from the list - fails, so the restart tries again.
+    /// Step 2: the inventory the teleport opened. Laby / LOD teleport away and the zone change closes it; here the alt
+    /// stays. The teleport scroll still on screen -> the inventory key, checked on a later frame (one more look before a
+    /// second tap - the key is a toggle), at most 2 taps, else a warning. Then <see cref="WarListFinish"/>. A dry run
+    /// presses nothing.
     /// </summary>
-    private async Task TickWarDestinationAsync(Mat frame)
+    private void TickWarInventoryClose(Mat frame)
     {
         long now = Environment.TickCount64;
-        var war = _settings.War;
-        if (_pages + 1 < war.ListPage)
+        string key = _settings.Input.InventoryKey;
+        if (_input.IsDryRun)
         {
-            Advance(PilotPhase.FindChevron, _settings.Sequence.RetryDelayMs);
+            WarListFinish(frame);
             return;
         }
 
-        string home = war.HomeMap;
-        var pick = await ReadWarListPickAsync(frame, TeleportListScale(_attempts), home, sameZone: true);
-        if (pick != null)
+        var roi = _settings.Regions.Scroll.ToPixels(frame.Width, frame.Height);
+        if (_analyzer.FindIcon(frame, "teleportscroll", roi, ScrollThreshold) == null)
         {
-            _warListStopWhy = pick.Why;
-            _warListAmbiguous = pick.Ambiguous;
-            _warListSeen = pick.Seen;
+            if (_warInventoryTaps > 0)
+                Log?.Invoke(LogLevel.Info, "The inventory is closed.");
+            WarListFinish(frame);
+            return;
         }
 
-        if (pick?.Entry == null)
+        if (_warInventoryTaps > 0 && !_warInventoryLooked)
         {
-            if (++_attempts < 3)
-            {
-                _detail = $"reading page {war.ListPage} of the teleport scroll for '{home}' ({_attempts}/3)";
-                _waitUntil = now + 700;
+            _warInventoryLooked = true;
+            _detail = "waiting for the inventory to close";
+            _waitUntil = now + 700;
+            return;
+        }
+
+        if (_warInventoryTaps >= 2)
+        {
+            Log?.Invoke(LogLevel.Warning, $"The inventory still shows the teleport scroll after {_warInventoryTaps} taps of '{key}' - leaving it open.");
+            WarShot(frame, "war_inventory_open");
+            WarListFinish(frame);
+            return;
+        }
+
+        if (!_input.KeyTap(key))
+        {
+            _detail = "inventory key blocked - waiting for the game to be in front";
+            _waitUntil = now + 300;
+            return;
+        }
+
+        _warInventoryTaps++;
+        _warInventoryLooked = false;
+        Log?.Invoke(LogLevel.Info, $"Closing the inventory with '{key}'.");
+        _waitUntil = now + 700;
+    }
+
+    /// <summary>
+    /// The list and the inventory are closed (or left with a warning): Start's check remembers the entry or stops; the
+    /// trip back stops on two fitting caves and fails (restart) on a missing one or a list that never showed.
+    /// </summary>
+    private void WarListFinish(Mat frame)
+    {
+        string why = _warListOutcome?.Why
+                     ?? $"The teleport scroll shows no '{WarText.TeleportScrollTitle}' title on page {_settings.War.ListPage} - the list did not open?";
+        switch (_warListVerdict)
+        {
+            case WarListVerdict.Pick when _warListCheck && _warListOutcome?.Entry is { } entry:
+                _warPendingMap = entry;
+                _warListCheck = false;
+                Log?.Invoke(LogLevel.Success, $"'{_warTitle}' is '{entry}' on page {_settings.War.ListPage} of the teleport scroll.");
+                Advance(PilotPhase.WarRemember, 500);
                 return;
-            }
-
-            if (_warListStopWhy == null)
-            {
-                Fail(frame, $"The teleport scroll shows no '{WarText.TeleportScrollTitle}' title on page {war.ListPage} - the list did not open?");
+            case WarListVerdict.Ambiguous:
+            case WarListVerdict.Missing when _warListCheck:
+                WarStop(frame, why);
                 return;
-            }
-
-            Log?.Invoke(LogLevel.Info, $"Page {war.ListPage} of the teleport scroll: {_warListSeen}.");
-            if (_warListAmbiguous)
-                WarStop(frame, _warListStopWhy);
-            else
-                Fail(frame, $"{_warListStopWhy}.");
-            return;
+            default:
+                Fail(frame, why.EndsWith('?') ? why : $"{why}.");
+                return;
         }
-
-        _overlays.Add(new OverlayItem(pick.EntryBounds, pick.Entry, OverlayColor.Green));
-        if (!WarClick(pick.EntryBounds, $"'{pick.Entry}' in the teleport scroll"))
-            return;
-
-        _preLoadHash = FrameSignature.Compute(frame, new PixelRect(0, 0, frame.Width, frame.Height));
-        Advance(PilotPhase.WaitForLoad, _settings.Input.AfterClickMs);
     }
 
     // ---------------------------------------------------------------- remembering the spot
@@ -512,7 +740,7 @@ public sealed partial class AutomationPilot
     /// Start's remember step (design §4.1.3): the targeted monster (target bar; Tab up to 3 times, 1 s apart, when
     /// none shows - the alt is autohunting, so one normally does) goes to the map check (ClickMap in verify mode,
     /// which also swaps in the list's spelling of the name); back here once it is confirmed, the cave and monster are
-    /// saved in settings and the wait for the war begins.
+    /// saved in settings and the wait for the war begins. The target bar is only read with the game in front.
     /// </summary>
     private async Task TickWarRememberAsync(Mat frame)
     {
@@ -537,6 +765,13 @@ public sealed partial class AutomationPilot
             _warRemembering = false;
             Log?.Invoke(LogLevel.Success, $"Remembered {war.HomeMap} / {war.HomeMonster}.");
             BeginWarWait("spot remembered");
+            return;
+        }
+
+        if (!_input.IsTargetForeground)
+        {
+            _detail = "waiting for the game window to be in front";
+            _waitUntil = now + 500;
             return;
         }
 
@@ -612,28 +847,37 @@ public sealed partial class AutomationPilot
         _warPendingMap = null;
         _warPendingMonster = null;
         _warMonsterConfirmed = false;
-        _warListStopWhy = null;
-        _warListAmbiguous = false;
         _warArriveBaseline = null;
+        ResetWarList();
         ResetTeleportPaging();
         Advance(PilotPhase.OpenInventory, 1500);
     }
 
     /// <summary>
     /// After the return teleport's load (design §4.8.2): the saved map on the minimap (<see cref="WarText.SameZone"/>)
-    /// -> the map pick of the saved monster. Still in a home town after 60 s: the teleport was refused (a premium pass
-    /// ran out, ...) - once more, the second time in a row stop. Neither for 60 s: fail (the restart's dispatch sorts
-    /// it out). The title is only read with the game in front.
+    /// -> this Start is at its spot, the map pick of the saved monster. Still in a home town after 60 s: the teleport was
+    /// refused (a premium pass ran out, ...) - once more, the second time in a row stop. Neither for 60 s: fail (the
+    /// restart's dispatch sorts it out). The title is only read with the game in front, and the 60 s only count then
+    /// (they start again when the game comes back, as the zone guard's 2 minutes do).
     /// </summary>
     private async Task TickWarBackAsync(Mat frame)
     {
         long now = Environment.TickCount64;
         var war = _settings.War;
+        if (!_input.IsTargetForeground)
+        {
+            _phaseStart = now;
+            _detail = "waiting for the game window to be in front";
+            _waitUntil = now + 500;
+            return;
+        }
+
         long waited = now - _phaseStart;
-        string? title = _input.IsTargetForeground ? await ReadMinimapTitleAsync(frame) : null;
+        string? title = await ReadMinimapTitleAsync(frame);
         if (WarText.SameZone(title, war.HomeMap))
         {
             _warRefusedTeleports = 0;
+            _warSpotChecked = true;
             _zoneConfirmedAt = now;
             // The combat log before the walk: the arrival is the "Arrived" line that is not in it - taken now, before
             // the map covers the log, so a short walk's line right after the '>' click is not missed.
@@ -674,18 +918,27 @@ public sealed partial class AutomationPilot
         return ScreenAnalyzer.ToLines(await _analyzer.Ocr.RecognizeAsync(frame, roi, 1.5)).Select(l => l.Text).ToList();
     }
 
-    /// <summary><see cref="WarText.NewLines"/> compares exact strings: both sides normalised the same way.</summary>
+    /// <summary><see cref="WarText.NewLines"/> compares the lines' text: both sides normalised the same way.</summary>
     private static List<string> Normalized(IReadOnlyList<string> lines) => lines.Select(TextMatcher.Normalize).ToList();
 
     /// <summary>
     /// Walking to the monster (design §4.8.4): a combat-log line "Arrived: &lt;monster&gt;" that was not there before the
-    /// walk (an old one from an earlier trip does not count), read every 700 ms; none in ArriveWaitMs -> a warning and
-    /// a <c>war_noarrive</c> snapshot, and on all the same. Then the autohunt goes on.
+    /// walk (an old one from an earlier trip does not count, even re-read with a letter of noise), read every 700 ms with
+    /// the game in front; none in ArriveWaitMs (counted with the game in front) -> a warning and a <c>war_noarrive</c>
+    /// snapshot, and on all the same. Then the autohunt goes on.
     /// </summary>
     private async Task TickWarArriveAsync(Mat frame)
     {
         long now = Environment.TickCount64;
         var war = _settings.War;
+        if (!_input.IsTargetForeground)
+        {
+            _phaseStart = now;
+            _detail = "waiting for the game window to be in front";
+            _waitUntil = now + 500;
+            return;
+        }
+
         var raw = await ReadCombatLogAsync(frame);
         var lines = Normalized(raw);
         if (_warArriveBaseline == null)
@@ -721,9 +974,9 @@ public sealed partial class AutomationPilot
     }
 
     /// <summary>
-    /// At the monster (design §4.8.5): the autohunt on, confirmed in the combat log (J is a toggle), then the wait for
-    /// the next war. The check also ends when it cannot tell (no line, or still off after 3 taps - it warns and saves
-    /// a snapshot itself): "hunting again" is only claimed when it read "on".
+    /// At the monster (design §4.8.5), or Start / a restart already at the saved spot: the autohunt on, confirmed in the
+    /// combat log (J is a toggle), then the wait for the next war. The check also ends when it cannot tell (no line, or
+    /// still off after 3 taps - it warns and saves a snapshot itself): "hunting again" is only claimed when it read "on".
     /// </summary>
     private async Task TickWarHuntOnAsync(Mat frame)
     {
@@ -738,8 +991,6 @@ public sealed partial class AutomationPilot
             return;
         }
 
-        Log?.Invoke(_input.IsDryRun ? LogLevel.Info : LogLevel.Warning,
-            $"Back at '{war.HomeMonster}' in {war.HomeMap}, but the autohunt was not read as on - waiting for the next war anyway.");
         BeginWarWait("autohunt not confirmed on");
     }
 

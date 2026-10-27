@@ -335,6 +335,7 @@ public sealed partial class AutomationPilot
         _warSpotChecked = false;
         _warRemembering = false;
         _warRefusedTeleports = 0;
+        _warBarChecked = false;
         _warShots.Clear();
         _runStart = Environment.TickCount64;
         ResetRunState();
@@ -455,9 +456,7 @@ public sealed partial class AutomationPilot
         _warTimerStep = 0;
         _warTitle = null;
         _warWindowsChecked = false;
-        _warListStep = 0;
-        _warListEntry = null;
-        _warListStopWhy = null;
+        ResetWarList();
         _warArriveBaseline = null;
         _stuckShots = 0;
         _finalHuntOffChecked = false;
@@ -577,8 +576,8 @@ public sealed partial class AutomationPilot
                 string zone = title == null ? string.Empty : TextMatcher.Normalize(title);
                 string? townSeen = TownIn(title);
 
-                // Auto War: the cave itself, never a sibling sharing its first 10 letters (WarZoneConfirmed).
-                if (IsWar ? WarZoneConfirmed(title) : ZoneMatches(title, Destination))
+                // Auto War: the cave itself, never a sibling sharing its first 10 letters (WarText.SameZone).
+                if (IsWar ? WarText.SameZone(title, Destination) : ZoneMatches(title, Destination))
                 {
                     _zoneConfirmedAt = now;
                     _otherZoneReads = 0;
@@ -606,18 +605,13 @@ public sealed partial class AutomationPilot
                     bool inTown = townSeen != null;
 
                     // Auto War: sent to town = back to the cave; anywhere else = start over (the
-                    // Start dispatch sorts out where the character is).
+                    // Start dispatch sorts out where the character is), within the restart limit.
                     if (IsWar)
                     {
                         if (inTown)
                             BeginWarReturn(frame, $"in {HomeTown} during {_phase}");
                         else
-                        {
-                            Log?.Invoke(LogLevel.Warning, $"In '{title}' instead of {Destination} during {_phase} - starting over.");
-                            ResetRunState();
-                            _runStart = Environment.TickCount64;
-                            Advance(PilotPhase.Focus, 1500);
-                        }
+                            WarStartOver(frame, title);
 
                         return;
                     }
@@ -1696,7 +1690,7 @@ public sealed partial class AutomationPilot
         if (matches.Count == 0)
         {
             _chevronMissing = true;
-            Fail(frame, $"rightchevron.png was not found in the destination list region, so '{CurrentDestination}' cannot be paged to. Widen Sequence ▸ Regions ▸ Teleport list, or re-crop rightchevron.png.");
+            Fail(frame, $"rightchevron.png was not found in the destination list region, so {ListPagingTarget} cannot be paged to. Widen Sequence ▸ Regions ▸ Teleport list, or re-crop rightchevron.png.");
             return;
         }
 
@@ -1714,8 +1708,8 @@ public sealed partial class AutomationPilot
 
         _pages++;
         Log?.Invoke(LogLevel.Info, _pagingBack
-            ? $"Paged the destination list back looking for '{CurrentDestination}'."
-            : $"Paged the destination list (page {_pages}) looking for '{CurrentDestination}'.");
+            ? $"Paged the destination list back looking for {ListPagingTarget}."
+            : $"Paged the destination list (page {_pages}) looking for {ListPagingTarget}.");
         Advance(PilotPhase.FindDestination, _settings.Input.AfterClickMs + _settings.Sequence.RetryDelayMs);
     }
 
@@ -5010,7 +5004,9 @@ public sealed partial class AutomationPilot
     /// <summary>
     /// The zone name at the top of the minimap panel, e.g. "[The Labyrinth (Adep", "[Piercing City)",
     /// "[Bohai Outpost (Adep": the first line there that starts with '[' and has no digits (the
-    /// coordinates line below it has digits). Null when it cannot be read.
+    /// coordinates line below it has digits). Null when it cannot be read. Auto War's caves can have
+    /// digits ("[Dark Soul Cave 2F (WD)]"), so there any '[' line that is no coordinates line
+    /// counts (<see cref="WarText.IsZoneTitleLine"/>).
     /// </summary>
     private async Task<string?> ReadMinimapTitleAsync(Mat frame)
     {
@@ -5018,7 +5014,9 @@ public sealed partial class AutomationPilot
         var words = await _analyzer.Ocr.RecognizeAsync(frame, band, 2.0);
         var lines = words.Select(w => w.LineText.Trim()).Distinct().ToList();
         return lines.FirstOrDefault(l => ZoneMatches(l, Destination))
-               ?? lines.FirstOrDefault(l => l.StartsWith('[') && !l.Any(char.IsDigit) && TextMatcher.Normalize(l).Length >= 4);
+               ?? lines.FirstOrDefault(l => IsWar
+                   ? WarText.IsZoneTitleLine(l)
+                   : l.StartsWith('[') && !l.Any(char.IsDigit) && TextMatcher.Normalize(l).Length >= 4);
     }
 
     /// <summary>

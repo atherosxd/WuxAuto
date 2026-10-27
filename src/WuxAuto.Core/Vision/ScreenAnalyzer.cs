@@ -731,6 +731,19 @@ public sealed class ScreenAnalyzer : IDisposable
     }
 
     /// <summary>
+    /// Auto War: the X right of a window title found the way <see cref="FindCloseButtonRightOf"/> finds it (the first
+    /// button-sized bright blob in the same band), but null when there is none instead of a guessed point - a blind
+    /// click there can land in the world. The TELEPORT SCROLL's X was a blob on all 12 saved frames with the list open
+    /// (1024x768 to 2048x1152).
+    /// </summary>
+    public PixelRect? FindCloseBlobRightOf(Mat frame, PixelRect title)
+    {
+        int h = Math.Max(6, title.Height);
+        var band = new PixelRect(title.Right + 2, title.Y - h, 6 * h, title.Height + 2 * h).Clamp(frame.Width, frame.Height);
+        return ButtonBlobs(frame, band, h).OrderBy(b => b.X).Select(b => (PixelRect?)b).FirstOrDefault();
+    }
+
+    /// <summary>
     /// Auto War: the bright blobs in <paramref name="band"/> of button size (3 px to 3 text heights each way, as
     /// <see cref="FindCloseButtonRightOf"/> takes them).
     /// </summary>

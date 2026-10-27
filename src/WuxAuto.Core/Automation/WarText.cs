@@ -266,25 +266,83 @@ public static class WarText
     public const string TeleportScrollTitle = "TELEPORT SCROLL";
 
     /// <summary>
-    /// A minimap title read (<paramref name="readTitle"/>) names the saved map <paramref name="home"/> and no other:
-    /// a read ending in ']' is complete and must equal it (normalised); any other read is cut at the panel's edge
-    /// (or its ']' was not read) and must be the start of it, at least 10 letters long, or all of it. "[Dark Soul
-    /// Cave IX]" never confirms "[Dark Soul Cave X]", nor the other way round - the 10-letter run of
-    /// <c>ZoneMatches</c> would.
+    /// A zone or map name as Auto War compares it: <see cref="TextMatcher.Normalize"/> after folding the characters OCR
+    /// mixes up - 'I', 'l' and '|' read as '1', 'O' as '0' (page 3's "[Dark Soul Cave 1F (WD)]" reads "IF"). A '|' that
+    /// ends the text is its closing bracket, not a '1'. "IX" and "X" stay apart.
+    /// </summary>
+    public static string FoldedKey(string text)
+    {
+        string t = text.TrimEnd();
+        if (t.EndsWith('|'))
+            t = t[..^1];
+        var folded = t.Select(c => c is 'I' or 'l' or '|' ? '1' : c == 'O' ? '0' : c).ToArray();
+        return TextMatcher.Normalize(new string(folded));
+    }
+
+    /// <summary>
+    /// A minimap title read (<paramref name="readTitle"/>) names the saved map <paramref name="home"/> and no other
+    /// (both <see cref="FoldedKey"/>): a read ending in ']' is complete and must equal it; any other read is cut at the
+    /// panel's edge (or its ']' was not read) and must be the start of it, at least 10 letters long, or all of it.
+    /// "[Dark Soul Cave IX]" never confirms "[Dark Soul Cave X]", nor the other way round - the 10-letter run of
+    /// <c>ZoneMatches</c> would. For a teleport-list entry, which is never cut, use <see cref="SameEntry"/>.
     /// </summary>
     public static bool SameZone(string? readTitle, string home)
     {
         if (string.IsNullOrWhiteSpace(readTitle))
             return false;
 
-        string r = TextMatcher.Normalize(readTitle);
-        string h = TextMatcher.Normalize(home);
+        string r = FoldedKey(readTitle);
+        string h = FoldedKey(home);
         if (r.Length == 0 || h.Length == 0)
             return false;
         if (r == h)
             return true;
 
         return !readTitle.TrimEnd().EndsWith(']') && r.Length >= 10 && h.StartsWith(r, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// A teleport-list entry is the saved map <paramref name="saved"/> (also a list entry): equal <see cref="FoldedKey"/>.
+    /// List entries are complete text - "[Dark Soul Cave X)" (']' read as ')' at 1024x768) is cave X, never a cut read
+    /// of "[Dark Soul Cave XI]".
+    /// </summary>
+    public static bool SameEntry(string entry, string saved)
+    {
+        string e = FoldedKey(entry);
+        return e.Length > 0 && e == FoldedKey(saved);
+    }
+
+    /// <summary>
+    /// <see cref="BestListEntry"/> for Auto War: title and entries compared as <see cref="FoldedKey"/>s (the minimap may
+    /// read "1F" where the list reads "IF"); returns the entry as read. Two entries that fold the same ("[Cave I]",
+    /// "[Cave 1]") cannot be told apart: ambiguous. <see cref="BestListEntry"/> itself is unchanged.
+    /// </summary>
+    public static string? BestListEntryFolded(string minimapTitle, IReadOnlyList<string> entries, out bool ambiguous)
+    {
+        // The keys keep a closing ']' so BestListEntry still tells a complete title from a cut one.
+        static string Key(string s) => FoldedKey(s) + (s.TrimEnd().EndsWith(']') ? "]" : "");
+
+        var keys = entries.Select(Key).ToList();
+        string? best = BestListEntry(Key(minimapTitle), keys, out ambiguous);
+        if (best == null)
+            return null;
+
+        string bestKey = FoldedKey(best);
+        if (keys.Count(k => FoldedKey(k) == bestKey) > 1)
+            ambiguous = true;
+        return entries[keys.IndexOf(best)];
+    }
+
+    static readonly Regex CoordinateLike = new(@"\d{3,6}\s*[,.]\s*\d{3,6}", RegexOptions.Compiled);
+
+    /// <summary>
+    /// A minimap line that can be the zone title in Auto War: starts with '[', has at least 4 letters and is not the
+    /// coordinates line ("3592 , 7297"). Digits are allowed - page 3 has "[Dark Soul Cave 2F (WD)]".
+    /// </summary>
+    public static bool IsZoneTitleLine(string line)
+    {
+        string t = line.Trim();
+        return t.StartsWith('[') && t.Count(char.IsLetter) >= 4 && !CoordinateLike.IsMatch(t);
     }
 
     /// <summary>
@@ -306,7 +364,7 @@ public static class WarText
     /// (<paramref name="listLine"/>, e.g. "o Goblin Elite 145 25" - the row's marker, the name, Lv and Spawns), the run
     /// that reads most like <paramref name="targetName"/> (the target bar's read, which may carry stray characters). A
     /// run starts and ends on a word with a letter, so the number columns are left out; punctuation at its ends goes
-    /// (a closing ')' stays when the name has a '('); ties go to the run with fewer words. Null when no run is at least
+    /// (a closing ')' stays when the name has a '('); ties go to the run with more words. Null when no run is at least
     /// 0.72 similar (<see cref="TextMatcher.Similarity"/>).
     /// </summary>
     public static string? MonsterNameFromListLine(string listLine, string targetName)
@@ -317,7 +375,7 @@ public static class WarText
         string[] words = listLine.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries);
         string? best = null;
         double bestScore = 0;
-        int bestWords = int.MaxValue;
+        int bestWords = 0;
         for (int first = 0; first < words.Length; first++)
         {
             if (!words[first].Any(char.IsLetter))
@@ -331,7 +389,9 @@ public static class WarText
                 string name = TrimName(string.Join(' ', words[first..(last + 1)]));
                 double score = TextMatcher.Similarity(name, targetName);
                 int count = last - first + 1;
-                if (score > bestScore || (score == bestScore && count < bestWords))
+                // A tie goes to more words: a shorter run can be part of another monster's name on the same map
+                // ("Goblin" in "Goblin Elite" and "Goblinkin Chieftain"), and the saved name picks the map row later.
+                if (score > bestScore || (score == bestScore && count > bestWords))
                 {
                     best = name;
                     bestScore = score;
@@ -470,22 +530,35 @@ public static class WarText
     }
 
     /// <summary>
-    /// The lines of <paramref name="after"/> not used up by an equal line of <paramref name="before"/>
-    /// (counted per string), in <paramref name="after"/>'s order. An old log line that only moved up is not new.
+    /// The lines of <paramref name="after"/> not used up by a line of <paramref name="before"/>, in
+    /// <paramref name="after"/>'s order. Each line of <paramref name="before"/> is used up once: first by an equal line,
+    /// then - for the lines left on both sides - by one at most one letter off (Levenshtein), so an old log line that
+    /// only moved up, or is re-read with one letter of OCR noise, is not new.
     /// </summary>
     public static IReadOnlyList<string> NewLines(IReadOnlyList<string> before, IReadOnlyList<string> after)
     {
-        var left = new Dictionary<string, int>(StringComparer.Ordinal);
-        foreach (string b in before)
-            left[b] = left.GetValueOrDefault(b) + 1;
+        var left = new List<string>(before);
+        var unmatched = new bool[after.Count];
+        for (int i = 0; i < after.Count; i++)
+        {
+            int at = left.IndexOf(after[i]);
+            if (at >= 0)
+                left.RemoveAt(at);
+            else
+                unmatched[i] = true;
+        }
 
         var result = new List<string>();
-        foreach (string a in after)
+        for (int i = 0; i < after.Count; i++)
         {
-            if (left.GetValueOrDefault(a) > 0)
-                left[a]--;
+            if (!unmatched[i])
+                continue;
+
+            int near = left.FindIndex(b => TextMatcher.Levenshtein(b, after[i]) <= 1);
+            if (near >= 0)
+                left.RemoveAt(near);
             else
-                result.Add(a);
+                result.Add(after[i]);
         }
 
         return result;
