@@ -183,15 +183,15 @@ internal static class WarProbe
     /// covers most of the tile's (TextMatcher.CoversMost of the hit, which is the whole line when the line
     /// matched best), and "line only" when just its line does: on every in-game frame the best hit is the
     /// word "status" of the "Hide item apply status" check box, whose line passes CoversMost. Last, what the
-    /// pilot's close step would click (ScreenAnalyzer.FindWarWindowClose over a whole-frame OCR x1): on frames
-    /// without the MENU or TRIBE STATUS window it must find no title.
+    /// pilot's close step would click (<see cref="CloseStepAsync"/>): on frames without the MENU or TRIBE STATUS
+    /// window it must find neither a window title nor the menu's tile.
     /// </summary>
     public static async Task<int> MenuAsync(string dir)
     {
         var settings = SettingsStore.Load();
         using var analyzer = new ScreenAnalyzer(settings, new OcrService());
         string tileText = settings.War.MenuTileText;
-        int total = 0, buttons = 0, tiles = 0, lineOnly = 0, titles = 0;
+        int total = 0, buttons = 0, tiles = 0, lineOnly = 0, titles = 0, menusUp = 0;
         foreach (string path in Frames(dir))
         {
             using var frame = Load(path);
@@ -217,31 +217,29 @@ internal static class WarProbe
                     lineOnly++;
             }
 
-            // The pilot's close step: whole-frame OCR x1, a TRIBE STATUS or MENU title in capitals, its X.
-            var lines = ScreenAnalyzer.ToLines(await analyzer.Ocr.RecognizeAsync(frame, full, 1.0));
-            var close = analyzer.FindWarWindowClose(frame, lines, tileText);
-            if (close != null)
+            var close = await CloseStepAsync(analyzer, settings, frame);
+            if (close.Title)
                 titles++;
+            if (close.MenuUp)
+                menusUp++;
 
             string buttonText = button == null ? "not found"
                 : $"{button.Score:0.000} at {button.Bounds.CenterX},{button.Bounds.CenterY} {button.Bounds.Width}x{button.Bounds.Height} scale {button.Scale:0.00}";
             string hitText = tile == null ? "-"
                 : $"{verdict} '{tile.Text}' {tile.Similarity:0.00} in line '{tile.LineText}' at {Box(tile.Bounds)}";
-            string closeText = close is { } c
-                ? $"title '{c.Title}' {Box(c.TitleBounds)}, X at {c.Close.CenterX},{c.Close.CenterY} ({Box(c.Close)})"
-                : "-";
-            Console.WriteLine($"{Path.GetFileName(path)} {frame.Width}x{frame.Height} | menubutton {buttonText} ({ms:0} ms) | tile {hitText} | close {closeText}");
+            Console.WriteLine($"{Path.GetFileName(path)} {frame.Width}x{frame.Height} | menubutton {buttonText} ({ms:0} ms) | tile {hitText} | close {close.Text}");
         }
 
-        Console.WriteLine($"{total} frames, menubutton seen (>= 0.30) on {buttons}; '{tileText}': TILE {tiles}, line only {lineOnly}; a window title to close on {titles}");
+        Console.WriteLine($"{total} frames, menubutton seen (>= 0.30) on {buttons}; '{tileText}': TILE {tiles}, line only {lineOnly}; close step: a window title on {titles}, a menu up without its title on {menusUp}");
         return 0;
     }
 
     /// <summary>
     /// --tribe &lt;file or dir&gt;: the War.TribeRowText row of the Tribe Status window and its countdown, as the
-    /// pilot reads it (ScreenAnalyzer.ReadWarCountdownAsync: whole-frame OCR x1 -> WarText.FindWarRow, then the
-    /// band right of each row line with a gap after each colon, OCR x2 - "pilot"), next to plain whole-frame reads
-    /// at x1, x1.5 and x2; then what the pilot's close step would click (ScreenAnalyzer.FindWarWindowClose).
+    /// pilot reads it (whole-frame OCR x1 -> ScreenAnalyzer.ReadWarCountdownAsync: WarText.FindWarRow, then the
+    /// band right of each candidate row line with a gap after each colon, OCR x2 - "pilot"; "window shows" =
+    /// WarText.TribeStatusShows, which decides whether the pilot reads again), next to plain whole-frame reads at
+    /// x1, x1.5 and x2; then what the pilot's close step would click (<see cref="CloseStepAsync"/>).
     /// A file may be any image OpenCV reads (the user's screenshot is a .webp); a folder means its PNGs.
     /// The first output lines show Windows OCR dropping "h:mm:ss" on synthetic text, and the pilot's read of a
     /// synthetic row (it must say 00:04:25).
@@ -275,7 +273,8 @@ internal static class WarProbe
             Cv2.PutText(image, "Dragonfall Outpost", new Point(10, 190), HersheyFonts.HersheySimplex, 0.6, white, 1, LineTypes.AntiAlias);
             Cv2.PutText(image, "In progress", new Point(520, 190), HersheyFonts.HersheySimplex, 0.6, white, 1, LineTypes.AntiAlias);
             var trace = new List<string>();
-            var row = await analyzer.ReadWarCountdownAsync(image, rowText, trace);
+            var lines = ScreenAnalyzer.ToLines(await analyzer.Ocr.RecognizeAsync(image, new PixelRect(0, 0, image.Width, image.Height), 1.0));
+            var row = await analyzer.ReadWarCountdownAsync(image, lines, rowText, trace);
             Console.WriteLine($"synthetic row (expect 00:04:25): pilot {Describe(row)} | {string.Join(" ; ", trace)}");
         }
 
@@ -292,29 +291,43 @@ internal static class WarProbe
             var full = new PixelRect(0, 0, frame.Width, frame.Height);
             var pilotWatch = Stopwatch.StartNew();
             var pilotTrace = new List<string>();
-            var pilot = await analyzer.ReadWarCountdownAsync(frame, rowText, pilotTrace);
+            var pilotLines = ScreenAnalyzer.ToLines(await analyzer.Ocr.RecognizeAsync(frame, full, 1.0));
+            var pilot = await analyzer.ReadWarCountdownAsync(frame, pilotLines, rowText, pilotTrace);
             long pilotMs = pilotWatch.ElapsedMilliseconds;
+            bool shows = WarText.TribeStatusShows(pilotLines, rowText);
 
             var parts = new List<string>();
-            IReadOnlyList<(string Text, PixelRect Bounds)> firstRead = [];
             foreach (double scale in new[] { 1.0, 1.5, 2.0 })
             {
                 var watch = Stopwatch.StartNew();
                 var lines = ScreenAnalyzer.ToLines(await analyzer.Ocr.RecognizeAsync(frame, full, scale));
                 var row = WarText.FindWarRow(lines, rowText);
                 parts.Add($"x{scale:0.0}: {Describe(row)} ({watch.ElapsedMilliseconds} ms)");
-                if (scale == 1.0)
-                    firstRead = lines;
             }
 
-            var close = analyzer.FindWarWindowClose(frame, firstRead, settings.War.MenuTileText);
-            string closeText = close is { } c
-                ? $"title '{c.Title}' {Box(c.TitleBounds)}, X at {c.Close.CenterX},{c.Close.CenterY} ({Box(c.Close)})"
-                : "no TRIBE STATUS / MENU title";
-            Console.WriteLine($"{Path.GetFileName(file)} {frame.Width}x{frame.Height} | '{rowText}' pilot: {Describe(pilot)} ({pilotMs} ms; {string.Join(" ; ", pilotTrace)}) | whole frame {string.Join(" | ", parts)} | close: {closeText}");
+            var close = await CloseStepAsync(analyzer, settings, frame);
+            Console.WriteLine($"{Path.GetFileName(file)} {frame.Width}x{frame.Height} | '{rowText}' pilot: {Describe(pilot)} ({pilotMs} ms; window shows: {shows}; {string.Join(" ; ", pilotTrace)}) | whole frame {string.Join(" | ", parts)} | close: {close.Text}");
         }
 
         return 0;
+    }
+
+    /// <summary>
+    /// The pilot's close step (AutomationPilot.TickWarCloseAsync) on one frame: one whole-frame read for
+    /// War.MenuTileText at the OCR scale; a TRIBE STATUS or MENU title in capitals -> the X found right of it
+    /// (ScreenAnalyzer.FindWarWindowClose); else the menu's tile (step 2's test: CoversMost of the hit) -> the
+    /// MENU button; else nothing to close.
+    /// </summary>
+    private static async Task<(string Text, bool Title, bool MenuUp)> CloseStepAsync(ScreenAnalyzer analyzer, AppSettings settings, Mat frame)
+    {
+        string tileText = settings.War.MenuTileText;
+        var full = new PixelRect(0, 0, frame.Width, frame.Height);
+        var (hit, _, words) = await analyzer.FindTextAsync(frame, full, tileText);
+        if (analyzer.FindWarWindowClose(frame, ScreenAnalyzer.ToLines(words)) is { } c)
+            return ($"title '{c.Title}' {Box(c.TitleBounds)}, X at {c.Close.CenterX},{c.Close.CenterY} ({Box(c.Close)})", true, false);
+        if (hit != null && TextMatcher.CoversMost(hit.Text, tileText))
+            return ($"menu up without its title ('{hit.Text}' at {Box(hit.Bounds)}) -> the menu button", false, true);
+        return ("nothing open", false, false);
     }
 
     private static string Describe(WarCountdown? row) => row switch

@@ -24,6 +24,7 @@ public sealed partial class AutomationPilot
     private int _warTimerStep;         // WarWait: 0 wait, 1 open the menu, 2 Tribe Status tile, 3 read, 4 close
     private int _warTimerFails;        // timer reads in a row that told nothing
     private int _warStepTries;         // WarWait: looks / clicks within the current step
+    private bool _warMenuToggled;      // WarWait step 4: the MENU button was clicked to close a menu whose title did not read
     private long _warZoneCheckAt;      // WarWait: next minimap title read
     private bool _warInProgress;       // the last read said "In progress" (logged once)
     private bool _warJoinHuntOff;      // WarJoin: the autohunt is off (or the check gave up)
@@ -207,18 +208,30 @@ public sealed partial class AutomationPilot
         }
 
         ApplyTimerRead(frame, now, null, $"the menu showed no '{tile}' tile");
-        _warTimerStep = 4;
-        _warStepTries = 0;
+        BeginWarClose();
     }
 
-    /// <summary>Step 3: the war row's countdown in TRIBE STATUS.</summary>
+    /// <summary>
+    /// Step 3: the war row's countdown in TRIBE STATUS. While neither the window's title nor the row shows (still
+    /// opening), up to 2 more reads 600 ms apart, each on a fresh frame, before the read counts as failed.
+    /// </summary>
     private async Task TickWarReadTimerAsync(Mat frame)
     {
         long now = Environment.TickCount64;
-        var read = await _analyzer.ReadWarCountdownAsync(frame, _settings.War.TribeRowText);
-        ApplyTimerRead(frame, now, read, $"TRIBE STATUS showed no '{_settings.War.TribeRowText}' countdown");
-        _warTimerStep = 4;
-        _warStepTries = 0;
+        string row = _settings.War.TribeRowText;
+        var full = new PixelRect(0, 0, frame.Width, frame.Height);
+        var lines = ScreenAnalyzer.ToLines(await _analyzer.Ocr.RecognizeAsync(frame, full, 1.0));
+        var read = await _analyzer.ReadWarCountdownAsync(frame, lines, row);
+        bool shows = WarText.TribeStatusShows(lines, row);
+        if (read == null && !shows && ++_warStepTries < 3)
+        {
+            _detail = $"waiting for TRIBE STATUS to show ({_warStepTries}/3)";
+            _waitUntil = now + 600;
+            return;
+        }
+
+        ApplyTimerRead(frame, now, read, shows ? $"TRIBE STATUS showed no '{row}' countdown" : "TRIBE STATUS did not show");
+        BeginWarClose();
     }
 
     private void ApplyTimerRead(Mat frame, long now, WarCountdown? read, string unreadWhy)
@@ -247,37 +260,93 @@ public sealed partial class AutomationPilot
         }
     }
 
+    /// <summary>Step 4 starts: nothing clicked yet.</summary>
+    private void BeginWarClose()
+    {
+        _warTimerStep = 4;
+        _warStepTries = 0;
+        _warMenuToggled = false;
+    }
+
     /// <summary>
-    /// Step 4: TRIBE STATUS, then the MENU, closed with their X - one click per tick, each on a fresh frame,
-    /// at most 4; neither title on screen = done.
+    /// Step 4: TRIBE STATUS, then the MENU, closed with their X. A menu still up whose title does not read (the
+    /// grid scrolled under it, the user's screenshot) shows by its Tribe Status tile - step 2's test - and gets one
+    /// click on the MENU button; still up after that = warning, left open. One click per tick, each decided on a
+    /// fresh frame, at most 4; nothing open = done. A dry run logs the first click it would make and ends.
     /// </summary>
     private async Task TickWarCloseAsync(Mat frame)
     {
         long now = Environment.TickCount64;
+        string tile = _settings.War.MenuTileText;
         var full = new PixelRect(0, 0, frame.Width, frame.Height);
-        var lines = ScreenAnalyzer.ToLines(await _analyzer.Ocr.RecognizeAsync(frame, full, 1.0));
-        var open = _analyzer.FindWarWindowClose(frame, lines, _settings.War.MenuTileText);
-        if (open is not { } window)
+        // One read: its lines for the window titles, its best hit for the menu's tile.
+        var (hit, _, words) = await _analyzer.FindTextAsync(frame, full, tile);
+        var open = _analyzer.FindWarWindowClose(frame, ScreenAnalyzer.ToLines(words));
+        bool menuUp = open == null && hit != null && TextMatcher.CoversMost(hit.Text, tile);
+        if (open == null && !menuUp)
         {
+            _warTimerStep = 0;
+            return;
+        }
+
+        _overlays.Add(open is { } shown
+            ? new OverlayItem(shown.TitleBounds, shown.Title, OverlayColor.Blue)
+            : new OverlayItem(hit!.Bounds, tile, OverlayColor.Blue));
+
+        if (menuUp && _warMenuToggled)
+        {
+            Log?.Invoke(LogLevel.Warning, $"The menu is still open (its '{tile}' tile shows) after a click on the menu button - leaving it.");
+            WarShot(frame, "war_menu_open");
             _warTimerStep = 0;
             return;
         }
 
         if (_warStepTries >= 4)
         {
-            Log?.Invoke(LogLevel.Warning, $"'{window.Title}' is still open after {_warStepTries} clicks on its X - leaving it.");
-            WarShot(frame, "war_close_stuck");
+            Log?.Invoke(LogLevel.Warning, $"'{open?.Title ?? "MENU"}' is still open after {_warStepTries} clicks - leaving it.");
+            WarShot(frame, menuUp ? "war_menu_open" : "war_close_stuck");
             _warTimerStep = 0;
             return;
         }
 
-        _overlays.Add(new OverlayItem(window.TitleBounds, window.Title, OverlayColor.Blue));
-        _overlays.Add(new OverlayItem(window.Close, "close", OverlayColor.Green));
-        if (!WarClick(window.Close, $"the X of '{window.Title}'"))
+        PixelRect target;
+        string what;
+        if (open is { } window)
+        {
+            target = window.Close;
+            what = $"the X of '{window.Title}'";
+        }
+        else
+        {
+            // Whether the MENU button also closes the menu (a toggle) is not seen live yet.
+            var roi = _settings.Regions.MenuButton.ToPixels(frame.Width, frame.Height);
+            var button = _analyzer.FindIcon(frame, "menubutton", roi, MenuButtonScore);
+            if (button == null)
+            {
+                Log?.Invoke(LogLevel.Warning, $"The menu is still open (its '{tile}' tile shows) without a readable title, and the menu button is not found - leaving it.");
+                WarShot(frame, "war_menu_open");
+                _warTimerStep = 0;
+                return;
+            }
+
+            target = button.Bounds;
+            what = $"the menu button ({button.Score:0.00}) - the menu is still open, its title unread";
+        }
+
+        _overlays.Add(new OverlayItem(target, "close", OverlayColor.Green));
+        if (!WarClick(target, what))
             return;
 
+        if (_input.IsDryRun)
+        {
+            // Nothing was clicked: looking again would only find the same window.
+            _warTimerStep = 0;
+            return;
+        }
+
+        _warMenuToggled |= open == null;
         _warStepTries++;
-        _waitUntil = now + 700;
+        _waitUntil = now + (open == null ? 900 : 700);
     }
 
     /// <summary>

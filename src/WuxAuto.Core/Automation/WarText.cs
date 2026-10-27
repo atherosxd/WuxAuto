@@ -107,14 +107,31 @@ public static class WarText
     }
 
     /// <summary>
-    /// Every line naming the war row (<see cref="IsWarRowLine"/>), the closest to the row text's length first: the
-    /// bare Tribe Status row comes before a chat notice that names the war, whatever their order on screen. Ties
-    /// keep the given order.
+    /// The lines worth reading the war row's time next to: they name the row (<see cref="IsWarRowLine"/>) with
+    /// most of its letters (<see cref="TextMatcher.CoversMost"/> - a fragment such as "Adept", TRIBE STATUS's
+    /// HIGHLANDS column, or "OUTPOST" passes <see cref="IsWarRowLine"/> by containment but is no row), the closest to
+    /// the row text's length first: the bare Tribe Status row before a chat notice naming the war, whatever their
+    /// order on screen. Ties keep the given order.
     /// </summary>
     public static IReadOnlyList<(string Text, PixelRect Bounds)> WarRowLines(IReadOnlyList<(string Text, PixelRect Bounds)> lines, string rowText)
-        => lines.Where(l => IsWarRowLine(l.Text, rowText))
+        => lines.Where(l => IsWarRowLine(l.Text, rowText) && TextMatcher.CoversMost(l.Text, rowText))
             .OrderBy(l => Math.Abs(TextMatcher.Normalize(l.Text).Length - TextMatcher.Normalize(rowText).Length))
             .ToList();
+
+    /// <summary>The TRIBE STATUS window's title (the game's capitals).</summary>
+    public const string TribeStatusTitle = "TRIBE STATUS";
+
+    /// <summary>The MENU window's title.</summary>
+    public const string MenuTitle = "MENU";
+
+    /// <summary>
+    /// The TRIBE STATUS window is on screen: its title (<see cref="FindWindowTitle"/>), or the war row itself - a
+    /// <see cref="WarRowLines"/> line that does not start with '[' (the chat notice "[Bohai Outpost (Adept)] [10]
+    /// minute(s) to opening" does).
+    /// </summary>
+    public static bool TribeStatusShows(IReadOnlyList<(string Text, PixelRect Bounds)> lines, string rowText)
+        => FindWindowTitle(lines, TribeStatusTitle) != null
+           || WarRowLines(lines, rowText).Any(l => !l.Text.TrimStart().StartsWith('['));
 
     /// <summary>
     /// A game window's title line ("TRIBE STATUS", "MENU"): it reads <paramref name="title"/> (case aside; one

@@ -195,6 +195,27 @@ public class WarTextTests
     }
 
     [Fact]
+    public void WarRowLines_FragmentsAreNoCandidates_ARowSplitInTwoKeepsItsLongerPart()
+    {
+        // "Adept" (TRIBE STATUS's HIGHLANDS column) and "OUTPOST" name the row by containment only.
+        var lines = new[] { L("Adept", 576, 373, 40), L("OUTPOST", 36, 344, 70), L("Bohai Outpost", 448, 241, 100), L("(Adept)", 552, 241, 50) };
+
+        Assert.Equal(new[] { lines[2] }, WarText.WarRowLines(lines, "Bohai Outpost (Adept)"));
+    }
+
+    [Fact]
+    public void TribeStatusShows_ByItsTitleOrTheBareRow_NotByTheChatNotice()
+    {
+        const string row = "Bohai Outpost (Adept)";
+        var notice = L("[Bohai Outpost (Adept)] [10] minute(s) to opening", 10, 700, 400);
+
+        Assert.True(WarText.TribeStatusShows([L("TRIBE STATUS", 322, 8, 145, 16), notice], row));
+        Assert.True(WarText.TribeStatusShows([L("Bohai Outpost (Adept)", 449, 243)], row));
+        Assert.False(WarText.TribeStatusShows([notice, L("Tribe Status", 21, 491, 81, 13)], row));   // the menu's tile is no title
+        Assert.False(WarText.TribeStatusShows([], row));
+    }
+
+    [Fact]
     public void FindWindowTitle_OnlyTheCapitalsTitle_NotTheMenuTile()
     {
         var tile = L("Tribe Status", 21, 491, 81, 13);

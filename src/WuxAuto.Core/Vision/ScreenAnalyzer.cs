@@ -712,23 +712,30 @@ public sealed class ScreenAnalyzer : IDisposable
 
     /// <summary>
     /// A dialog's X right of its title (AUTO BUFF: title ends ~878, X at 905,116 at 1024x768): the
-    /// first bright blob in the band right of the title, <paramref name="reach"/> text heights long,
-    /// else two text heights right of it (on the title bar).
+    /// first bright blob in the band right of the title, else two text heights right of it.
     /// </summary>
-    public PixelRect FindCloseButtonRightOf(Mat frame, PixelRect title, int reach = 6)
+    public PixelRect FindCloseButtonRightOf(Mat frame, PixelRect title)
     {
         int h = Math.Max(6, title.Height);
-        var fallback = new PixelRect(title.Right + 2 * h - h / 2, title.CenterY - h / 2, h, h);
-        var band = new PixelRect(title.Right + 2, title.Y - h, reach * h, title.Height + 2 * h).Clamp(frame.Width, frame.Height);
-        if (band.Width < 4 || band.Height < 4)
-            return fallback;
+        var band = new PixelRect(title.Right + 2, title.Y - h, 6 * h, title.Height + 2 * h).Clamp(frame.Width, frame.Height);
+        return ButtonBlobs(frame, band, h).OrderBy(b => b.X).Select(b => (PixelRect?)b).FirstOrDefault() ?? CloseFallback(title);
+    }
 
-        var blob = FindBrightBlobs(frame, band)
-            .Where(b => b.Width <= 3 * h && b.Height <= 3 * h && b.Width >= 3 && b.Height >= 3)
-            .OrderBy(b => b.X)
-            .Select(b => (PixelRect?)b)
-            .FirstOrDefault();
-        return blob ?? fallback;
+    /// <summary>Two text heights right of a title, on its title bar: where a close button is clicked when none is seen.</summary>
+    private static PixelRect CloseFallback(PixelRect title)
+    {
+        int h = Math.Max(6, title.Height);
+        return new PixelRect(title.Right + 2 * h - h / 2, title.CenterY - h / 2, h, h);
+    }
+
+    /// <summary>The bright blobs in <paramref name="band"/> of button size (3 px to 3 text heights each way).</summary>
+    private IEnumerable<PixelRect> ButtonBlobs(Mat frame, PixelRect band, int h)
+    {
+        if (band.Width < 4 || band.Height < 4)
+            return [];
+
+        return FindBrightBlobs(frame, band)
+            .Where(b => b.Width <= 3 * h && b.Height <= 3 * h && b.Width >= 3 && b.Height >= 3);
     }
 
     private static Mat ToHsv(Mat frame, PixelRect roi)
@@ -1110,17 +1117,16 @@ public sealed class ScreenAnalyzer : IDisposable
 
     /// <summary>
     /// Auto War: the countdown of the Tribe Status row <paramref name="rowText"/> ("Bohai Outpost (Adept)" under
-    /// NEXT WARS) - its time or "In progress"; null when it cannot tell (never zero). Whole-frame OCR x1 and
-    /// <see cref="WarText.FindWarRow"/> first. Windows OCR drops every "h:mm:ss" token in such a read (a synthetic
-    /// "00:04:25" reads as nothing, "00: 04: 25" reads), so when that decides nothing each line naming the row
-    /// (<see cref="WarText.WarRowLines"/>, the bare row before a chat notice naming the war) is read again: the band
-    /// right of it, half a line height above and below, with a gap after each colon (<see cref="GapAfterColons"/>),
-    /// OCR x2. The user's Tribe Status screenshot (795x829): x1, x1.5 and x2 read no time, the gapped band 00:04:25.
+    /// NEXT WARS) - its time or "In progress"; null when it cannot tell (never zero). <paramref name="lines"/> is a
+    /// whole-frame OCR x1 (<see cref="ToLines"/>), decided by <see cref="WarText.FindWarRow"/> first. Windows OCR
+    /// drops every "h:mm:ss" token in such a read (a synthetic "00:04:25" reads as nothing, "00: 04: 25" reads), so
+    /// when that decides nothing each candidate row line (<see cref="WarText.WarRowLines"/>: most of the row's letters,
+    /// the bare row before a chat notice naming the war) is read again: <see cref="CountdownBand"/> right of it with
+    /// a gap after each colon (<see cref="GapAfterColons"/>), OCR x2. The user's Tribe Status screenshot (795x829):
+    /// x1, x1.5 and x2 read no time, the gapped band 00:04:25.
     /// </summary>
-    public async Task<WarCountdown?> ReadWarCountdownAsync(Mat frame, string rowText, List<string>? trace = null)
+    public async Task<WarCountdown?> ReadWarCountdownAsync(Mat frame, IReadOnlyList<(string Text, PixelRect Bounds)> lines, string rowText, List<string>? trace = null)
     {
-        var full = new PixelRect(0, 0, frame.Width, frame.Height);
-        var lines = ToLines(await Ocr.RecognizeAsync(frame, full, 1.0));
         var row = WarText.FindWarRow(lines, rowText);
         if (row != null)
         {
@@ -1130,13 +1136,12 @@ public sealed class ScreenAnalyzer : IDisposable
 
         var candidates = WarText.WarRowLines(lines, rowText);
         if (candidates.Count == 0)
-            trace?.Add($"no line names '{rowText}'");
+            trace?.Add($"no line carries most of '{rowText}'");
 
         foreach (var line in candidates)
         {
             int h = Math.Max(4, line.Bounds.Height);
-            var band = PixelRect.FromBounds(line.Bounds.Right, line.Bounds.Y - h / 2, frame.Width, line.Bounds.Bottom + h / 2)
-                .Clamp(frame.Width, frame.Height);
+            var band = CountdownBand(line.Bounds, frame.Width, frame.Height);
             using var spaced = GapAfterColons(frame, band, h, out int colons);
             var bandLines = ToLines(await Ocr.RecognizeAsync(spaced, new PixelRect(0, 0, spaced.Width, spaced.Height), 2.0))
                 .Select(l => (l.Text, new PixelRect(band.X + l.Bounds.X, band.Y + l.Bounds.Y, l.Bounds.Width, l.Bounds.Height)))
@@ -1148,6 +1153,18 @@ public sealed class ScreenAnalyzer : IDisposable
         }
 
         return null;
+    }
+
+    /// <summary>
+    /// Where the war row's time is read: right of the row line, half a line height above and below, at most 20
+    /// line heights long (the screenshot's time ends 10.7 heights past "Bohai Outpost (Adept)"; the rest of the
+    /// frame is other windows or the world), clamped to the frame.
+    /// </summary>
+    internal static PixelRect CountdownBand(PixelRect row, int frameWidth, int frameHeight)
+    {
+        int h = Math.Max(4, row.Height);
+        return PixelRect.FromBounds(row.Right, row.Y - h / 2, Math.Min(frameWidth, row.Right + 20 * h), row.Bottom + h / 2)
+            .Clamp(frameWidth, frameHeight);
     }
 
     /// <summary>
@@ -1227,22 +1244,65 @@ public sealed class ScreenAnalyzer : IDisposable
     /// <summary>
     /// Auto War: what closes the windows the war timer opened - the TRIBE STATUS window first, else the MENU:
     /// its title in capitals (<see cref="WarText.FindWindowTitle"/>; the Menu's mixed-case "Tribe Status" tile is
-    /// not one) and the X in the window's top right corner (<see cref="FindCloseButtonRightOf"/>), far further
-    /// from the title than a dialog's. The band ends about at the window's edge, so a missed X never becomes a
-    /// click in the world beyond it (that walks the character); the fallback is on the title bar. Measured on the
-    /// user's screenshots: TRIBE STATUS (16 px title, ends 467) has its X at 753-767 and its edge at 795, i.e.
-    /// 18.6 / 20.4 title heights out; MENU's X sits 10-13 heights out (its title does not read on the
-    /// screenshot, where the grid is scrolled under it - unverified). Null when neither title shows.
+    /// not one) and the X in the window's top right corner, far further from the title than a dialog's: the
+    /// button-sized bright blob in <see cref="WarCloseBand"/> picked by <see cref="PickWarClose"/>, else the title
+    /// bar (<see cref="CloseFallback"/>). Null when neither title shows.
+    /// Measured on the user's screenshots (title box, X, window's right edge; title widths right of the title's
+    /// centre for the X's centre / the X's right side / the edge):
+    /// TRIBE STATUS 322-467 x 8-24 (16 px), X 753-767 x 12-26, edge 795 - 2.52 / 2.57 / 2.76; a corner ornament
+    /// (775-785 x 0-13) sits between the X and the edge. MENU (faint glyphs - the title does not read there, the grid
+    /// is scrolled under it) 171-226 x 22-35 (13 px), X 352-366 x 26-39, edge ~380 - 2.93 / 3.05 / 3.3; the tile
+    /// label "Inventory (I)" (279-361 x 28-41) shares the title's rows, left of the X.
     /// </summary>
-    public (string Title, PixelRect TitleBounds, PixelRect Close)? FindWarWindowClose(Mat frame, IReadOnlyList<(string Text, PixelRect Bounds)> lines, string tribeStatusTitle)
+    public (string Title, PixelRect TitleBounds, PixelRect Close)? FindWarWindowClose(Mat frame, IReadOnlyList<(string Text, PixelRect Bounds)> lines)
     {
-        foreach (var (title, reach) in new[] { (tribeStatusTitle, 20), ("MENU", 13) })
+        foreach (var (title, reach, edge, x) in new[] { (WarText.TribeStatusTitle, 22, 2.7, 2.52), (WarText.MenuTitle, 12, 3.2, 2.93) })
         {
-            if (WarText.FindWindowTitle(lines, title) is { } line)
-                return (line.Text, line.Bounds, FindCloseButtonRightOf(frame, line.Bounds, reach));
+            if (WarText.FindWindowTitle(lines, title) is not { } line)
+                continue;
+
+            var band = WarCloseBand(line.Bounds, reach, edge, frame.Width, frame.Height);
+            var buttons = ButtonBlobs(frame, band, Math.Max(6, line.Bounds.Height));
+            return (line.Text, line.Bounds, PickWarClose(buttons, line.Bounds, x) ?? CloseFallback(line.Bounds));
         }
 
         return null;
+    }
+
+    /// <summary>
+    /// The war window's X among the button-sized blobs right of its title: the one whose centre is nearest
+    /// <paramref name="xWidths"/> title widths right of the title's centre, and no more than one title height from
+    /// that point - neither the leftmost (the scrolled MENU grid's labels lie left of the X) nor the rightmost
+    /// (TRIBE STATUS's corner ornament lies right of it). Null when none is that close.
+    /// </summary>
+    internal static PixelRect? PickWarClose(IEnumerable<PixelRect> buttons, PixelRect title, double xWidths)
+    {
+        int h = Math.Max(6, title.Height);
+        double expected = title.CenterX + xWidths * title.Width;
+        return buttons
+            .Where(b => Math.Abs(b.CenterX - expected) <= h)
+            .OrderBy(b => Math.Abs(b.CenterX - expected))
+            .Select(b => (PixelRect?)b)
+            .FirstOrDefault();
+    }
+
+    /// <summary>
+    /// Where a war window's X is looked for: the title's rows (half a title height above and below, so the rows
+    /// under the title stay out), from just right of the title to the nearer of <paramref name="reachHeights"/>
+    /// title heights and <paramref name="edgeWidths"/> title widths right of the title's centre. The width bound
+    /// stops short of the window's right edge (measured in <see cref="FindWarWindowClose"/>), so a missed X never
+    /// turns into a click in the world beyond it, which walks the character; it holds while OCR's title box is
+    /// within a few pixels of the glyphs. The height bound keeps a mis-sized title box from reaching far. Not
+    /// everything is kept out: with the MENU grid scrolled under its title (the user's screenshot) the tile labels
+    /// share the title's rows - "Inventory (I)" at 279-361 x 28-41 lies inside the band, left of the X - and
+    /// TRIBE STATUS's corner ornament lies right of its X; <see cref="PickWarClose"/> chooses among them.
+    /// </summary>
+    internal static PixelRect WarCloseBand(PixelRect title, int reachHeights, double edgeWidths, int frameWidth, int frameHeight)
+    {
+        int h = Math.Max(6, title.Height);
+        int left = title.Right + 2;
+        int right = Math.Min(left + reachHeights * h, title.CenterX + (int)(edgeWidths * title.Width));
+        return PixelRect.FromBounds(left, title.Y - h / 2, right, title.Bottom + h / 2).Clamp(frameWidth, frameHeight);
     }
 
     /// <summary>Manual "what do the detectors see" pass used by the Test scan button.</summary>
