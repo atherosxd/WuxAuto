@@ -360,19 +360,74 @@ public class WarTextTests
     }
 
     [Theory]
-    [InlineData("Goblin Elite 145 25", "Goblin Elite", "Goblin Elite")]
-    [InlineData("o Goblin Elite 145 25", "Goblin Elite", "Goblin Elite")]       // the row's green marker read as a letter
-    [InlineData("■ Goblin Elite 145 25 >", "Goblin Elite", "Goblin Elite")]
+    [InlineData("Goblin Elite 145 25", "Goblin Elite")]
+    [InlineData("o Goblin Elite 145 25", "o Goblin Elite")]     // the row's marker read as a letter stays: MonsterRows also tries without it
+    [InlineData("■ Goblin Elite 145 25 >", "Goblin Elite")]
+    [InlineData("Goblin Elite.", "Goblin Elite")]
+    [InlineData("Red Mandolin Maiden 145 25", "Red Mandolin Maiden")]
+    [InlineData("Bandit (Elite) 120 4", "Bandit (Elite)")]
+    [InlineData("S undersword", "S undersword")]                // a real 1024x768 read: the split stays (the comparisons normalise)
+    [InlineData("Goblin 140 30 [Rage Elixir] 25 (min(s))", "Goblin")]   // the numbers end the name: the item list beside it is not part of it
+    public void MonsterNameColumn_TheNameBeforeTheNumbers(string line, string name)
+        => Assert.Equal(name, WarText.MonsterNameColumn(line));
+
+    [Theory]
+    [InlineData("145 25")]
+    [InlineData("■ >")]
+    [InlineData("")]
+    public void MonsterNameColumn_NoNameIsNull(string line) => Assert.Null(WarText.MonsterNameColumn(line));
+
+    static IReadOnlyList<(string Text, PixelRect Bounds)> Rows(params string[] lines)
+        => lines.Select((t, i) => (t, new PixelRect(639, 222 + 33 * i, 300, 12))).ToList();
+
+    [Fact]
+    public void MonsterRows_Goblin_IsTheGoblinRow_NotGoblinElite()
+    {
+        // The best single word of the list would be "Goblin" on the Goblin Elite row (similarity 1.00).
+        var rows = WarText.MonsterRows(Rows("Goblin Elite 145 25", "Goblin 140 30"), "Goblin");
+        var row = Assert.Single(rows);
+        Assert.Equal("Goblin 140 30", row.Line);
+        Assert.Equal("Goblin", row.Name);
+        Assert.Equal(255, row.Bounds.Y);
+    }
+
+    [Fact]
+    public void MonsterRows_CaveBat_IsFound()
+    {
+        // The best single word was "Cave" (0.886), short of most of "Cave Bat": no row at all.
+        var row = Assert.Single(WarText.MonsterRows(Rows("Cave Spider 120 10", "Cave Bat 120 30", "Cave Bat Lord 150 1"), "Cave Bat"));
+        Assert.Equal("Cave Bat", row.Name);
+    }
+
+    [Theory]
+    [InlineData("Goblin")]                  // only the start of a longer name is on this page
+    [InlineData("Elite")]
+    [InlineData("Sacred Sky Lord")]
+    [InlineData("")]
+    public void MonsterRows_AMissingName_IsNone(string monster)
+        => Assert.Empty(WarText.MonsterRows(Rows("Goblin Elite 145 25", "Goblinkin Chieftain 150 2", "Spawns"), monster));
+
+    [Fact]
+    public void MonsterRows_TwoIdenticalRows_AreBoth_NeverAGuess()
+        => Assert.Equal(2, WarText.MonsterRows(Rows("Goblin 140 30", "Goblin Elite 145 25", "Goblin 150 20"), "Goblin").Count);
+
+    [Theory]
+    [InlineData("o Goblin Elite 145 25", "Goblin Elite", "Goblin Elite")]       // the row's marker
     [InlineData("Goblin Elite 145", "'Goblin Elite.", "Goblin Elite")]          // stray characters of the target bar read
-    [InlineData("Goblin Elite 145 25", "Gobiin Elite", "Goblin Elite")]         // the list's spelling wins over an OCR slip
-    [InlineData("Goblin Elite.", "Goblin Elite", "Goblin Elite")]
-    [InlineData("Spectral", "Spectral", "Spectral")]
-    [InlineData("Red Mandolin Maiden 145 25", "Red Mandolin Maiden", "Red Mandolin Maiden")]
-    [InlineData("Bandit (Elite) 120 4", "Bandit (Elite)", "Bandit (Elite)")]
-    [InlineData("S undersword", "Sundersword", "S undersword")]                // a real 1024x768 read: the split stays (later checks normalise)
-    [InlineData("Bone Wolf Bonewolf 120", "Bonewolf", "Bone Wolf")]            // a tie goes to the run with more words
-    public void MonsterNameFromListLine_TheListsSpellingOfTheName(string line, string target, string expected)
-        => Assert.Equal(expected, WarText.MonsterNameFromListLine(line, target));
+    [InlineData("Goblin Elite 145 25", "Gobiin Elite", "Goblin Elite")]         // the list's spelling wins over an OCR slip (i / l folded)
+    [InlineData("Goblin E1ite 145 25", "Goblin Elite", "Goblin E1ite")]
+    [InlineData("S undersword", "Sundersword", "S undersword")]
+    [InlineData("Sundersword 140 3", "S undersword", "Sundersword")]           // the saved split spelling finds the row read whole
+    [InlineData("Red Mandolin Maiden 145 25", "Red Mandolin Maidem", "Red Mandolin Maiden")]   // one letter off a long name
+    public void MonsterRows_TheListsSpellingOfTheName(string line, string monster, string name)
+        => Assert.Equal(name, Assert.Single(WarText.MonsterRows(Rows(line), monster)).Name);
+
+    [Theory]
+    [InlineData("Goblin Elites 145 25", "Goblin Elite")]    // a longer name is another monster
+    [InlineData("Cave Rat 120 30", "Cave Bat")]             // one letter off a short name is another monster
+    [InlineData("o Goblin 140 30", "Goblin Elite")]
+    public void MonsterRows_AnotherMonster_IsNone(string line, string monster)
+        => Assert.Empty(WarText.MonsterRows(Rows(line), monster));
 
     [Theory]
     [InlineData("[Dark Soul Cave X]", "[Dark Soul Cave X]", true)]
@@ -450,12 +505,4 @@ public class WarTextTests
     [InlineData("[12]", false)]
     [InlineData("Piercing City", false)]
     public void IsZoneTitleLine(string line, bool title) => Assert.Equal(title, WarText.IsZoneTitleLine(line));
-
-    [Theory]
-    [InlineData("145 25", "Goblin Elite")]
-    [InlineData("Sacred Sky Lord 145 3", "Goblin Elite")]
-    [InlineData("", "Goblin Elite")]
-    [InlineData("Goblin Elite 145", "")]
-    public void MonsterNameFromListLine_NothingLikeTheTargetIsNull(string line, string target)
-        => Assert.Null(WarText.MonsterNameFromListLine(line, target));
 }

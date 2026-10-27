@@ -74,7 +74,8 @@ public partial class MainViewModel : ObservableObject, IAsyncDisposable
             PreviewCaption = update.Caption;
         });
         _engine.StateChanged += () => Post(SyncState);
-        // The mode buttons bind through Settings: re-read them when the pilot switches the mode.
+        // The mode buttons and Auto War's "Back to:" line bind through Settings: re-read them when the pilot
+        // switches the mode or remembers the cave.
         _engine.ModeChanged += () => Post(() => OnPropertyChanged(nameof(Settings)));
         _engine.BossKilled += what => Post(() => OnBossKilled(what));
         _engine.Faulted += message => Post(() =>

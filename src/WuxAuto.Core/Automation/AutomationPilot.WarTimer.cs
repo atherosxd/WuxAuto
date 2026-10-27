@@ -29,7 +29,7 @@ public sealed partial class AutomationPilot
     private bool _warInProgress;       // the last read said "In progress" (logged once)
     private bool _warJoinHuntOff;      // WarJoin: the autohunt is off (or the check gave up)
     private bool _warJoinGaveUp;       // WarJoin: no dialog in time - turning the autohunt back on
-    private long _warJoinUntil;        // WarJoin: the dialog is waited for until then
+    private long _warJoinUntil;        // WarJoin: the dialog is waited for until then (war clock: time with the game in front)
     private long _warJoinZoneAt;       // WarJoin: next minimap title read
 
     /// <summary>Waits for the next Bohai war (<see cref="PilotPhase.WarWait"/>), reading its timer at once.</summary>
@@ -82,6 +82,11 @@ public sealed partial class AutomationPilot
 
     private async Task TickWarWaitAsync(Mat frame)
     {
+        // The timer read's steps look at the screen and click: only with the game in front (a second game client's
+        // MENU / TRIBE STATUS must never be read). The wait itself (step 0) runs on: the war starts in real time.
+        if (_warTimerStep != 0 && !WarInFront(Environment.TickCount64))
+            return;
+
         switch (_warTimerStep)
         {
             case 1:
@@ -370,12 +375,15 @@ public sealed partial class AutomationPilot
     /// <summary>
     /// Joins the Bohai war (<see cref="PilotPhase.WarJoin"/>): autohunt off (so the alt is not mid-fight when the
     /// dialog comes), then OK on the war dialog. Called LeadMs before the timer's start, or when the dialog is up.
+    /// The dialog wait (<see cref="WarJoinDeadline"/>) runs on the war clock: it stands still while the game is behind
+    /// another window, when nothing is read (the clock never jumps, so a stop left over from an earlier phase only means
+    /// it goes on from there).
     /// </summary>
     private void BeginWarJoin(string why)
     {
         long now = Environment.TickCount64;
         var war = _settings.War;
-        _warJoinUntil = WarJoinDeadline(now, _warAt, war.LeadMs, war.DialogWaitMs);
+        _warJoinUntil = _warClock.Now(now) + (WarJoinDeadline(now, _warAt, war.LeadMs, war.DialogWaitMs) - now);
         _warJoinHuntOff = false;
         _warJoinGaveUp = false;
         _warJoinZoneAt = now + 5000;
@@ -390,6 +398,10 @@ public sealed partial class AutomationPilot
         var war = _settings.War;
         var seq = _settings.Sequence;
 
+        // The combat log, the minimap and the dialog are read only with the game in front; the dialog wait stands still.
+        if (!WarInFront(now))
+            return;
+
         if (_warJoinGaveUp)
         {
             if (await EnsureAutohuntAsync(frame, "after waiting for the war dialog", wantOn: true, trustVisibleLine: false))
@@ -397,7 +409,7 @@ public sealed partial class AutomationPilot
             return;
         }
 
-        if (now >= _warJoinUntil)
+        if (_warClock.Now(now) >= _warJoinUntil)
         {
             Log?.Invoke(LogLevel.Warning, $"No {war.Destination} war dialog came - turning the autohunt back on and waiting for the next war.");
             ResetAutohuntCheck();
@@ -419,7 +431,7 @@ public sealed partial class AutomationPilot
         if (now >= _warJoinZoneAt)
         {
             _warJoinZoneAt = now + 5000;
-            if (_input.IsTargetForeground && ZoneMatches(await ReadMinimapTitleAsync(frame), war.Destination))
+            if (ZoneMatches(await ReadMinimapTitleAsync(frame), war.Destination))
             {
                 BeginWarEnter($"already in {war.Destination}");
                 return;
@@ -441,7 +453,7 @@ public sealed partial class AutomationPilot
             return;
         }
 
-        _detail = $"autohunt off - waiting for the {war.Destination} war dialog ({Clock(_warJoinUntil - now)} left)";
+        _detail = $"autohunt off - waiting for the {war.Destination} war dialog ({Clock(_warJoinUntil - _warClock.Now(now))} left)";
         _waitUntil = now + 700;
     }
 

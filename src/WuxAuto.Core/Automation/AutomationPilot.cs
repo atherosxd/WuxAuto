@@ -257,7 +257,10 @@ public sealed partial class AutomationPilot
     public event Action<LogLevel, string>? Log;
     public event Action? StateChanged;
 
-    /// <summary>The pilot changed the run mode itself (LOD out of entries -> Auto Laby).</summary>
+    /// <summary>
+    /// The pilot changed a setting the window shows, and saved it: the run mode (LOD out of entries -> Auto Laby), or Auto
+    /// War's remembered cave and monster. Raised on the loop thread.
+    /// </summary>
     public event Action? ModeChanged;
 
     public bool IsRunning { get; private set; }
@@ -339,6 +342,7 @@ public sealed partial class AutomationPilot
         _warSpotChecked = false;
         _warRemembering = false;
         _warRefusedTeleports = 0;
+        _warReturnTrips.Clear();
         _warBarChecked = false;
         _warHp = default;
         _warShots.Clear();
@@ -526,11 +530,15 @@ public sealed partial class AutomationPilot
         // Not while the teleport list is open: its destinations and buttons are ours to click.
         // Auto War never cancels the Bohai dialog (user) - it watches for it instead, while waiting
         // for the war (the timer was missed or misread); the fight itself needs no whole-screen read.
+        // Not once WarRemember has the monster confirmed: that tick saves the spot first, then WarWait
+        // watches (a join before the save lost a confirmed spot). And Auto War reads nothing with the
+        // game behind another window: a second game client's war dialog or login screen is not ours.
         bool cancelDialogs = !IsWar
                              && !string.IsNullOrWhiteSpace(_settings.Sequence.CancelDialogText)
                              && _phase is not (PilotPhase.FindChevron or PilotPhase.FindDestination);
-        bool watchWarDialog = IsWar && _phase is (PilotPhase.WarWait or PilotPhase.WarRemember);
-        if ((_settings.Sequence.AutoReconnect || cancelDialogs || watchWarDialog) && _phase != PilotPhase.Reconnect && now >= _nextDisconnectCheckAt)
+        bool watchWarDialog = IsWar && _phase is (PilotPhase.WarWait or PilotPhase.WarRemember) && !_warMonsterConfirmed;
+        bool warBehind = IsWar && !_input.IsTargetForeground;
+        if ((_settings.Sequence.AutoReconnect || cancelDialogs || watchWarDialog) && !warBehind && _phase != PilotPhase.Reconnect && now >= _nextDisconnectCheckAt)
         {
             _nextDisconnectCheckAt = now + 5000;
             try
@@ -577,6 +585,24 @@ public sealed partial class AutomationPilot
         // Auto War: the same guard over the map pick in the cave (Destination = the cave).
         if ((_settings.Dungeon.Enabled || IsWar) && !_returning && IsLabyrinthPhase(_phase))
         {
+            // Auto War's map pick reads the map window: only with the game in front - a second game client's map
+            // must never confirm or pick a monster. The minimap is read again as soon as the game is back, and the
+            // 2 minutes below start again then.
+            if (warBehind)
+            {
+                _nextZoneCheckAt = 0;
+                _zoneHoldSince = null;
+                _detail = "waiting for the game window to be in front";
+                if (!_zoneHoldLogged)
+                {
+                    _zoneHoldLogged = true;
+                    ReleaseSweepKey();
+                    Log?.Invoke(LogLevel.Info, $"The game is behind another window - holding {_phase} until it is back in front.");
+                }
+
+                return;
+            }
+
             if (now >= _nextZoneCheckAt)
             {
                 _nextZoneCheckAt = now + 2000;
@@ -701,6 +727,9 @@ public sealed partial class AutomationPilot
                     TickRunSkill(frame);
                     break;
                 case PilotPhase.FontSize:
+                    // Auto War's visit (inside Bohai) reads the Settings window: only with the game in front.
+                    if (IsWar && !WarInFront(now))
+                        break;
                     await TickFontSizeAsync(frame);
                     break;
                 case PilotPhase.OpenInventory:
@@ -1528,7 +1557,14 @@ public sealed partial class AutomationPilot
 
             case TabStep: // "TAB target" -> the wanted option; the row is at the bottom of the list
             {
-                string wanted = _visitTabTarget!;
+                // _fontStep survives a restart, and ResetRunState takes the TAB option from the check box again:
+                // ticked off in the meantime, there is nothing to set - skip the step.
+                if (_visitTabTarget is not string wanted)
+                {
+                    AfterTab();
+                    return;
+                }
+
                 var row = await _analyzer.ReadSettingRowAsync(frame, "TAB target", numeric: false);
                 if (row?.ValueText is not string value)
                 {
@@ -2825,7 +2861,25 @@ public sealed partial class AutomationPilot
 
         _mapVisibleMisses = 0;
 
-        var (hit, _, _) = await _analyzer.FindTextAsync(frame, roi, expected);
+        TextHit? hit;
+        if (IsWar)
+        {
+            // Auto War: the row whose whole name column is the monster (WarText.MonsterRows) - the best single
+            // word would take the "Goblin" of "Goblin Elite". Two such rows: never a guess.
+            var rows = await ReadWarMonsterRowsAsync(frame, roi, expected);
+            if (rows.Count > 1)
+            {
+                WarStop(frame, $"'{expected}' fits {rows.Count} rows of this map's monster list ({string.Join(", ", rows.Select(r => $"'{r.Line}'"))}) - not guessing which; "
+                               + (verify ? "target another monster and press Start again" : "press Start again inside the cave"));
+                return;
+            }
+
+            hit = WarRowHit(rows);
+        }
+        else
+        {
+            hit = (await _analyzer.FindTextAsync(frame, roi, expected)).Hit;
+        }
 
         // Only a (nearly) whole boss name counts: the fuzzy matcher accepts fragments, and the
         // '[Rage' of a [Rage Elixir] item text once passed for 'Ragesoul Heathen' (run 23, stage 4).
@@ -2857,7 +2911,7 @@ public sealed partial class AutomationPilot
             if (IsWar)
             {
                 _overlays.Add(new OverlayItem(hit.Bounds, hit.Text, OverlayColor.Green));
-                Log?.Invoke(LogLevel.Success, $"Map shows '{hit.Text}' ({hit.Similarity:0.00}).");
+                Log?.Invoke(LogLevel.Success, $"Map shows '{hit.Text}' (row '{hit.LineText}', {hit.Similarity:0.00}).");
             }
             else
             {
@@ -2867,13 +2921,12 @@ public sealed partial class AutomationPilot
 
             // Start's check: the monster is in this cave's list - that is all it wanted to know.
             // No row click (that walks the character there); close the map instead. The list's spelling
-            // is the one saved: the target bar's read may carry stray characters.
+            // (the row's name column) is the one saved: the target bar's read may carry stray characters.
             if (verify)
             {
-                string? listName = WarText.MonsterNameFromListLine(string.IsNullOrWhiteSpace(hit.LineText) ? hit.Text : hit.LineText, expected);
-                if (listName != null && listName != expected)
-                    Log?.Invoke(LogLevel.Info, $"Saving the map list's spelling '{listName}' (the target bar read '{expected}').");
-                _warPendingMonster = listName ?? expected;
+                if (hit.Text != expected)
+                    Log?.Invoke(LogLevel.Info, $"Saving the map list's spelling '{hit.Text}' (the target bar read '{expected}').");
+                _warPendingMonster = hit.Text;
                 _warMonsterConfirmed = true;
                 await BeginCloseWarMapAsync(frame);
                 return;
@@ -3298,7 +3351,10 @@ public sealed partial class AutomationPilot
         }
 
         var roi = _settings.Regions.MapBossList.ToPixels(frame.Width, frame.Height);
-        var (stillThere, _, _) = await _analyzer.FindTextAsync(frame, roi, expected);
+        // Auto War: the one row whose name column is the monster (two such rows read as none: ReadStage stops on them).
+        var stillThere = IsWar
+            ? WarRowHit(await ReadWarMonsterRowsAsync(frame, roi, expected))
+            : (await _analyzer.FindTextAsync(frame, roi, expected)).Hit;
         bool mapOpen = await MapWindowVisibleAsync(frame);
         // The list band also covers the item list on the right ("[Rage Elixir] 25 (min(s))"
         // reads as a partial "Ragesoul Heathen"), so only trust a full name with the map open.
@@ -5159,6 +5215,22 @@ public sealed partial class AutomationPilot
                 .Select(t => TownIn(t) is { } townName ? townName
                     : ZoneMatches(t, Destination) ? Destination : null)
                 .FirstOrDefault(w => w != null);
+
+            // Auto War: Destination is the cave, but a re-login during the war lands in Bohai Outpost - the war
+            // map or any zone title will do (the raw lines: the '[' of a title is gone from the normalised ones).
+            if (where == null && IsWar && !lines.Any(l => IsStartGame(l.Text)))
+            {
+                var band = words
+                    .Where(w => w.LineBounds.CenterX >= minimap.X && w.LineBounds.CenterX <= minimap.Right &&
+                                w.LineBounds.CenterY >= minimap.Y && w.LineBounds.CenterY <= minimap.Bottom)
+                    .Select(w => w.LineText.Trim())
+                    .Distinct()
+                    .ToList();
+                bool loginScreen = lines.Any(l => l.Text is "servers" or "accountname" or "rememberme" or "characterselect"
+                                                      or "characterinfo" or "newcharacter" or "deletecharacter" or "selectworld");
+                where = WarReloginZone(band, _settings.War.Destination, loginScreen);
+            }
+
             if (where != null)
             {
                 Log?.Invoke(LogLevel.Success, $"Logged back in - in {where}. Restarting the run.");

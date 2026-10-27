@@ -366,48 +366,69 @@ public static class WarText
             .Select(l => (l.Text.Trim(), l.Bounds))
             .ToList();
 
+    /// <summary>A row of the map's monster list that names the monster: its OCR line, the line's box, the list's spelling of the name.</summary>
+    public sealed record MonsterRow(string Line, PixelRect Bounds, string Name, double Similarity);
+
     /// <summary>
-    /// The map list's spelling of the targeted monster: of the words of the list's OCR line
-    /// (<paramref name="listLine"/>, e.g. "o Goblin Elite 145 25" - the row's marker, the name, Lv and Spawns), the run
-    /// that reads most like <paramref name="targetName"/> (the target bar's read, which may carry stray characters). A
-    /// run starts and ends on a word with a letter, so the number columns are left out; punctuation at its ends goes
-    /// (a closing ')' stays when the name has a '('); ties go to the run with more words. Null when no run is at least
-    /// 0.72 similar (<see cref="TextMatcher.Similarity"/>).
+    /// The name column of one map-list OCR line ("Goblin Elite 145 25 &gt;" -> "Goblin Elite"): the first run of words with a
+    /// letter - glyphs without one before it (the row's marker read as "■") are skipped, and the first word without one (the Lv
+    /// and Spawns numbers, the '&gt;') ends it - with the punctuation at its ends trimmed (a closing ')' stays when the name has
+    /// a '('). A marker read as a letter ("o Goblin Elite") stays; <see cref="MonsterRows"/> also tries the name without it.
+    /// Null when the line has no word with a letter.
     /// </summary>
-    public static string? MonsterNameFromListLine(string listLine, string targetName)
+    public static string? MonsterNameColumn(string line)
     {
-        if (string.IsNullOrWhiteSpace(listLine) || TextMatcher.Normalize(targetName).Length == 0)
+        if (string.IsNullOrWhiteSpace(line))
             return null;
 
-        string[] words = listLine.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries);
-        string? best = null;
-        double bestScore = 0;
-        int bestWords = 0;
-        for (int first = 0; first < words.Length; first++)
+        string[] words = line.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries);
+        int first = Array.FindIndex(words, w => w.Any(char.IsLetter));
+        if (first < 0)
+            return null;
+
+        int last = first;
+        while (last + 1 < words.Length && words[last + 1].Any(char.IsLetter))
+            last++;
+
+        string name = TrimName(string.Join(' ', words[first..(last + 1)]));
+        return name.Length == 0 ? null : name;
+    }
+
+    /// <summary>
+    /// The rows of the map's monster list (the OCR lines of the list region) whose whole name column
+    /// (<see cref="MonsterNameColumn"/>) is <paramref name="monster"/>: the same <see cref="FoldedKey"/>, or at least 0.90
+    /// similar on the folded keys and not longer - "Goblin" is never the "Goblin Elite" row, which the best single word of
+    /// the list would make it, and "Cave Bat" is found as a whole even where its word "Cave" alone reads best. A one-letter
+    /// first word may be the row's marker: the name is also tried without it. One row = the pick; none = not on this page;
+    /// two or more = rows that cannot be told apart (never a guess). Top to bottom.
+    /// </summary>
+    public static IReadOnlyList<MonsterRow> MonsterRows(IReadOnlyList<(string Text, PixelRect Bounds)> lines, string monster)
+    {
+        string wanted = FoldedKey(monster);
+        var rows = new List<MonsterRow>();
+        if (wanted.Length == 0)
+            return rows;
+
+        foreach (var (text, bounds) in lines.OrderBy(l => l.Bounds.Y))
         {
-            if (!words[first].Any(char.IsLetter))
+            if (MonsterNameColumn(text) is not string column)
                 continue;
 
-            for (int last = first; last < words.Length; last++)
+            string[] words = column.Split(' ');
+            string? withoutMarker = words.Length > 1 && words[0].Length == 1 ? string.Join(' ', words[1..]) : null;
+            foreach (string name in withoutMarker == null ? [column] : new[] { column, withoutMarker })
             {
-                if (!words[last].Any(char.IsLetter))
-                    continue;
-
-                string name = TrimName(string.Join(' ', words[first..(last + 1)]));
-                double score = TextMatcher.Similarity(name, targetName);
-                int count = last - first + 1;
-                // A tie goes to more words: a shorter run can be part of another monster's name on the same map
-                // ("Goblin" in "Goblin Elite" and "Goblinkin Chieftain"), and the saved name picks the map row later.
-                if (score > bestScore || (score == bestScore && count > bestWords))
+                string key = FoldedKey(name);
+                double similarity = key == wanted ? 1.0 : key.Length <= wanted.Length ? TextMatcher.Similarity(key, wanted) : 0;
+                if (key.Length > 0 && similarity >= 0.90)
                 {
-                    best = name;
-                    bestScore = score;
-                    bestWords = count;
+                    rows.Add(new MonsterRow(text, bounds, name, similarity));
+                    break;
                 }
             }
         }
 
-        return bestScore >= 0.72 ? best : null;
+        return rows;
     }
 
     /// <summary>A name without the punctuation at its ends; a closing ')' stays when the name has a '('.</summary>

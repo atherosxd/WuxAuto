@@ -74,7 +74,8 @@ public sealed partial class AutomationPilot
 
     /// <summary>
     /// A clock that only runs while the game is in front: behind another window nothing is read and nothing is sent, so
-    /// that time must not count towards "the target is gone" or "dead for 30 s". It stops and goes on; it never jumps.
+    /// that time must not count towards "the target is gone", "dead for 30 s" or the wait for the war dialog. It stops and
+    /// goes on; it never jumps.
     /// </summary>
     internal sealed class FrontClock
     {
@@ -273,8 +274,9 @@ public sealed partial class AutomationPilot
     // ---------------------------------------------------------------- in front, in Bohai
 
     /// <summary>
-    /// Inside the war nothing is read or sent with the game behind another window: a held key is let go, the war clock
-    /// stands still, the tick waits. True when the game is in front.
+    /// Inside the war - and in the war steps outside it that read the screen (the timer read, the join, the autohunt at the
+    /// monster) - nothing is read or sent with the game behind another window: a held key is let go, the war clock stands
+    /// still, the tick waits. True when the game is in front.
     /// </summary>
     private bool WarInFront(long now)
     {
@@ -370,12 +372,14 @@ public sealed partial class AutomationPilot
 
     /// <summary>
     /// Into the war (<see cref="PilotPhase.WarEnter"/>): after OK on the war dialog, or found in Bohai already. A fresh stay -
-    /// the war not started, autobuff not known; the HP maximum seen alive is kept for this Start.
+    /// the war not started, autobuff not known, the trips back since the last war counted from zero again
+    /// (<see cref="WarReturnAllowed"/>); the HP maximum seen alive is kept for this Start.
     /// </summary>
     private void BeginWarEnter(string why)
     {
         long now = Environment.TickCount64;
         var war = _settings.War;
+        _warReturnTrips.Clear();
         _warStarted = false;
         _warHasAutoBuff = null;
         _warBuffKeyWarned = false;

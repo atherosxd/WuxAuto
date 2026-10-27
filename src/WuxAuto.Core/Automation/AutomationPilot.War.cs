@@ -35,6 +35,7 @@ public sealed partial class AutomationPilot
     private bool _warRemembering;          // Start in a cave began remembering it, not saved yet
     private int _warRefusedTeleports;      // return teleports in a row that left the character in town
     private bool _warBarChecked;           // the skill bar held every icon (checked once per Start: buffs on cooldown after a war score lower)
+    private readonly List<long> _warReturnTrips = new();   // trips back to the cave since the last war (WarReturnAllowed; a war clears it)
 
     // Per run (ResetRunState clears them).
     private string? _warTitle;             // the minimap title read at Start (the cave)
@@ -774,6 +775,7 @@ public sealed partial class AutomationPilot
             war.HomeMap = _warPendingMap;
             war.HomeMonster = _warPendingMonster;
             SettingsStore.Save(_settings);
+            ModeChanged?.Invoke();      // the settings panel's "Back to:" line reads the saved spot again
             _warPendingMap = null;
             _warPendingMonster = null;
             _warMapVerify = false;
@@ -821,6 +823,23 @@ public sealed partial class AutomationPilot
         _waitUntil = now + 1000;
     }
 
+    /// <summary>
+    /// The map pick's read of the monster list (<see cref="RegionSettings.MapBossList"/>, OCR at the scale the Laby pick reads
+    /// it): the rows whose whole name column is <paramref name="monster"/> (<see cref="WarText.MonsterRows"/>).
+    /// </summary>
+    private async Task<IReadOnlyList<WarText.MonsterRow>> ReadWarMonsterRowsAsync(Mat frame, PixelRect roi, string monster)
+    {
+        var words = await _analyzer.Ocr.RecognizeAsync(frame, roi, _settings.Detection.OcrScale);
+        return WarText.MonsterRows(ScreenAnalyzer.ToLines(words), monster);
+    }
+
+    /// <summary>
+    /// The one row of <paramref name="rows"/> as the map pick's hit - the name column as its text (the list's spelling), the
+    /// OCR line as its line, the line's box for the row and '&gt;' clicks; null for none or for rows that cannot be told apart.
+    /// </summary>
+    private static TextHit? WarRowHit(IReadOnlyList<WarText.MonsterRow> rows)
+        => rows.Count == 1 ? new TextHit(rows[0].Name, rows[0].Similarity, rows[0].Bounds, rows[0].Line, rows[0].Bounds, 0) : null;
+
     /// <summary>A fresh map pick: no scrolls, reopens or row clicks counted from an earlier one.</summary>
     private void ResetWarMapPick()
     {
@@ -835,11 +854,49 @@ public sealed partial class AutomationPilot
 
     // ---------------------------------------------------------------- the trip back
 
+    /// <summary>Trips back to the cave allowed within <see cref="WarReturnWindowMs"/> without a war in between.</summary>
+    internal const int WarMaxReturns = 3;
+
+    /// <summary>The window <see cref="WarMaxReturns"/> counts in: 30 min.</summary>
+    internal const int WarReturnWindowMs = 30 * 60 * 1000;
+
+    /// <summary>
+    /// One more trip back to the cave at <paramref name="now"/> (TickCount64), counted in <paramref name="trips"/> - the trips
+    /// since the last war (<see cref="BeginWarEnter"/> clears them), the ones older than <see cref="WarReturnWindowMs"/>
+    /// dropped. False, and not counted, when <see cref="WarMaxReturns"/> remain: a cave that takes the teleport but sends the
+    /// alt back to town would loop, a teleport each round.
+    /// </summary>
+    internal static bool WarReturnAllowed(List<long> trips, long now)
+    {
+        trips.RemoveAll(t => now - t > WarReturnWindowMs);
+        if (trips.Count >= WarMaxReturns)
+            return false;
+
+        trips.Add(now);
+        return true;
+    }
+
+    /// <summary>
+    /// <see cref="TickReconnectAsync"/> in Auto War, after START GAME: the zone the lines of the minimap band name once the
+    /// login screens are gone - the war map (<paramref name="warMap"/>: a re-login during the war lands there, not in the
+    /// cave the run's <c>Destination</c> names), else any zone title (<see cref="WarText.IsZoneTitleLine"/>: a cave not saved
+    /// yet). Null while a login screen still shows (the server list's "[CH-01] ..." row reads like a title, the character
+    /// screen shows the location) or when no line names a zone. The Start dispatch sorts the zone out after the restart.
+    /// </summary>
+    internal static string? WarReloginZone(IReadOnlyList<string> minimapLines, string warMap, bool loginScreen)
+    {
+        if (loginScreen)
+            return null;
+
+        return minimapLines.Any(l => ZoneMatches(l, warMap)) ? warMap : minimapLines.FirstOrDefault(WarText.IsZoneTitleLine);
+    }
+
     /// <summary>
     /// Back to the saved cave (design §4.8): the teleport phases find <see cref="Destination"/> (the saved map) on
     /// page <see cref="WarSettings.ListPage"/> and their load step goes to WarBack. Stops instead when no cave is saved,
-    /// or when this Start began remembering a cave and was sent away before saving it - the saved one is an earlier
-    /// Start's, not where the user started this one.
+    /// when this Start began remembering a cave and was sent away before saving it - the saved one is an earlier
+    /// Start's, not where the user started this one - or after <see cref="WarMaxReturns"/> trips in 30 min without a war
+    /// in between (<see cref="WarReturnAllowed"/>).
     /// </summary>
     private void BeginWarReturn(Mat? frame, string why)
     {
@@ -853,6 +910,14 @@ public sealed partial class AutomationPilot
         if (!HasWarSpot)
         {
             WarStop(frame, $"No cave is saved to go back to ({why}) - {NotACaveMessage}");
+            return;
+        }
+
+        if (!WarReturnAllowed(_warReturnTrips, Environment.TickCount64))
+        {
+            WarStop(frame, $"Not going back to {war.HomeMap} again ({why}): {WarMaxReturns} trips back within {WarReturnWindowMs / 60000} min "
+                           + "and no war in between - the cave does not keep the character; stopped instead of using another teleport. "
+                           + "Press Start again inside the cave");
             return;
         }
 
@@ -1005,10 +1070,14 @@ public sealed partial class AutomationPilot
     /// At the monster (design §4.8.5), or Start / a restart already at the saved spot: the autohunt on, confirmed in the
     /// combat log (J is a toggle), then the wait for the next war. The check also ends when it cannot tell (no line, or
     /// still off after 3 taps - it warns and saves a snapshot itself): "hunting again" is only claimed when it read "on".
+    /// The combat log is only read with the game in front (another window's log could read "on" or "off").
     /// </summary>
     private async Task TickWarHuntOnAsync(Mat frame)
     {
         var war = _settings.War;
+        if (!WarInFront(Environment.TickCount64))
+            return;
+
         if (!await EnsureAutohuntAsync(frame, "at the monster", wantOn: true, trustVisibleLine: false))
             return;
 

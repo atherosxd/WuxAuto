@@ -113,4 +113,49 @@ public class WarStartTests
         Assert.Null(read.Entry);
         Assert.True(read.Ambiguous);
     }
+
+    // ---------------------------------------------------------------- trips back to the cave
+
+    const long Minute = 60_000;
+
+    [Fact]
+    public void ReturnTrips_ThreeWithinHalfAnHour_TheFourthIsRefused()
+    {
+        var trips = new List<long>();
+        Assert.True(AutomationPilot.WarReturnAllowed(trips, 0));
+        Assert.True(AutomationPilot.WarReturnAllowed(trips, 5 * Minute));
+        Assert.True(AutomationPilot.WarReturnAllowed(trips, 10 * Minute));
+        Assert.False(AutomationPilot.WarReturnAllowed(trips, 29 * Minute));
+        Assert.Equal(3, trips.Count);     // a refused trip is not counted
+    }
+
+    [Fact]
+    public void ReturnTrips_OlderThanHalfAnHour_NoLongerCount()
+    {
+        var trips = new List<long> { 0, 5 * Minute, 10 * Minute };
+        Assert.True(AutomationPilot.WarReturnAllowed(trips, 31 * Minute));
+        Assert.Equal([5 * Minute, 10 * Minute, 31 * Minute], trips);
+    }
+
+    // ---------------------------------------------------------------- back in after a re-login
+
+    [Fact]
+    public void ReloginZone_TheWarMap_ACutTitle()
+        => Assert.Equal("Bohai Outpost", AutomationPilot.WarReloginZone(["[Bohai Outpost (Adep", "3592 , 7297"], "Bohai Outpost", loginScreen: false));
+
+    [Fact]
+    public void ReloginZone_AnyZoneTitle_ACaveNotSavedYet()
+        => Assert.Equal("[Dark Soul Cave 2F (WD)]", AutomationPilot.WarReloginZone(["3592 , 7297", "[Dark Soul Cave 2F (WD)]"], "Bohai Outpost", loginScreen: false));
+
+    [Fact]
+    public void ReloginZone_NothingWhileALoginScreenShows()
+    {
+        // The server list's row reads like a zone title, and the character screen shows the location.
+        Assert.Null(AutomationPilot.WarReloginZone(["[CH-01] - Wuxen2 Online"], "Bohai Outpost", loginScreen: true));
+        Assert.Null(AutomationPilot.WarReloginZone(["[Bohai Outpost (Adept)]"], "Bohai Outpost", loginScreen: true));
+    }
+
+    [Fact]
+    public void ReloginZone_NoTitle_IsNull()
+        => Assert.Null(AutomationPilot.WarReloginZone(["3592 , 7297", "[12]", "Lv 145"], "Bohai Outpost", loginScreen: false));
 }

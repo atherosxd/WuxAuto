@@ -80,6 +80,7 @@ public sealed class AppSettings
 
     /// <summary>Auto War: the tribe war in Bohai Outpost (<see cref="RunMode.AutoWar"/>).</summary>
     public WarSettings War { get; set; } = new();
+
     public UiSettings Ui { get; set; } = new();
 
     /// <summary>Puts every screen position (regions and click fractions) back to the built-in defaults.</summary>
@@ -454,22 +455,25 @@ public sealed class WarSettings
     /// <summary>Buff icons clicked on the skill bar, in order (user's crops).</summary>
     public List<string> BuffIcons { get; set; } = DefaultBuffIcons();
 
-    /// <summary>The buff icon that is also pressed with X (user).</summary>
+    /// <summary>
+    /// The "X buff" (user: icon 4, the bluish-white one with an X; it drops when another player hits): clicked again on the
+    /// skill bar in every fight cycle, once a target shows, before Shura.
+    /// </summary>
     public string XBuffIcon { get; set; } = "warbuff4";
 
     /// <summary>Gap between two buff clicks (user: 1 s).</summary>
     public int BuffClickGapMs { get; set; } = 1000;
 
-    /// <summary>How often the buffs are renewed (user: 5 min 45 s).</summary>
+    /// <summary>How often the buffs are renewed (my call: 5 min 45 s; the user's buffs last at least 6 min).</summary>
     public int BuffEveryMs { get; set; } = 345000;
 
-    /// <summary>How long the Shura key is held to stop the attack (my call).</summary>
+    /// <summary>How long the Shura key is held at the start of each fight cycle, before the skill taps (my call).</summary>
     public int ShuraHoldMs { get; set; } = 1200;
 
     /// <summary>How long the target must be gone before the pilot acts (my call).</summary>
     public int TargetGoneMs { get; set; } = 2000;
 
-    /// <summary>The combat log line when the war gate opens (user).</summary>
+    /// <summary>The text that says the war gate is open, read on the whole screen (user).</summary>
     public string GateText { get; set; } = "Gate is Open";
 
     /// <summary>The teleport list page of the home map (user: page 3).</summary>

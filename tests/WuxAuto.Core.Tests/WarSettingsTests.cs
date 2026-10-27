@@ -52,4 +52,13 @@ public class WarSettingsTests
         Assert.Equal(1, s.War.ListPage);
         Assert.Equal("[Dark Soul Cave]", s.War.HomeMap);
     }
+
+    [Fact]
+    public void WarSettings_NormalizeDropsBlankBuffIcons()
+    {
+        var s = new AppSettings();
+        s.War.BuffIcons = ["warbuff1", "", "   ", " warbuff3 ", null!];
+        SettingsStore.Normalize(s);
+        Assert.Equal(["warbuff1", "warbuff3"], s.War.BuffIcons);
+    }
 }
