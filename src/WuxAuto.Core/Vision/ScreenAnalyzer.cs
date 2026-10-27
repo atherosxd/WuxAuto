@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Text.RegularExpressions;
 using OpenCvSharp;
+using WuxAuto.Automation;
 using WuxAuto.Core;
 
 namespace WuxAuto.Vision;
@@ -1012,6 +1013,94 @@ public sealed class ScreenAnalyzer : IDisposable
         }
 
         return found;
+    }
+
+    /// <summary>OCR words joined into their lines: one entry per line box, top to bottom.</summary>
+    public static IReadOnlyList<(string Text, PixelRect Bounds)> ToLines(IReadOnlyList<OcrWord> words)
+        => words.GroupBy(w => w.LineBounds)
+            .Select(g => (Text: g.First().LineText, Bounds: g.Key))
+            .OrderBy(l => l.Bounds.Y)
+            .ThenBy(l => l.Bounds.X)
+            .ToList();
+
+    /// <summary>
+    /// OCR of <paramref name="roi"/> with only white text kept bright: every pixel becomes the darkest of
+    /// its three colour channels, so white numbers stay white while the red HP bar, the blue MP bar and
+    /// coloured scenery turn dark. Lines in frame coordinates, top to bottom.
+    /// </summary>
+    internal async Task<IReadOnlyList<(string Text, PixelRect Bounds)>> OcrWhiteTextAsync(Mat frame, PixelRect roi, double scale)
+    {
+        using var crop = new Mat(frame, new Rect(roi.X, roi.Y, roi.Width, roi.Height));
+        var channels = Cv2.Split(crop);
+        try
+        {
+            using var darkest = new Mat();
+            Cv2.Min(channels[0], channels[1], darkest);
+            Cv2.Min(darkest, channels[2], darkest);
+            using var bgra = new Mat();
+            Cv2.CvtColor(darkest, bgra, ColorConversionCodes.GRAY2BGRA);
+            var words = await Ocr.RecognizeAsync(bgra, new PixelRect(0, 0, bgra.Width, bgra.Height), scale);
+            return ToLines(words)
+                .Select(l => (l.Text, new PixelRect(roi.X + l.Bounds.X, roi.Y + l.Bounds.Y, l.Bounds.Width, l.Bounds.Height)))
+                .ToList();
+        }
+        finally
+        {
+            foreach (var channel in channels)
+                channel.Dispose();
+        }
+    }
+
+    /// <summary>
+    /// Auto War: the player's HP as "cur / max" from <see cref="RegionSettings.PlayerHp"/>, OCR x2 of the
+    /// white text only (<see cref="OcrWhiteTextAsync"/>). Saved frames (561): read on 508 - every frame
+    /// with the game's HUD at the top left; plain OCR x2 read 493 and dropped a leading digit on three
+    /// ("1073 / 41073" for 41073). Null when unread.
+    /// </summary>
+    public async Task<(int Cur, int Max)?> ReadPlayerHpAsync(Mat frame)
+    {
+        var roi = _settings.Regions.PlayerHp.ToPixels(frame.Width, frame.Height);
+        return WarText.ParseHp(await OcrWhiteTextAsync(frame, roi, 2.0));
+    }
+
+    /// <summary>
+    /// Auto War: the target's name in <see cref="RegionSettings.TargetBox"/> (a name only counts with its
+    /// "N / M" line under it) and the target bar's treasure chest (monstericon, top centre), each null when
+    /// not seen. OCR x1.5, then x2 of the white text only when that names no one: the slash of the numbers
+    /// line on the red bar is often dropped. Saved frames (561): 57 named at x1.5, 114 with the second read.
+    /// </summary>
+    public async Task<(string? Name, TemplateMatch? Chest)> ReadTargetAsync(Mat frame)
+    {
+        var roi = _settings.Regions.TargetBox.ToPixels(frame.Width, frame.Height);
+        string? name = WarText.FindTargetName(ToLines(await Ocr.RecognizeAsync(frame, roi, 1.5)))
+                       ?? WarText.FindTargetName(await OcrWhiteTextAsync(frame, roi, 2.0));
+        var chest = FindIcon(frame, "monstericon", new NormRect(0.25, 0, 0.50, 0.16).ToPixels(frame.Width, frame.Height), 0.80);
+        return (name, chest);
+    }
+
+    /// <summary>
+    /// Skill bar icons in <see cref="RegionSettings.Hotbar"/>: per template its <see cref="BestLeftmost"/>
+    /// hit at <paramref name="minScore"/> or more, null when it is not on the bar. In the order given.
+    /// </summary>
+    public IReadOnlyList<(string Template, TemplateMatch? Match)> FindSkillBarIcons(Mat frame, IReadOnlyList<string> templates, double minScore)
+    {
+        var bar = _settings.Regions.Hotbar.ToPixels(frame.Width, frame.Height);
+        return templates
+            .Select(template => (template, BestLeftmost(FindIcons(frame, template, bar, minScore, maxResults: 4))))
+            .ToList();
+    }
+
+    /// <summary>
+    /// The best-scoring hit; hits within 0.01 of it are a tie and the leftmost wins (the same icon can sit
+    /// in two slots of the skill bar: Shura at 1035 and 1240 on a 1920x1080 bar, both 1.00). Null when none.
+    /// </summary>
+    internal static TemplateMatch? BestLeftmost(IReadOnlyCollection<TemplateMatch> hits)
+    {
+        if (hits.Count == 0)
+            return null;
+
+        double top = hits.Max(h => h.Score);
+        return hits.Where(h => h.Score >= top - 0.01).MinBy(h => h.Bounds.CenterX);
     }
 
     /// <summary>Manual "what do the detectors see" pass used by the Test scan button.</summary>

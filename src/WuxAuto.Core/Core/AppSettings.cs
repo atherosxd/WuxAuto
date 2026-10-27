@@ -242,6 +242,31 @@ public sealed class RegionSettings
     /// the bar keeps roughly the same pixel size at every resolution.
     /// </summary>
     public NormRect Hotbar { get; set; } = new(0.20, 0.85, 0.60, 0.15);
+
+    /// <summary>
+    /// Auto War: the player's HP / MP box at the top left. The HP line "42833 / 42833" is the topmost
+    /// "N / M" in it (20261026_042225_228_lod_no_entries, 1920x1080: 184,36 116x15; the MP line (y 63) and
+    /// "100.000%" (y 91) are under it). The "0/3000" bar below it read inside the box on none of the 561
+    /// saved frames (1024x768 to 2304x1488, --hp probe).
+    /// </summary>
+    public NormRect PlayerHp { get; set; } = new(0.0, 0.0, 0.30, 0.10);
+
+    /// <summary>
+    /// Auto War: the target box at the top centre - the target's name with its "N / M" numbers line
+    /// under it. Name / numbers line tops: 1024x768 489,49 / 489,72 (20261021_000527_994_fail_RunToTarget),
+    /// 1273x1024 589,65 / 590,95 (20261025_124800_296_canceldialog_unread), 1920x1080 916,69 / 918,100
+    /// (20261024_152017_954_lod_approach) - y 6-7 % and 9 % at every size.
+    /// </summary>
+    public NormRect TargetBox { get; set; } = new(0.25, 0.03, 0.50, 0.12);
+
+    /// <summary>
+    /// Auto War: the band of the top-centre MENU button (three bars in a gold frame), the way into Tribe
+    /// Status. Not proportional - centre / size on the saved frames: 1024x768 499,21 43x36; 1273x1024
+    /// 581,27 58x47; 1440x900 825,25 51x42; 1920x1080 1182,29 61x50; 2302x1353 1479,37 76x63 (x 0.49-0.64,
+    /// bottom under 0.06). menubutton.png is the dark square inside the gold frame of
+    /// 20261024_170342_166_lod_no_entries (frame x 1149-1215, y 1-56; crop 1152,4 61x50).
+    /// </summary>
+    public NormRect MenuButton { get; set; } = new(0.30, 0.0, 0.40, 0.08);
 }
 
 /// <summary>Auto LOD (user, 2026-10-21) - see AutomationPilot.Lod.cs.</summary>
@@ -424,8 +449,13 @@ public sealed class WarSettings
     /// <summary>How long it waits for the arrival line (my call).</summary>
     public int ArriveWaitMs { get; set; } = 90000;
 
-    /// <summary>Minimum template score of a buff icon (my call).</summary>
-    public double IconMatchScore { get; set; } = 0.80;
+    /// <summary>
+    /// Minimum template score of a buff icon (my call). 0.90, not 0.80: warbuff2 (the small grey streak)
+    /// scored up to 0.871 on floor texture in the skill bar band of saved frames (0.80 or more on 32 of 561,
+    /// e.g. 20261020_160055_722_nogate_s4 and the gate_view frames); the other crops stayed under 0.76.
+    /// Shura, checked with the same score, reads 0.951-1.000 on every real bar and at most 0.781 elsewhere.
+    /// </summary>
+    public double IconMatchScore { get; set; } = 0.90;
 
     /// <summary>The map to go back to after the war, as the teleport list shows it (user; empty = not set).</summary>
     public string HomeMap { get; set; } = "";
