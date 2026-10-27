@@ -1031,7 +1031,9 @@ public sealed partial class AutomationPilot
     /// In town, before the teleport (user, 2026-10-25: "before running LOD or Laby add a check if the
     /// Run skill is activated, it will have a ring on it"). The icon
     /// (<see cref="SequenceSettings.RunSkillTemplate"/>, cropped inside the ring) is looked for on the
-    /// skill bar; the gold ring round it (<see cref="ScreenAnalyzer.RingFraction"/>) = on. No ring ->
+    /// skill bar; the gold ring round it (<see cref="ScreenAnalyzer.RingFraction"/>) = on. The skill
+    /// can sit in two slots and only the pressed one is ringed, so every copy is measured and one ring
+    /// is enough (<see cref="RunSkillState"/>). No ring on any copy ->
     /// click the icon and look again on the next frame, at most 3 clicks (then a warning and
     /// <c>runskill_off</c>). Icon not on the bar -> tap <see cref="SequenceSettings.RunSkillKey"/>
     /// once per Start: the key is a toggle and without the icon nothing says whether it was on, so a
@@ -1044,8 +1046,8 @@ public sealed partial class AutomationPilot
 
         void Done() => Advance(AfterTownChecks(), 120);
 
-        var icon = FindRunSkill(frame);
-        if (icon == null)
+        var run = FindRunSkill(frame);
+        if (run == null)
         {
             string missing = string.IsNullOrWhiteSpace(seq.RunSkillTemplate)
                 ? "The Run skill has no icon template"
@@ -1086,28 +1088,37 @@ public sealed partial class AutomationPilot
             return;
         }
 
-        double ring = _analyzer.RingFraction(frame, icon.Bounds);
-        bool on = ring >= seq.RunSkillRingMin;
-        _overlays.Add(new OverlayItem(icon.Bounds.Inflate(icon.Bounds.Width / 3), $"ring {ring:0.00}", on ? OverlayColor.Green : OverlayColor.Red));
+        // The game rings only the slot that was pressed: any ringed copy = on, never a click then.
+        foreach (var copy in run.Copies)
+        {
+            bool ringed = copy.Ring >= seq.RunSkillRingMin;
+            _overlays.Add(new OverlayItem(copy.Icon.Bounds.Inflate(copy.Icon.Bounds.Width / 3), $"ring {copy.Ring:0.00}",
+                ringed ? OverlayColor.Green : run.On ? OverlayColor.Orange : OverlayColor.Red));
+        }
+
+        var icon = run.Pick.Icon;
+        double ring = run.Pick.Ring;
         int x = icon.Bounds.CenterX, y = icon.Bounds.CenterY;
-        if (on)
+        string copies = run.Copies.Count > 1 ? $"; {run.Copies.Count} Run icons on the bar" : "";
+        if (run.On)
         {
             string after = _runSkillClicks > 0 ? $" after {_runSkillClicks} click(s)" : "";
-            Log?.Invoke(LogLevel.Success, $"The Run skill is on{after} (ring {ring:0.00} round its icon at {x},{y}, score {icon.Score:0.00}).");
+            Log?.Invoke(LogLevel.Success, $"The Run skill is on{after} (ring {ring:0.00} round its icon at {x},{y}, score {icon.Score:0.00}{copies}).");
             Done();
             return;
         }
 
+        string noRing = run.Copies.Count > 1 ? $"no ring round any of its {run.Copies.Count} icons, best {run.Copies.Max(c => c.Ring):0.00}" : $"ring {ring:0.00}";
         if (_input.IsDryRun)
         {
-            Log?.Invoke(LogLevel.Info, $"Dry run - the Run skill is off (ring {ring:0.00}); would click its icon at {x},{y} (score {icon.Score:0.00}).");
+            Log?.Invoke(LogLevel.Info, $"Dry run - the Run skill is off ({noRing}); would click its icon at {x},{y} (score {icon.Score:0.00}).");
             Done();
             return;
         }
 
         if (_runSkillClicks >= 3)
         {
-            Log?.Invoke(LogLevel.Warning, $"Still no ring round the Run skill icon at {x},{y} after {_runSkillClicks} clicks (ring {ring:0.00}) - carrying on.");
+            Log?.Invoke(LogLevel.Warning, $"Still no ring round the Run skill icon at {x},{y} after {_runSkillClicks} clicks ({noRing}) - carrying on.");
             DebugArtifacts.SaveFrame(frame, _overlays, "runskill_off");
             Done();
             return;
@@ -1121,33 +1132,30 @@ public sealed partial class AutomationPilot
         }
 
         _runSkillClicks++;
-        Log?.Invoke(LogLevel.Info, $"The Run skill is off (ring {ring:0.00}) - clicked its icon at {x},{y} ({_runSkillClicks}/3, score {icon.Score:0.00}).");
+        Log?.Invoke(LogLevel.Info, $"The Run skill is off ({noRing}) - clicked its icon at {x},{y} ({_runSkillClicks}/3, score {icon.Score:0.00}).");
         _detail = $"clicked the Run skill icon ({_runSkillClicks}/3) - looking for its ring";
         _waitUntil = now + 900;
     }
 
     /// <summary>
-    /// The Run skill icon on the skill bar (<see cref="RegionSettings.Hotbar"/>), drawn on the
-    /// preview; the best score wins, equal scores -> the leftmost (as <c>FindShura</c>).
+    /// Every Run skill icon on the skill bar (<see cref="RegionSettings.Hotbar"/>) with the ring round
+    /// it, drawn on the preview; the verdict is <see cref="RunSkillState.Decide"/> (any ringed copy = on).
     /// </summary>
-    private TemplateMatch? FindRunSkill(Mat frame)
+    private RunSkillState? FindRunSkill(Mat frame)
     {
         var seq = _settings.Sequence;
         if (string.IsNullOrWhiteSpace(seq.RunSkillTemplate))
             return null;
 
         var roi = _settings.Regions.Hotbar.ToPixels(frame.Width, frame.Height);
-        var hits = _analyzer.FindIcons(frame, seq.RunSkillTemplate, roi, seq.RunSkillMatchScore, maxResults: 4);
-        TemplateMatch? best = null;
-        foreach (var hit in hits)
+        var run = _analyzer.FindRunSkill(frame, seq.RunSkillTemplate, roi, seq.RunSkillMatchScore, seq.RunSkillRingMin);
+        if (run != null)
         {
-            _overlays.Add(new OverlayItem(hit.Bounds, $"run {hit.Score:0.00}", OverlayColor.Green));
-            if (best == null || hit.Score > best.Score + 0.01 ||
-                (Math.Abs(hit.Score - best.Score) <= 0.01 && hit.Bounds.CenterX < best.Bounds.CenterX))
-                best = hit;
+            foreach (var copy in run.Copies)
+                _overlays.Add(new OverlayItem(copy.Icon.Bounds, $"run {copy.Icon.Score:0.00}", OverlayColor.Green));
         }
 
-        return best;
+        return run;
     }
 
     /// <summary>The combat log's autohunt lines ("autohuntstarted" / "autohuntended" keys), top to bottom.</summary>
