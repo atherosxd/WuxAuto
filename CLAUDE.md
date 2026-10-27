@@ -123,14 +123,28 @@ dotnet run --project .\tests\WuxAuto.SelfTest -- --alert <file>
 # auto-confirm dialog (message line + OK button) for every PNG (absolute path; tests\frames holds the user's crop)
 dotnet run --project .\tests\WuxAuto.SelfTest -- --confirm "$env:LOCALAPPDATA\WuxAuto\debug"
 
-# M2 parity: every pilot detector on the frozen legacy vision (tests\...\Legacy, OpenCvSharp 4.13) vs Core's (Emgu CV), per frame (~46 min; differences=0 to pass)
+# M2 parity: the pilot's detectors and x1.5 OCR reads on the frozen legacy vision (tests\...\Legacy,
+# OpenCvSharp 4.13) vs Core's (Emgu CV), per frame; ends with two summary lines (see below)
 dotnet run --project .\tests\WuxAuto.SelfTest -- --parity "$env:LOCALAPPDATA\WuxAuto\parity-frames"
 ```
 
+`--parity` prints every difference line, the coverage per check, the pilot-view rules and then two
+summary lines. `pilot-view: differences=… excluded=…` counts capped hit lists the way the pilot's
+call site consumes them (best pick, count, the focused-row chevron, the fallback click point) and
+leaves out detectors the pilot no longer calls (`compass`, `compass-angle` = Test scan only;
+`selectionring`); the last line, `parity: frames=… checks=… differences=…`, is the strict view (every
+check, hit lists hit by hit; exit code 1 when it is not 0). A difference line tagged `[strict-only]`
+counts only in the strict line, `[pilot-view]` only in the pilot-view line. The OCR checks (`dest-*`,
+`bossname-s*`, `lod-*`, `settingswin-*`, `attacklog`, `autohunt-*`, `gatetext*`, `stagewide*`) read each
+region once per side at `Detection.OcrScale` and judge every needle with the pilot's own rules. There
+is no built-in pass criterion: whether the Emgu CV switch is accepted with the differences found is the
+user's decision, recorded in the M2 PR.
+
 `--do` frames land in `%TEMP%\wuxauto-step<N>-<verb>.png`. Check the frame before every click: an
 Escape with a target selected only clears the target (no SETTINGS window), and the clicks meant for
-the window then walk the character (2026-10-24). `WuxAuto.slnx` does not build `tests\WuxAuto.SelfTest`
-— build it on its own before `--no-build` runs, or the probe is stale.
+the window then walk the character (2026-10-24). `WuxAuto.slnx` builds `tests\WuxAuto.SelfTest` too, but
+into `bin\x64\Debug\…` (the solution maps it to x64), while `dotnet run --project tests\WuxAuto.SelfTest`
+uses `bin\Debug\…` — run `dotnet build tests\WuxAuto.SelfTest` before `--no-build` runs, or the probe is stale.
 
 The frame probe prints, per template, the best score, box, learned scale and timing, plus OCR
 words and the map scroll-arrow result. `--crop` writes `<frame>.crop.png` next to the frame.
@@ -208,7 +222,11 @@ src/WuxAuto                 WPF desktop app, references Core
   ViewModels/, MainWindow.*   WPF UI
 tests/WuxAuto.SelfTest      offline probes (see above); Legacy/ = the frozen pre-port vision on OpenCvSharp
                             4.13, only for `--parity`
-tests/WuxAuto.Core.Tests    xUnit tests of Core (AppPathsTests, which round-trips settings through SettingsStore; TextMatcherTests); `dotnet test`
+tests/WuxAuto.Core.Tests    xUnit tests of Core; `dotnet test`. AppPathsTests (round-trips settings through
+                            SettingsStore), TextMatcherTests, TemplateLibraryTests, ImageFileTests (non-ASCII
+                            folders), CvHelpersTests (pixel-copy guards); the AppPaths-touching classes derive
+                            from AppPathsScope, which puts AppPaths back and deletes its temp folders after
+                            each test
 tests/probe-baseline.ps1    runs every SelfTest probe over a frozen frame set and writes normalised
                             output for before/after diffs (refactor parity check, section 2)
 tests/WuxAuto.UiShot        renders the window to a PNG
