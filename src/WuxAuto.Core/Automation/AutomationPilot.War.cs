@@ -17,6 +17,11 @@ public sealed partial class AutomationPilot
     private bool _warMonsterConfirmed;
 #pragma warning restore CS0414
 
+    // ReadStage is closing the map instead of picking a row (BeginCloseWarMapAsync); per phase, so
+    // Advance clears it. _warMapCloseClicked: the last tick clicked the button, look once more first.
+    private bool _warMapClosing;
+    private bool _warMapCloseClicked;
+
     /// <summary>True while Start runs the tribe war (<see cref="WuxAuto.Core.RunMode.AutoWar"/>).</summary>
     private bool IsWar => _settings.Sequence.Mode == WuxAuto.Core.RunMode.AutoWar;
 

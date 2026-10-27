@@ -225,8 +225,9 @@ public sealed partial class AutomationPilot
     private List<string> _huntOffBaseline = [];   // autohunt log lines before the last tap
     private string? _homeTown;
     private int _fontStep;
-    // One Settings visit (BeginSettingsVisit): the TAB target option wanted (null = leave it), whether
-    // the font size is left alone, and the phase after the window is closed. Laby/LOD: ResetRunState.
+    // One Settings visit: the TAB target option wanted (null = leave it), whether the font size is left
+    // alone, and the phase after the window is closed. Set by AfterTownChecks (Laby/LOD) or
+    // BeginSettingsVisit (Auto War); ResetRunState puts the Laby/LOD values back as a safe default.
     private string? _visitTabTarget;
     private bool _visitSkipFont;
     private PilotPhase _visitNext = PilotPhase.OpenInventory;
@@ -442,6 +443,8 @@ public sealed partial class AutomationPilot
         _warMonsterConfirmed = false;
         _warPendingMonster = null;
         _warPendingMap = null;
+        _warMapClosing = false;
+        _warMapCloseClicked = false;
         _stuckShots = 0;
         _finalHuntOffChecked = false;
         _compassAnchored = false;
@@ -500,11 +503,13 @@ public sealed partial class AutomationPilot
         // Checked even while a phase is waiting (boss spawn, settle delays): a disconnect can
         // happen at any time and every key/click after it would land on the login screens.
         // Not while the teleport list is open: its destinations and buttons are ours to click.
-        // Auto War never cancels the Bohai dialog (user) - it watches for it instead.
+        // Auto War never cancels the Bohai dialog (user) - it watches for it instead, while waiting
+        // for the war (the timer was missed or misread); the fight itself needs no whole-screen read.
         bool cancelDialogs = !IsWar
                              && !string.IsNullOrWhiteSpace(_settings.Sequence.CancelDialogText)
                              && _phase is not (PilotPhase.FindChevron or PilotPhase.FindDestination);
-        if ((_settings.Sequence.AutoReconnect || cancelDialogs || IsWar) && _phase != PilotPhase.Reconnect && now >= _nextDisconnectCheckAt)
+        bool watchWarDialog = IsWar && _phase is (PilotPhase.WarWait or PilotPhase.WarRemember);
+        if ((_settings.Sequence.AutoReconnect || cancelDialogs || watchWarDialog) && _phase != PilotPhase.Reconnect && now >= _nextDisconnectCheckAt)
         {
             _nextDisconnectCheckAt = now + 5000;
             try
@@ -531,8 +536,8 @@ public sealed partial class AutomationPilot
                     return;
                 }
 
-                // The war dialog while waiting for it (the timer was missed or misread): join now.
-                if (IsWar && _phase is (PilotPhase.WarWait or PilotPhase.WarRemember)
+                // The war dialog while waiting for the war: join now.
+                if (watchWarDialog
                     && ScreenAnalyzer.ToLines(screenWords).Any(l => WarText.IsWarDialogLine(l.Text, _settings.War.Destination)))
                 {
                     BeginWarJoin("the war dialog is up");
@@ -958,8 +963,16 @@ public sealed partial class AutomationPilot
             return PilotPhase.RunSkill;
         }
 
-        bool settingsCheck = _settings.Sequence.FontSizePercent > 0 || _settings.Sequence.TabTargetDefault;
-        return !_fontChecked && settingsCheck ? PilotPhase.FontSize : PilotPhase.OpenInventory;
+        bool tabDefault = _settings.Sequence.TabTargetDefault;
+        bool settingsCheck = _settings.Sequence.FontSizePercent > 0 || tabDefault;
+        if (_fontChecked || !settingsCheck)
+            return PilotPhase.OpenInventory;
+
+        // The Laby/LOD visit, from the same read of the TAB target box as the decision above.
+        _visitTabTarget = tabDefault ? "Default" : null;
+        _visitSkipFont = false;
+        _visitNext = PilotPhase.OpenInventory;
+        return PilotPhase.FontSize;
     }
 
     /// <summary>
@@ -2687,10 +2700,23 @@ public sealed partial class AutomationPilot
             _stageIndex = Math.Clamp(_stageIndex, 0, dungeon.Stages.Count - 1);
         }
 
+        if (IsWar && _warMapClosing)
+        {
+            await TickCloseWarMapAsync(frame);
+            return;
+        }
+
         bool verify = IsWar && _warMapVerify;
         string? expected = MapPickName;
         if (expected == null)
         {
+            // Auto War: nothing to pick, but ClickMap has just opened the map - shut it first.
+            if (IsWar)
+            {
+                await BeginCloseWarMapAsync(frame);
+                return;
+            }
+
             Advance(AfterMapPick, 300);
             return;
         }
@@ -2743,9 +2769,10 @@ public sealed partial class AutomationPilot
 
         // Different resolutions move the map window around, so before paging the list try one
         // generous region. If the name turns up there, say where - that is the correction for
-        // Regions.MapBossList. Not for Auto War's Start check: that wide band also holds the game
-        // world, where a targeted player's name tag would pass for a monster of the cave.
-        if (hit == null && _attempts == 0 && _mapScrolls == 0 && !verify)
+        // Regions.MapBossList. Not in Auto War: that wide band also holds the game world, where the
+        // cave's monsters (and a targeted player) show their name tags - a click there walks the
+        // character, and a player's name would pass Start's check.
+        if (hit == null && _attempts == 0 && _mapScrolls == 0 && !IsWar)
         {
             var wide = new NormRect(0.32, 0.08, 0.68, 0.86).ToPixels(frame.Width, frame.Height);
             var (wideHit, _, _) = await _analyzer.FindTextAsync(frame, wide, expected);
@@ -2773,9 +2800,12 @@ public sealed partial class AutomationPilot
                 Log?.Invoke(LogLevel.Success, $"Map shows stage {_stageIndex + 1}: '{hit.Text}' ({hit.Similarity:0.00}).");
             }
 
+            // Start's check: the monster is in this cave's list - that is all it wanted to know.
+            // No row click (that walks the character there); close the map instead.
             if (verify)
             {
-                CloseMapAfterCheck(frame);
+                _warMonsterConfirmed = true;
+                await BeginCloseWarMapAsync(frame);
                 return;
             }
 
@@ -2887,24 +2917,68 @@ public sealed partial class AutomationPilot
     }
 
     /// <summary>
-    /// Auto War's Start check found the monster in the list: close the map with its button (a click
-    /// on the row would walk the character there) and hand back to the remember step.
+    /// Auto War ends a map pick without a row click (Start's check found the monster, or there is no
+    /// monster to pick): the map is closed with its button, then <see cref="AfterMapPick"/>. Ticked in
+    /// ReadStage (<c>_warMapClosing</c>, cleared by <see cref="Advance"/>) starting with this frame.
     /// </summary>
-    private void CloseMapAfterCheck(Mat frame)
+    private async Task BeginCloseWarMapAsync(Mat frame)
     {
-        var (button, _) = FindMapButton(frame);
-        if (button == null)
-            Log?.Invoke(LogLevel.Warning, "The map button was not found to close the map - leaving it open.");
-        else
+        _warMapClosing = true;
+        _warMapCloseClicked = false;
+        _attempts = 0;
+        await TickCloseWarMapAsync(frame);
+    }
+
+    /// <summary>
+    /// One look per tick: the map shut -> <see cref="AfterMapPick"/>; still open -> click its button,
+    /// at most 3 tries (a missing button counts), each decided on a fresh frame; still open after
+    /// that -> a warning and on anyway (no click goes into the world either way).
+    /// </summary>
+    private async Task TickCloseWarMapAsync(Mat frame)
+    {
+        long now = Environment.TickCount64;
+        if (!await MapWindowVisibleAsync(frame))
         {
-            _overlays.Add(new OverlayItem(button.Bounds, $"close map {button.Score:0.00}", OverlayColor.Green));
-            if (!Click(button.Bounds))
-                return;
-            Log?.Invoke(LogLevel.Info, "Closed the map with its button.");
+            if (_attempts > 0)
+                Log?.Invoke(LogLevel.Info, "The map is closed.");
+            Advance(AfterMapPick, 300);
+            return;
         }
 
-        _warMonsterConfirmed = true;
-        Advance(PilotPhase.WarRemember, 700);
+        // Still open right after a click: one more look first - a second click on a map that is
+        // only slow to close would open it again.
+        if (_warMapCloseClicked)
+        {
+            _warMapCloseClicked = false;
+            _detail = "waiting for the map to close";
+            _waitUntil = now + 700;
+            return;
+        }
+
+        if (_attempts >= 3)
+        {
+            Log?.Invoke(LogLevel.Warning, "The map is still open after 3 tries to close it with its button - leaving it open.");
+            Advance(AfterMapPick, 300);
+            return;
+        }
+
+        var (button, _) = FindMapButton(frame);
+        if (button == null)
+        {
+            _attempts++;
+            _detail = $"map button not found to close the map ({_attempts}/3)";
+            _waitUntil = now + 500;
+            return;
+        }
+
+        _overlays.Add(new OverlayItem(button.Bounds, $"close map {button.Score:0.00}", OverlayColor.Green));
+        if (!Click(button.Bounds))
+            return;
+
+        _attempts++;
+        _warMapCloseClicked = true;
+        _detail = $"closing the map ({_attempts}/3)";
+        _waitUntil = now + Math.Max(700, _settings.Dungeon.MapOpenDelayMs);
     }
 
 
@@ -5246,6 +5320,7 @@ public sealed partial class AutomationPilot
         _phase = next;
         _phaseStart = Environment.TickCount64;
         _attempts = 0;
+        _warMapClosing = false;
         _lastHash = 0;
         _stableSamples = 0;
         _noPathLogged = false;
