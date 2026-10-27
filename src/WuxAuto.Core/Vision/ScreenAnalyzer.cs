@@ -582,6 +582,28 @@ public sealed class ScreenAnalyzer : IDisposable
     }
 
     /// <summary>
+    /// How far the character is from the centre of the boss's ring (<see cref="FindBossRing"/>), in
+    /// ring radii: up to 1 = on or inside it. The camera follows the character, so its feet are at
+    /// (0.5 w, 0.54 h). The ring lies flat, about half as tall as wide at the game's camera pitch (saved
+    /// 1920x1080 frames: 0.46-0.5). A flatter box is only part of it - with the character under the boss,
+    /// the boss's body hides all but the front arc (a 160x50 arc read 2.0 from its own centre) - so the
+    /// distance is also taken from where the whole ring's centre would be with the front or the back arc
+    /// seen, and the nearest counts.
+    /// </summary>
+    public static double DistanceFromRing(PixelRect ring, int frameWidth, int frameHeight)
+    {
+        double meX = frameWidth / 2.0, meY = frameHeight * 0.54;
+        double rx = Math.Max(1, ring.Width / 2.0);
+        double ry = Math.Max(Math.Max(1, ring.Height / 2.0), ring.Width / 4.0);
+        double From(double centreY) => Math.Sqrt(Math.Pow((meX - ring.CenterX) / rx, 2) + Math.Pow((meY - centreY) / ry, 2));
+
+        double away = From(ring.Y + ring.Height / 2.0);
+        if (ring.Height < ring.Width * 0.4)
+            away = Math.Min(away, Math.Min(From(ring.Bottom - ry), From(ring.Y + ry)));
+        return away;
+    }
+
+    /// <summary>
     /// LOD (user, 2026-10-24): the belt hanging down the boss's front, four cyan circles one above the
     /// other. Found as 3+ cyan patches stacked in one column, or one tall thin cyan patch when the
     /// glow joins them.

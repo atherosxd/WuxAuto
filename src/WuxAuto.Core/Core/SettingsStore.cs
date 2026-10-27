@@ -310,6 +310,8 @@ public static class SettingsStore
         s.Lod.ApproachStopPresses = Math.Clamp(s.Lod.ApproachStopPresses, 0, 20);
         s.Lod.ApproachWaitMs = Math.Clamp(s.Lod.ApproachWaitMs, 300, 10000);
         s.Lod.ApproachTries = Math.Clamp(s.Lod.ApproachTries, 1, 10);
+        s.Lod.RingCheckEveryMs = s.Lod.RingCheckEveryMs <= 0 ? 0 : Math.Clamp(s.Lod.RingCheckEveryMs, 500, 60000);
+        s.Lod.RingStayMax = Math.Clamp(s.Lod.RingStayMax, 0.6, 3.0);
         s.Dungeon.ArrivalDelayMs = Math.Clamp(s.Dungeon.ArrivalDelayMs, 0, 10000);
         s.Dungeon.RowChevronThreshold = Math.Clamp(s.Dungeon.RowChevronThreshold, 0.05, 0.99);
         s.Dungeon.RowChevronTemplate = string.IsNullOrWhiteSpace(s.Dungeon.RowChevronTemplate)

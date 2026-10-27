@@ -6,11 +6,12 @@ using LogLevel = WuxAuto.Core.LogLevel;
 namespace WuxAuto.Automation;
 
 /// <summary>
-/// Auto LOD (user, 2026-10-21): teleport to the Ultimate Den of Rebirth, face south, walk towards
-/// the boss spot pressing Tab, and once "Bai Gu Great..." is targeted spam the skill key until it is
-/// dead. The boss respawns, so the map is unlimited until its timer runs out and the game sends the
-/// character to town (user) - the zone guard then teleports in again. Killed by the boss, the
-/// character is put back at the map's starting point: face south and walk in again.
+/// Auto LOD (user, 2026-10-21): teleport to the Ultimate Den of Rebirth, face south, press Tab where
+/// the teleport put the character (since 2026-10-27; <see cref="LodSettings.WalkToBossSpot"/> walks to
+/// the boss spot meanwhile, as before), and once "Bai Gu Great..." is targeted spam the skill key until
+/// it is dead. The boss respawns, so the map is unlimited until its timer runs out and the game sends
+/// the character to town (user) - the zone guard then teleports in again. Killed by the boss, the
+/// character is put back at the map's starting point: face south and Tab (or walk in) again.
 /// </summary>
 public sealed partial class AutomationPilot
 {
@@ -35,6 +36,9 @@ public sealed partial class AutomationPilot
     private int _lodApproachTries;
     private long _lodApproachClickAt;
     private int _lodApproachSnapshots;
+    private long _lodRingCheckAt;
+    private int _lodRingWalks;
+    private bool _lodApproachRingOnly;
 
     private bool IsLod => _settings.Sequence.Mode == RunMode.AutoLod;
 
@@ -250,7 +254,7 @@ public sealed partial class AutomationPilot
             .Where(char.IsLetter).Select(char.ToLowerInvariant).ToArray());
     }
 
-    /// <summary>After the arrival zoom (or a respawn): buff, face south, then the walk.</summary>
+    /// <summary>After the arrival zoom (or a respawn): buff, face south, then Tab for the boss (LodRun).</summary>
     private void BeginFaceSouth(bool buff = true)
     {
         // Buffs first (user: "upon teleporting, do the auto buff then the other"); a blocked key is
@@ -264,7 +268,9 @@ public sealed partial class AutomationPilot
         _bestFlashlightStep = 0;
         _tapsSinceBest.Clear();
         _refineDir = 0;
-        Log?.Invoke(LogLevel.Info, "Turning to face south for the walk to the boss.");
+        Log?.Invoke(LogLevel.Info, _settings.Lod.WalkToBossSpot
+            ? "Turning to face south for the walk to the boss."
+            : "Turning to face south, then tabbing for the boss from here.");
         Advance(PilotPhase.FaceNorth, 400);
     }
 
@@ -412,9 +418,10 @@ public sealed partial class AutomationPilot
         _lodDeathLines = -1;
         _lodHitLines = null;
         _lodApproached = false;
+        _lodRingWalks = 0;
     }
 
-    /// <summary>Back to finding the boss: the walk/Tab, or the south turn first if the heading is unknown.</summary>
+    /// <summary>Back to finding the boss: Tab (and the walk with WalkToBossSpot), or the south turn first if the heading is unknown.</summary>
     private void LeaveLodAttack()
     {
         _lastCoords = null;
@@ -438,7 +445,10 @@ public sealed partial class AutomationPilot
         return true;
     }
 
-    /// <summary>Walk towards the boss spot, Tab every TabEveryMs; the boss name ends the walk.</summary>
+    /// <summary>
+    /// Tab every TabEveryMs until the boss name shows. By default the character stays where it is
+    /// (user, 2026-10-27); with <see cref="LodSettings.WalkToBossSpot"/> it walks to the boss spot meanwhile.
+    /// </summary>
     private async Task TickLodRunAsync(Mat frame)
     {
         var lod = _settings.Lod;
@@ -462,6 +472,21 @@ public sealed partial class AutomationPilot
             Log?.Invoke(LogLevel.Success, $"'{boss.Text}' targeted - spamming skill {SkillText(_settings.Dungeon.SkillKey)} ({_lodKills} kill(s) so far).");
             BeginLodFight();
             Advance(PilotPhase.LodAttack, 0);
+            return;
+        }
+
+        // Stay put (user, 2026-10-27: "stay still on the same place upon teleport, just keep tabbing
+        // until the boss name shows") - no walk clicks, no coordinate reads.
+        if (!lod.WalkToBossSpot)
+        {
+            if (!_lodWaitLogged)
+            {
+                _lodWaitLogged = true;
+                Log?.Invoke(LogLevel.Info, $"Staying here - pressing Tab every {lod.TabEveryMs / 1000.0:0.#}s until '{lod.BossName}' shows.");
+            }
+
+            _detail = $"standing still, tabbing for '{lod.BossName}'";
+            _waitUntil = now + 300;
             return;
         }
 
@@ -553,8 +578,9 @@ public sealed partial class AutomationPilot
 
     /// <summary>
     /// Spam the skill on the targeted boss. A kill sends the character to town (the zone guard sees
-    /// it). A jump in the coordinates = the boss killed us and we are back at the start: walk in
-    /// again. The name gone for BossGoneMs (Tab pressed meanwhile) = lost target: walk/Tab again.
+    /// it). A jump in the coordinates = the boss killed us and we are back at the start: face south
+    /// and Tab again. The name gone for BossGoneMs (Tab pressed meanwhile) = lost target: back to
+    /// LodRun (Tab; the walk too with WalkToBossSpot).
     /// </summary>
     private async Task TickLodAttackAsync(Mat frame)
     {
@@ -636,13 +662,28 @@ public sealed partial class AutomationPilot
                 }
                 else if (hitLines.FirstOrDefault(line => !_lodHitLines.Contains(line)) is { } hit)
                 {
-                    BeginLodApproach(hit);
+                    BeginLodApproach($"First hit on '{lod.BossName}' ({hit})");
                     return;
                 }
                 else
                 {
                     // Lines the OCR missed on one frame and reads on the next are not new hits.
                     _lodHitLines.UnionWith(hitLines);
+                }
+            }
+            // Keep to the ring (user, 2026-10-27: "try to go to the ring as much as possible, do a
+            // periodical check"): after the first walk up, look again every RingCheckEveryMs and walk
+            // back when the character has drifted off it. The ring only: out of view it is mostly the
+            // boss's body over the camera with the character under the boss (live, 23:20), where a
+            // "belt" read was a cyan patch at the boss's side.
+            else if (lod.ApproachBoss && lod.RingCheckEveryMs > 0 && now - _lodRingCheckAt >= lod.RingCheckEveryMs)
+            {
+                _lodRingCheckAt = now;
+                if (FindApproachSpot(frame, useBelt: false) is { } spot && spot.Away > lod.RingStayMax)
+                {
+                    _lodRingWalks++;
+                    BeginLodApproach($"Ring check {_lodRingWalks}: off the {spot.What} ({spot.Away:0.00} of its radius out)", ringOnly: true);
+                    return;
                 }
             }
         }
@@ -658,7 +699,7 @@ public sealed partial class AutomationPilot
             {
                 if (_lodAttackCoords is (int ax, int ay) && coords.DistanceTo(ax, ay) > lod.TeleportJump)
                 {
-                    Log?.Invoke(LogLevel.Warning, $"Moved to {coords} (from {ax},{ay}) - killed by the boss? Walking back in.");
+                    Log?.Invoke(LogLevel.Warning, $"Moved to {coords} (from {ax},{ay}) - killed by the boss? Turning south again from the start.");
                     DebugArtifacts.SaveFrame(frame, _overlays, "lod_died");
                     Advance(PilotPhase.LodRespawn, _settings.Lod.RespawnSettleMs);
                     return;
@@ -681,7 +722,7 @@ public sealed partial class AutomationPilot
 
         if (now - _lodBossSeenAt > lod.BossGoneMs)
         {
-            Log?.Invoke(LogLevel.Warning, $"'{lod.BossName}' not seen for {lod.BossGoneMs / 1000}s - walking and tabbing again.");
+            Log?.Invoke(LogLevel.Warning, $"'{lod.BossName}' not seen for {lod.BossGoneMs / 1000}s - {(lod.WalkToBossSpot ? "walking and tabbing" : "tabbing")} again.");
             LeaveLodAttack();
             return;
         }
@@ -690,23 +731,63 @@ public sealed partial class AutomationPilot
         _waitUntil = now + Math.Min(lod.SkillEveryMs, 300);
     }
 
-    private void BeginLodApproach(string hit)
+    private void BeginLodApproach(string why, bool ringOnly = false)
     {
         _lodApproached = true;
+        _lodApproachRingOnly = ringOnly;
         _lodApproachStopped = false;
         _lodApproachTries = 0;
         _lodApproachClickAt = 0;
-        Log?.Invoke(LogLevel.Info, $"First hit on '{_settings.Lod.BossName}' ({hit}) - stopping the attack to walk up to it.");
+        Log?.Invoke(LogLevel.Info, $"{why} - stopping the attack to walk up to '{_settings.Lod.BossName}'.");
         Advance(PilotPhase.LodApproach, 0);
     }
 
     /// <summary>
-    /// After the first hit of a fight (user, 2026-10-24): stop attacking (Space) and Ctrl+click the
-    /// pink ring round the boss's feet - Ctrl+click walks there (live: 1183,1611 -> 1212,1775, at the
-    /// boss's feet, and the attack carried on by itself). No ring: just below the cyan belt, which is
-    /// where the feet are (a Ctrl+click on the belt itself is a floor spot behind the boss - live, it
-    /// walked ~190 units past it). Next to the boss after a click, nothing found, or ApproachTries
-    /// used up -> back to the attack.
+    /// Where the character should stand: the pink ring round the boss's feet, else the feet just below
+    /// its cyan belt (a Ctrl+click on the belt itself is a floor spot behind the boss - live, it walked
+    /// ~190 units past it). Away = how far out the character is: the camera follows it, so its feet are
+    /// at the middle of the client, a little low; in ring radii (<see cref="ScreenAnalyzer.DistanceFromRing"/>),
+    /// or in 8 % of the client height from the feet. Drawn on the preview. Null = neither in view
+    /// (<paramref name="useBelt"/> false: no ring).
+    /// </summary>
+    private (PixelRect Spot, string What, double Away)? FindApproachSpot(Mat frame, bool useBelt = true)
+    {
+        string what = "pink ring";
+        var spot = _analyzer.FindBossRing(frame);
+        bool ring = spot != null;
+        if (spot == null && useBelt && _analyzer.FindBossBelt(frame) is { } belt)
+        {
+            int feetY = belt.Bottom + (int)(frame.Height * 0.06);
+            spot = new PixelRect(belt.X, feetY - belt.Width / 2, belt.Width, belt.Width);
+            what = "boss's feet below its belt";
+            _overlays.Add(new OverlayItem(belt, "belt", OverlayColor.Blue));
+        }
+
+        if (spot is not { } found)
+            return null;
+
+        double away;
+        if (ring)
+        {
+            away = ScreenAnalyzer.DistanceFromRing(found, frame.Width, frame.Height);
+        }
+        else
+        {
+            double dx = frame.Width / 2.0 - found.CenterX, dy = frame.Height * 0.54 - found.CenterY;
+            away = Math.Sqrt(dx * dx + dy * dy) / (frame.Height * 0.08);
+        }
+
+        _overlays.Add(new OverlayItem(found, $"{what} {away:0.00}", OverlayColor.Green));
+        return (found, what, away);
+    }
+
+    /// <summary>
+    /// After the first hit of a fight (user, 2026-10-24), and whenever the ring check finds the
+    /// character off the ring (user, 2026-10-27): stop attacking (Shura) and Ctrl+click the pink ring
+    /// round the boss's feet - Ctrl+click walks there (live: 1183,1611 -> 1212,1775, at the boss's feet,
+    /// and the attack carried on by itself); no ring before the first click: just below the belt
+    /// (<see cref="FindApproachSpot"/>). Next to the boss after a click, no ring after a click (= under
+    /// the boss), nothing found, or ApproachTries used up -> back to the attack.
     /// </summary>
     private async Task TickLodApproachAsync(Mat frame)
     {
@@ -724,50 +805,40 @@ public sealed partial class AutomationPilot
         var (_, deathLines) = await ReadLodScreenAsync(frame);
         if (_lodDeathLines >= 0 && deathLines > _lodDeathLines)
         {
-            await ResumeLodAttackAsync(frame, "the death text showed while walking");
+            await ResumeLodAttackAsync(frame, "the death text showed while walking", reached: true);
             return;
         }
 
-        string what = "pink ring";
-        var spot = _analyzer.FindBossRing(frame);
-        bool ring = spot != null;
-        if (spot == null && _analyzer.FindBossBelt(frame) is { } belt)
-        {
-            int feetY = belt.Bottom + (int)(frame.Height * 0.06);
-            spot = new PixelRect(belt.X, feetY - belt.Width / 2, belt.Width, belt.Width);
-            what = "boss's feet below its belt";
-            _overlays.Add(new OverlayItem(belt, "belt", OverlayColor.Blue));
-        }
-
-        // The camera follows the character: its feet are at the middle of the client, a little low.
         // Next to the boss = the inner part of its ring, or right at the feet below the belt. The
         // first Ctrl+click always goes out (user: after the first hit, Ctrl+click the ring - the skill
         // stops the character on the ring at about half its radius); this only decides a retry.
-        int meX = frame.Width / 2, meY = (int)(frame.Height * 0.54);
-        double away = double.MaxValue;
-        if (spot is { } found)
+        // The belt only before the first click: after one, a missing ring is mostly the boss's body over
+        // the camera with the character under the boss, and a cyan patch at its side then read as the
+        // belt (live, 2026-10-27 23:20) - a click there would walk away from the boss.
+        var found = FindApproachSpot(frame, useBelt: !_lodApproachRingOnly && _lodApproachTries == 0);
+        if (found is { } near && _lodApproachTries > 0 && near.Away <= 0.6)
         {
-            _overlays.Add(new OverlayItem(found, what, OverlayColor.Green));
-            double dx = meX - found.CenterX, dy = meY - found.CenterY;
-            away = ring
-                ? Math.Sqrt(Math.Pow(dx / Math.Max(1, found.Width / 2.0), 2) + Math.Pow(dy / Math.Max(1, found.Height / 2.0), 2))
-                : Math.Sqrt(dx * dx + dy * dy) / (frame.Height * 0.08);
-            if (_lodApproachTries > 0 && away <= 0.6)
-            {
-                await ResumeLodAttackAsync(frame, $"next to it after {_lodApproachTries} Ctrl+click(s) ({what}, {away:0.00} of its radius)");
-                return;
-            }
+            await ResumeLodAttackAsync(frame, $"next to it after {_lodApproachTries} Ctrl+click(s) ({near.What}, {near.Away:0.00} of its radius)", reached: true);
+            return;
         }
 
-        if (spot == null || _lodApproachTries >= lod.ApproachTries)
+        if (found == null && _lodApproachTries > 0)
+        {
+            await ResumeLodAttackAsync(frame, $"no ring in view after {_lodApproachTries} Ctrl+click(s) - under the boss", reached: true);
+            return;
+        }
+
+        if (found is not { } target || _lodApproachTries >= lod.ApproachTries)
         {
             if (_lodApproachSnapshots++ < 3)
                 DebugArtifacts.SaveFrame(frame, _overlays, "lod_approach_miss");
-            await ResumeLodAttackAsync(frame, spot == null
+            await ResumeLodAttackAsync(frame, found == null
                 ? "no pink ring or belt in view - attacking from here"
-                : $"still not next to it after {_lodApproachTries} Ctrl+click(s) - attacking from here");
+                : $"still not next to it after {_lodApproachTries} Ctrl+click(s) - attacking from here", reached: false);
             return;
         }
+
+        var (spot, what, away) = target;
 
         // Stop attacking first (user: Shura, else Space), then take a fresh frame - the boss may move.
         if (!_lodApproachStopped)
@@ -788,8 +859,8 @@ public sealed partial class AutomationPilot
 
         // Inside the walk-click area, as the LodRun clicks: a ring low on the left would otherwise put
         // the click on the chat box, and the skill key would then type into the chat.
-        int clickX = Math.Clamp(spot.Value.CenterX, (int)(frame.Width * 0.25), (int)(frame.Width * RunClickRight));
-        int clickY = Math.Clamp(spot.Value.CenterY, (int)(frame.Height * RunClickTop), (int)(frame.Height * 0.78));
+        int clickX = Math.Clamp(spot.CenterX, (int)(frame.Width * 0.25), (int)(frame.Width * RunClickRight));
+        int clickY = Math.Clamp(spot.CenterY, (int)(frame.Height * RunClickTop), (int)(frame.Height * 0.78));
         if (!_input.CtrlClick(clickX, clickY))
         {
             _detail = "Ctrl+click blocked - waiting for the game to be in front";
@@ -811,14 +882,17 @@ public sealed partial class AutomationPilot
     /// Back to the skill spam after the walk, with a fresh "seen" timer so the walk is not taken for a
     /// lost target. The coordinates are the new death-jump baseline (the walk itself moves the
     /// character), but a jump past TeleportJump since before the walk is a death, as in LodAttack.
+    /// The next ring check is RingCheckEveryMs away, 3x that when the walk did not get there
+    /// (<paramref name="reached"/> false) - a ring it cannot reach would otherwise stop the attack
+    /// every few seconds.
     /// </summary>
-    private async Task ResumeLodAttackAsync(Mat frame, string why)
+    private async Task ResumeLodAttackAsync(Mat frame, string why, bool reached)
     {
         var lod = _settings.Lod;
         var coords = await _analyzer.ReadCoordinatesAsync(frame);
         if (coords != null && _lodAttackCoords is (int ax, int ay) && coords.DistanceTo(ax, ay) > lod.TeleportJump)
         {
-            Log?.Invoke(LogLevel.Warning, $"Moved to {coords} (from {ax},{ay}) while walking up to '{lod.BossName}' - killed by the boss? Walking back in.");
+            Log?.Invoke(LogLevel.Warning, $"Moved to {coords} (from {ax},{ay}) while walking up to '{lod.BossName}' - killed by the boss? Turning south again from the start.");
             DebugArtifacts.SaveFrame(frame, _overlays, "lod_died");
             Advance(PilotPhase.LodRespawn, lod.RespawnSettleMs);
             return;
@@ -830,6 +904,7 @@ public sealed partial class AutomationPilot
         _lodSkillAt = 0;
         _lodCoordsAt = now;
         _lodAttackCoords = coords == null ? null : (coords.X, coords.Y);
+        _lodRingCheckAt = reached ? now : now + 2L * lod.RingCheckEveryMs;
         Advance(PilotPhase.LodAttack, 0);
     }
 

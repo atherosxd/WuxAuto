@@ -141,7 +141,8 @@ words and the map scroll-arrow result. `--crop` writes `<frame>.crop.png` next t
 Core tests and the refactor parity gate (M1, 2026-10-27):
 
 ```powershell
-dotnet test tests\WuxAuto.Core.Tests        # xUnit, platform-free Core only
+dotnet test tests\WuxAuto.Core.Tests        # xUnit, platform-free Core only (23 tests, ~20 s; the pilot tests tick a
+                                           # blank Mat with a scripted OCR scene - see tests/ in section 3)
 # probe baseline: runs every SelfTest probe over a frozen, local-only frame set (never committed)
 # and writes normalised output; run it before and after a refactor and diff the two
 .\tests\probe-baseline.ps1 -Out <dir> [-Frames <dir>] [-SkipBuild] [-Only <probe,...>]
@@ -209,7 +210,20 @@ src/WuxAuto                 WPF desktop app, references Core
   Vision/              OcrService (Windows.Media.Ocr, implements IOcrEngine)
   ViewModels/, MainWindow.*   WPF UI
 tests/WuxAuto.SelfTest      offline probes (see above)
-tests/WuxAuto.Core.Tests    xUnit tests of Core (AppPathsTests, which round-trips settings through SettingsStore; TextMatcherTests); `dotnet test`
+tests/WuxAuto.Core.Tests    xUnit tests of Core (AppPathsTests, which round-trips settings through SettingsStore; TextMatcherTests;
+                            StageBossSelectTests: ticks the real AutomationPilot from WaitBoss at stage 1 (`Start(WaitBoss,
+                            stageIndex: 0)`) over a blank 1440×900 Mat with PilotTestDoubles - FakeOcrEngine returns a scripted
+                            scene (minimap title, boss name, 8 attack-log lines whose numbers shift per click) for whatever area is
+                            asked, FakeGameInput records every call - and asserts the input order: hold on → Tab, KeyDown/KeyUp 1,
+                            Ctrl+1, J, centre click, "boss selected on click 1" → WatchBoss; hold off → J, Tab, click. No templates
+                            (AppPaths points at an empty temp root), so the boss is found by name; needs OpenCvSharp4.runtime.win
+                            in the test project; LodStandStillTests: the same doubles from `Start(LodRun)` in AutoLod - only
+                            Tab until "[LOD] Bai Gu Great" reads, then LodAttack; `WalkToBossSpot` on → a walk click;
+                            LodRingCheckTests: a pink ellipse drawn on the frame, the log gains a hit per skill tap - ring far →
+                            2 Ctrl+clicks, then "Ring check 1" and a 3rd, each after Shura's key; ring underfoot → 1 click only;
+                            `RingCheckEveryMs` 0 → 2 only; ring + a cyan "belt" gone / shown after the click → "under the boss", 1 click; a cyan "belt" after the
+                            walk → no ring-check walk; RingDistanceTests: DistanceFromRing on 6 real ring boxes; the shared
+                            runner is `PilotRun.RunAsync` in PilotTestDoubles); `dotnet test`
 tests/probe-baseline.ps1    runs every SelfTest probe over a frozen frame set and writes normalised
                             output for before/after diffs (refactor parity check, section 2)
 tests/WuxAuto.UiShot        renders the window to a PNG
@@ -273,7 +287,7 @@ seen live.
 | `ReadStage` | OCRs `Regions.MapBossList` for `Stages[stageIndex]`; only a whole name counts (`IsFullName`: similarity ≥ 0.90 or ≥ 60 % of the letters — the `[Rage` of a [Rage Elixir] text passed at 0.84 and was clicked as stage 4, run 23). Missing → page **down** (list always opens at the top), max `MapScrollMaxSteps` 8 → reopen map → fail. **Every tick first checks `MapWindowVisibleAsync`** (no map → wait 700 ms → reopen ≤ 3 → fail); the old "chevrons not detected but the name is readable — carrying on" escape is gone (2026-10-26): a name read with the map shut is the name tag in the world, and the click walks the character |
 | `AdvanceStage` | clicks the **boss name** first (highlights the row), waits `BossNameClickDelayMs`, then clicks the highlighted row's `>` found with `rightchevronfoc.png`; retries 3×, then fallbacks: bright-blob glyph → template column → name click. The name is only trusted with the map open (`IsFullName` + `MapWindowVisibleAsync`). **Name gone before the `>` click** (`_chevronClicked` false; the name click only highlights, the `>` closes the map — the fallback's glyph / column click counts as a `>` click): map still open → re-read ≤ 3 × 500 ms (`_rowNameMisses`) → `ReadStage` again; map shut → something else closed it (user, 2026-10-26: their own mouse) → `ClickMap` again (≤ `MapReopenRetries`, shared counter) → then `WaitBoss` anyway. Before this the pilot went to `WaitBoss` and waited 60–90 s for a boss that was never picked |
 | `WaitBoss` | waits `BossSpawnWaitMs` (60 s), taps `J` (autohunt; **only without `HoldBeforeAutohunt`** — with it, the default, `J` follows the held press in `SelectBoss`), taps `Tab` (again every 1 s until something shows — one Tab on arrival at stage 5 showed nothing for 25 s, run 23), then looks for `monstericon.png` or the stage name; needs the boss visible `BossSelectDelayMs` (2 s). The 90 s no-boss timeout still turns the autohunt on and watches anyway |
-| stages 1–4 hold | **(user, 2026-10-27: "on other stages, before going autohunt, try to skill hold first"; `Dungeon.HoldBeforeAutohunt` on, check box "Hold skill before autohunt (stages 1-4)")** `TickSelectBossAsync`, `!IsFinalBoss && !_autohuntPressed`: `StartHeldSkill` (`KeyDown`, `_heldSkill` / `_holdUntil`, `HoldSkillMs` 3000 shared with stage 5) → `TickHeldSkill` lets go + Ctrl + skill (`CtrlSkill`) → `_heldBeforeHunt` → `EngageAutohunt` (`J`) → `_selectBaselineTaken = false` + `AutohuntSettleMs` (1 s; the hold's late hits) → the centre clicks as before (click give-up → `EngageAutohunt` is a no-op → `WatchBoss`). Off, no skill key or `HoldSkillMs` 0 → the old flow (`J` in `WaitBoss` right after the spawn wait). `_heldBeforeHunt` / `_holdUntil` reset per boss (`ResetBossState`); the key is down between ticks, `Advance` / Stop release it. History: on 2026-10-22 delaying `J` on stages 1–4 until after the selection "broke the run" (unknown how) — the check box is the way back. Not yet seen live |
+| stages 1–4 hold | **(user, 2026-10-27: "on other stages, before going autohunt, try to skill hold first"; `Dungeon.HoldBeforeAutohunt` on, check box "Hold skill before autohunt (stages 1-4)")** `TickSelectBossAsync`, `!IsFinalBoss && !_autohuntPressed`: `StartHeldSkill` (`KeyDown`, `_heldSkill` / `_holdUntil`, `HoldSkillMs` 3000 shared with stage 5) → `TickHeldSkill` lets go + Ctrl + skill (`CtrlSkill`) → `_heldBeforeHunt` → `EngageAutohunt` (`J`) → `_selectBaselineTaken = false` + `AutohuntSettleMs` (1 s; the hold's late hits) → the centre clicks as before (click give-up → `EngageAutohunt` is a no-op → `WatchBoss`). Off, no skill key or `HoldSkillMs` 0 → the old flow (`J` in `WaitBoss` right after the spawn wait). `_heldBeforeHunt` / `_holdUntil` reset per boss (`ResetBossState`); the key is down between ticks, `Advance` / Stop release it. History: on 2026-10-22 delaying `J` on stages 1–4 until after the selection "broke the run" (unknown how) — the check box is the way back. Not yet seen live; the input order (Tab → hold → Ctrl+1 → `J` → centre click → hit → `WatchBoss`, and `J` → Tab → click with the switch off) is pinned by `tests/WuxAuto.Core.Tests/StageBossSelectTests` (user, 2026-10-27, after v0.14.0: "after enabling autohunt in Stage 1-4 do still click near center ... it seemed to be removed" — it was not; the clicks follow `J` after the 1 s settle, as in this morning's v0.13.0 log where every stage hit on click 1–3) |
 | `SelectBoss` | **Stage 5 only (user, 2026-10-22 — on stages 1–4 it broke the run, those keep the old flow: `J` after the spawn wait — since 2026-10-27 after the held press above — then centre clicks until an attack line → `WatchBoss`):** autohunt only after a hit by hand. **Since 2026-10-27 (user: "in the log, it says it didn't see the pink ring, but it is there, and stops attacking the boss. also it didn't get near or inside the boss. Instead do this: Waypoint 1, make sure autohunt is off; Attack Hold skill, then do 10x attack (total 11); check if has attack succeeded, then auto hunt then click on the boss"):** the boss's name in view (`WaitBoss`, `BossSelectDelayMs` 2 s settle) → `StartManualAttack` at once — no selection ring, no target-bar read, no 15 s skill spam first (all gone; `FindSelectionRing` only lives on in the `--ring` probe). `TickManualAttackAsync`: press 1 **holds** `SkillKey` down for `HoldSkillMs` (**3000**, UI "Hold skill (ms)", 0 = taps only; `_heldSkill` / `_holdUntil` — the key is down *between* ticks, so Stop / F10 / `Advance` let go of it through `ReleaseHeldSkill` like the LOD hold), released → Ctrl + skill tap (`CtrlSkill`), then `ManualAttacks` (**10**; settings v21 turns the v20 15 into 10) `TapSkill` taps ≥ `ManualAttackIntervalMs` (300) apart — 11 presses in all. **Only a new attack line after the last press counts** (`_manualHit`, user 2026-10-23; checked `ManualAttackWaitMs` 500 after it); none → more taps, up to 3× the total; still none → `Tab` + another round (hold + taps, `_manualRounds` ≤ `MaxManualRounds` 3) → `nohit_s5` snapshot (≤ 3 per Start, `_stuckShots`, shared with `stall_s5`), `ArriveAtFinalBoss` (Tab wait, **autohunt still off** — nothing is clicked while it is off, user 2026-10-27). A hit → `EngageAutohunt` (`J` unless already on) → `TickAutohuntConfirmAsync`: `AutohuntSettleMs` (1000, const) of silence first (the manual attacks' last skill animations still print attack lines after `J`), the log re-read as the baseline (`_huntBaselineAt`), then **the stage 1–4 centre clicks at once** (`_huntClicks`, `SelectClickPoint`, `finalboss.png` first, one per `AttackConfirmMs`, ≤ `BossSelectMaxTries`; user 2026-10-27: "after enabling J, it unselected the boss, add the click the middle to try to select the boss") — a new line after any click → `WatchBoss`; all clicks without one → `J` (off), `StartManualAttack` again (counts as a round, same ≤ 3 limit) → 3 rounds → `nohit_s5`, Tab wait, autohunt off. The 2 s `AutohuntConfirmMs` wait before the clicks is gone (setting removed): in the v0.12.0 log (2026-10-27 09:02–09:08, 1440×900) every cycle read "ring + line → J → one late line 1.3 s after J → 15 s stall → J off" six times over, with the character standing ~250 px from the boss's feet the whole time (`stall_s5` / `ring_s5` frames) — the taps alone hit from a distance and the autohunt never attacked; the hold is the user's answer to "didn't get near or inside the boss". Before this (2026-10-26/27): the ring (`FindSelectionRing`, HSV H 138–156, S ≥ 89, V ≥ 190 in (0.05, 0.12, 0.70, 0.78)) + a new line + the boss in the target bar (`IsFinalBossTargetedAsync`, removed) gated `J`; round 1 in that log read "No selection ring" with the ring under the boss. **`WatchBoss` watchdog at stage 5 (2026-10-27):** with the autohunt on and the boss up, the combat log is read every boss poll; no new attack line for `AutohuntStallMs` (15000) → `J` off, snapshot `stall_s5` (≤ 3, `_stuckShots`), `ArriveAtFinalBoss` (autohunt-off check → Tab → hold + taps → `J` → clicks). Catches every "autohunt on but not attacking" state whatever let it through; unbounded, the stage closes itself within ~2 min anyway. At stage 5 nothing else turns the autohunt on: the click give-up before `J` goes back to the Tab wait (`attack_s5` snapshot; only reachable with an empty `SkillKey`), and the 90 s no-boss timeout only applies to stages 1–4 (stage 5 keeps tabbing until the zone guard sees the stage closed). Stages 1–4: click give-up and the 90 s timeout still turn autohunt on. **Autohunt off at the waypoint (user, 2026-10-26: "when in Waypoint 1, disable auto hunt"):** the first `WaitBoss` tick at stage 5 (`_finalHuntOffChecked`, every `ArriveAtFinalBoss`) runs `EnsureAutohuntOffAsync` (the town check's logic, shared) with `trustVisibleLine`: the newest autohunt line already in the combat log decides — "Auto hunt ended" = off, nothing pressed (the stage 4 `J` is a blind toggle, but its line is normally still on screen); "Auto hunt started" = on → `J`, expect "ended"; no line → tap and read as in town (≤ 3 taps, `autohunt_on` / `autohunt_unread`). `_phaseStart` restarts after it. Not yet seen live. Before that: **left-clicks around the middle of the client** until a new `Attack succeeded!... damage(+N)` line appears in the combat log (`Regions.AttackMessage`, left side): centre, ring of 8 at `BossSelectStep` (0.06 × height), ring of 8 at 2 steps, max `BossSelectMaxTries` 17, `AttackConfirmMs` 1200 per click. The log holds ~8 lines and is usually full, so line counts don't change: it compares the visible lines (normalised `attacksucceeded...damage(N)`, top to bottom) with a baseline taken before the first click; any change = hit. Gives up → warning + `attack_s<N>` snapshot → `WatchBoss` anyway. Autohunt will not attack an unselected boss |
 | `WatchBoss` | gate banner checked every `GatePollMs` (template every poll, OCR every `GateOcrEveryNPolls`, OCR only counts *new* lines vs a baseline) = dead → next stage skips `WaitForGate` (last stage → `FaceNorth`). Boss name/icon checked every `BossPollMs` (2 s); it only counts as dead after `BossGoneMs` (10 s) of continuous absence — two quick misses once ended a live fight (the name flickers when the boss is off camera). The 15 s `GateFallbackMs` first re-checks the previous boss and goes back to `WatchBoss` if it is still up. The banner check was added because after stage 4 the pilot sat in `WatchBoss` while the gate banner was already up. **No time limit** while the boss is visible (2026-10-24, user: the 15 min `BossDeadTimeoutMs` moved a friend's run on with the stage 1 boss at 1 %; the dungeon stays open for a slow kill) |
 | after stage 4 | `FaceNorth` |
@@ -448,9 +462,16 @@ the name — `ZoneMatches` — so a plain "[Den of Rebirth]" cannot pass) → zo
 minimap background. It was first turned 180° by mistake (I misread its orientation from pixel
 brightness) and the pilot "lined up" facing north at ~0.82 — user caught it. flashlight3 only reached
 0.78; the arrival heading is about WSW) →
-`LodRun`: SimpleSteer with `_headingBase` = π (screen-up = world-south) towards **1191, 2413**
-(`Lod.TargetX/Y`, tolerance 60), Tab every `Lod.TabEveryMs` (1.5 s) → name **`Lod.BossName` "Bai Gu Great"**
-on screen → `LodAttack`: spam `Dungeon.SkillKey` every 0.3 s — or hold it down (`Lod.HoldSkill`, "Hold skill (LOD)"; released on every phase change, Stop, panic and failure) — Tab when the name is missing.
+`LodRun`: **stands still** where the teleport put the character and taps Tab every `Lod.TabEveryMs` (1.5 s)
+→ name **`Lod.BossName` "Bai Gu Great"** on screen → `LodAttack`: spam `Dungeon.SkillKey` every 0.3 s — or hold it down (`Lod.HoldSkill`, "Hold skill (LOD)"; released on every phase change, Stop, panic and failure) — Tab when the name is missing.
+* **Stand still, no walk** (user, 2026-10-27: "instead of trying to go to the Center of the map, stay still
+  on the same place upon teleport. just keep tabbing until the boss name shows. but retain the rotate to
+  south so you will be able to target on the ring"): `LodRun` sends no clicks and reads no coordinates; the
+  south turn on arrival / after a respawn stays. `Lod.WalkToBossSpot` (off, check box "Walk to the boss
+  spot (LOD)"; a saved file without it loads off) brings back the old walk: SimpleSteer with `_headingBase`
+  = π (screen-up = world-south) towards **1191, 2413** (`Lod.TargetX/Y`, tolerance 60) while tabbing.
+  Pinned offline by `tests/WuxAuto.Core.Tests/LodStandStillTests` (only Tab until the name, then
+  `LodAttack`; the switch on → a walk click). Not yet seen live.
 * **Ctrl + skill key** (user, 2026-10-26: "when manually attacking couple it with ctrl+ skill key";
   `Dungeon.CtrlSkill` on, check box "Ctrl + skill key too"): every press of the spam is `TapSkill` =
   the plain key, 60 ms (`CtrlSkillGapMs`), then `WindowInput.CtrlKeyTap` (Ctrl down, 40 ms, key tap,
@@ -477,6 +498,23 @@ on screen → `LodAttack`: spam `Dungeon.SkillKey` every 0.3 s — or hold it do
   itself; two pilot fights: first hit -> click -> 0.56 / 0.12 of the radius -> attacking. When only the
   ring's front arc shows (boss over the character) its centre is a little in front of the feet. Snapshots
   `lod_approach` / `lod_approach_miss` (<= 3 per Start). Not seen: the belt fallback inside the pilot.
+* **Keep to the ring** (user, 2026-10-27: "in LOD, try to go to the ring as much as possible, do a periodical
+  check or maybe shura then ctrl+attack old or ctrl+click on the foot of the boss or ring"): after the first
+  walk up of a fight, `LodAttack` looks for the ring every `Lod.RingCheckEveryMs` (**3000**; 0 = off) while the
+  boss is targeted; the character further out than `Lod.RingStayMax` (**1.0** = on the ring) → the same walk
+  up (`BeginLodApproach(..., ringOnly: true)`: Shura → Ctrl+click the ring → ≤ `ApproachTries`), log
+  `Ring check N: off the pink ring (x of its radius out)`. A walk that did not get there → next check 3×
+  later (`ResumeLodAttackAsync(reached: false)`). Distance = `ScreenAnalyzer.DistanceFromRing` (also printed
+  by `--lodparts` as `away`): character at (0.5 w, 0.54 h), ring radii; the ring is ~half as tall as wide,
+  so a flatter box (< 0.4) is a partial arc and the distance is also taken from where the whole ring's centre
+  would be (front or back arc), nearest counts — with the character under the boss only the front arc shows
+  (a 160×50 arc read 2.0 from its own centre, 0.89 corrected). Saved first-walk frames: 0.07–0.89 on / under
+  the boss, 1.82–2.0 beside it. **Ring only, no belt** in the check and its walk: live 2026-10-27 23:20
+  (2048×1152, v0.16.0) the first walk's 1st Ctrl+click (ring above the character, 2.33 out) put the
+  character under the boss — camera inside the boss's body, no ring — and a cyan patch at the boss's side
+  read as the "belt". So the belt is only used before a walk's first click (first walk of a fight); after a
+  click, no ring in view ends the walk as reached ("no ring in view after N Ctrl+click(s) - under the boss"). "Ctrl + attack hold" from the request was not used: what Ctrl + skill does is unknown, the
+  Ctrl+click walk is verified live. Not yet seen live.
 * **The boss respawns after dying** (user, after run 2: one "fight" lasted 18 min) → the map is unlimited
   until its timer runs out; then the game sends the character to town → the zone guard teleports in
   again (if that is refused, "Still in … after the teleport" stops the run). A target gone for
@@ -490,9 +528,9 @@ on screen → `LodAttack`: spam `Dungeon.SkillKey` every 0.3 s — or hold it do
   way without counting a kill; no Tab in that 2 s gap either (Tab during an attack only when the loot
   key is empty).
 * **Boss name in view while turning south → stop the turn and attack** (user); the heading is then
-  unknown, so the next time the boss is lost the pilot turns south first (no buff) before walking.
+  unknown, so the next time the boss is lost the pilot turns south first (no buff) before tabbing again.
 * **Killed by the boss → put back at the map's starting point** (coordinate jump > `Lod.TeleportJump`
-  400 while attacking) → `LodRespawn` (two equal coordinate readings) → face south → walk again.
+  400 while attacking) → `LodRespawn` (two equal coordinate readings) → face south → `LodRun` again.
 * Name gone `Lod.BossGoneMs` (10 s) while attacking → back to `LodRun` (lost target).
 * **Boss name or treasure icon = targeted** (user). The name is matched per whole OCR **line** — the best
   hit was sometimes a single word ("[LOD]") too short to pass, and the pilot walked or turned with the
@@ -531,7 +569,7 @@ on screen → `LodAttack`: spam `Dungeon.SkillKey` every 0.3 s — or hold it do
   first page reached without it → fail. The list's "3 / 3" counter is not read by OCR, so it is not used.
 * `CheckZone` on Start in the LOD zone (user): boss name in view → **rebuff** (`StopLodAttack` + O, a fight may be
   running) → attack; otherwise Tab up to 3× (1.5 s apart) and look again; still nothing → buff, face south
-  and walk. Tab is also spammed while turning south (`TurnTabEveryMs` 400 ms, user; the turn ticks every
+  and `LodRun`. Tab is also spammed while turning south (`TurnTabEveryMs` 400 ms, user; the turn ticks every
   ~0.5 s, so in practice once per tap).
 * The minimap zone title is cut off at the panel edge ("[The Labyrinth (Adep"): `ZoneMatches` accepts
   10+ letters of the destination's start ("[Ultimate Den of Re"); all zone checks (guard, CheckZone,
@@ -759,7 +797,7 @@ Each part logs what it saw and saves `war_*` snapshots (<= 3 per tag per Start) 
 
 Key `DungeonSettings` defaults. The settings panel's **Dungeon** section (2026-10-21) edits Skill key,
 Autohunt key, Target key, Font size % and the switches Tab + skill at the last waypoint, Autohunt off
-for the run, Ctrl + skill key too, Click the stage 5 gate, Auto reconnect, Hold skill (LOD), Walk up to the boss (LOD), TAB target: Default, Autohunt off in town, Run skill on in town (and the Run key field, default W); everything else only via `settings.json`.
+for the run, Ctrl + skill key too, Click the stage 5 gate, Auto reconnect, Hold skill (LOD), Walk up to the boss (LOD), Walk to the boss spot (LOD), TAB target: Default, Autohunt off in town, Run skill on in town (and the Run key field, default W); everything else only via `settings.json`.
 `tests/WuxAuto.UiShot -- <png> --settings --bottom` renders that panel (`--mini` renders the Mini window instead, `--kill-alert` fills the last-kill line, `--kill-sound` shows a picked kill sound + the Default button); it restores `settings.json`
 afterwards (it ticks check boxes for the picture and the window saves on close — that once switched
 Dry run on in the real settings).

@@ -29,14 +29,16 @@ Everything it does is drawn on its preview and written to its log.
 ## Three modes (the Mode buttons above Start)
 
 * **AutoLaby** - The Labyrinth (Adept): 4 stages + Sacred Sky Lord, back to your home town, repeat.
-* **AutoLod** - Ultimate Den of Rebirth: walks to the boss **Bai Gu Great** pressing Tab and spams
-  skill `1` until it is dead (it auto-buffs with `O` on arrival and every ~5 min). After the first hit of
+* **AutoLod** - Ultimate Den of Rebirth: turns south, then stays where the teleport put you and presses
+  Tab until the boss **Bai Gu Great** shows (setting "Walk to the boss spot (LOD)" walks to it instead, the
+  old way), then spams skill `1` until it is dead (it auto-buffs with `O` on arrival and every ~5 min). After the first hit of
   each fight it stops attacking, Ctrl+clicks the pink ring round the boss's feet to walk up to
-  it, then attacks again (setting "Walk up to the boss (LOD)"). The attack is stopped with **Shura**:
+  it, then attacks again (setting "Walk up to the boss (LOD)"); after that it checks every 3 s and walks
+  back to the ring whenever the character is off it. The attack is stopped with **Shura**:
   its icon is found on the skill bar and clicked 3 times; not found -> the "Shura key (LOD)" (default
   `E`, set it to the slot you put Shura in); empty -> Space as before. When the boss says "see you in hell" (or the boss's treasure icon is gone for 2 s) it loots with the `` ` `` key for 10 s, without pressing Tab.
   The boss respawns, so it keeps fighting until the map's timer runs out;
-  then the game sends you to your home town and the pilot teleports back in. Killed by the boss, it walks in again from the start of the map.
+  then the game sends you to your home town and the pilot teleports back in. Killed by the boss, it turns south again at the start of the map and presses Tab.
   Out of keys is noticed at the teleport: LOD not on page 2 of the teleport list -> AutoLaby; still
   in town 2 minutes after a Labyrinth teleport (setting "Laby key wait") -> AutoLod; both out -> opens the autohunt settings (S),
   closes the AUTO BUFF dialog if it is in the way, ticks Regular War, presses J (the game's auto war)
