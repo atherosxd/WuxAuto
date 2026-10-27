@@ -1,8 +1,5 @@
 using System.Diagnostics;
 using System.IO;
-using System.Runtime.InteropServices;
-using System.Security.Cryptography;
-using OpenCvSharp;
 using WuxAuto.Core;
 using WuxAuto.Vision;
 
@@ -12,6 +9,15 @@ namespace WuxAuto.SelfTest;
 internal sealed record DetectorResult(bool Found, PixelRect? Box, double? Score, string? Text)
 {
     public static readonly DetectorResult None = new(false, null, null, null);
+
+    /// <summary>
+    /// The template scale a match was found at (the learned scale on the learned-scale path). Not
+    /// compared - printed on difference lines so a scale drift is visible.
+    /// </summary>
+    public double? Scale { get; init; }
+
+    /// <summary>" @x0.780" when a scale is known, else empty.</summary>
+    public string ScaleSuffix => Scale is { } scale ? $" @x{scale:0.000}" : string.Empty;
 
     public override string ToString()
     {
@@ -25,7 +31,7 @@ internal sealed record DetectorResult(bool Found, PixelRect? Box, double? Score,
             parts.Add(score.ToString("0.0000"));
         if (Text != null)
             parts.Add($"'{Text}'");
-        return parts.Count == 0 ? "found" : string.Join(' ', parts);
+        return (parts.Count == 0 ? "found" : string.Join(' ', parts)) + ScaleSuffix;
     }
 }
 
@@ -67,6 +73,7 @@ internal interface IVisionSide : IDisposable
     bool IsCheckboxTicked(PixelRect box);
     PixelRect FindCloseButtonRightOf(PixelRect title);
     IReadOnlyList<PixelRect> FindBrightBlobs(PixelRect roi);
+    ulong FrameSignature(PixelRect roi);
 }
 
 /// <summary>
@@ -86,9 +93,10 @@ internal sealed class ParityProbe
     private readonly IVisionSide _legacy;
     private readonly IVisionSide _core;
     private readonly AppSettings _settings = new();
+    private readonly Dictionary<string, int> _ranOn = new(StringComparer.Ordinal);
     private readonly Dictionary<string, int> _foundOn = new(StringComparer.Ordinal);
+    private readonly HashSet<string> _ranThisFrame = new(StringComparer.Ordinal);
     private readonly HashSet<string> _foundThisFrame = new(StringComparer.Ordinal);
-    private readonly HashSet<string> _seen = new(StringComparer.Ordinal);
     private string _frame = string.Empty;
     private int _checks, _verdict, _box, _score, _text;
 
@@ -128,13 +136,13 @@ internal sealed class ParityProbe
         var watch = Stopwatch.StartNew();
         if (!CheckTemplates())
             return 1;
-        _seen.Clear(); // coverage is per frame check, not the template list
 
         int frames = 0, sizeChanges = 0, unreadable = 0;
         (int Width, int Height)? last = null;
         foreach (string path in paths)
         {
             _frame = Path.GetFileName(path);
+            _ranThisFrame.Clear();
             _foundThisFrame.Clear();
             frames++;
 
@@ -153,15 +161,17 @@ internal sealed class ParityProbe
 
             var frameWatch = Stopwatch.StartNew();
             await CheckFrameAsync(a.Width, a.Height);
+            foreach (string name in _ranThisFrame)
+                _ranOn[name] = _ranOn.GetValueOrDefault(name) + 1;
             foreach (string name in _foundThisFrame)
                 _foundOn[name] = _foundOn.GetValueOrDefault(name) + 1;
             Console.Error.WriteLine($"[{frames}/{paths.Count}] {_frame} {a.Width}x{a.Height} {frameWatch.Elapsed.TotalSeconds:0.0}s, differences so far {Differences}");
         }
 
-        // Zero = the check ran but never found anything on either side: it compared verdicts only.
-        Console.WriteLine($"coverage (frames where either side found something, of {frames - unreadable}):");
-        foreach (string name in _seen.Order(StringComparer.Ordinal))
-            Console.WriteLine($"  {name} {_foundOn.GetValueOrDefault(name)}");
+        // found 0 = the check ran but never found anything on either side: it compared verdicts only.
+        Console.WriteLine($"coverage (per check: frames it ran on, frames where either side found something; {frames - unreadable} frame(s) checked):");
+        foreach (var (name, ran) in _ranOn.OrderBy(p => p.Key, StringComparer.Ordinal))
+            Console.WriteLine($"  {name} ran {ran} found {_foundOn.GetValueOrDefault(name)}");
         if (unreadable > 0)
             Console.WriteLine($"{unreadable} frame(s) not decoded by a side, or decoded to different sizes - not checked");
         Console.WriteLine($"elapsed {watch.Elapsed.TotalMinutes:0.0} min");
@@ -210,6 +220,10 @@ internal sealed class ParityProbe
         var r = s.Regions;
         var full = new PixelRect(0, 0, w, h);
 
+        // ---- load hash: AutomationPilot.cs:1654 / :1662 FrameSignature.Compute(frame, whole client), WaitForLoad.
+        //      Exact equality: the pilot compares bit distances (3 and 5), so any changed bit matters.
+        Compare("framesig", side => new DetectorResult(true, null, null, side.FrameSignature(full).ToString("X16")));
+
         // ---- zone title: AutomationPilot.ReadMinimapTitleAsync (zone guard, CheckZone)
         await CompareAsync("title", async side => TextOf(await MinimapTitleAsync(side, w, h)));
 
@@ -244,8 +258,16 @@ internal sealed class ParityProbe
         Compare("teleportscroll", side => Of(side.FindIcon("teleportscroll", scroll, 0.78)));
         CompareHits("teleportscroll-loose", side => side.FindIcons("teleportscroll", scroll, 0.30, 3));
         var list = r.TeleportList.ToPixels(w, h);
-        CompareHits("teleport-rightchevron", side => side.FindIcons("rightchevron", list, s.Detection.TemplateThreshold, 10));
-        CompareHits("teleport-leftchevron", side => side.FindIcons("leftchevron", list, s.Detection.TemplateThreshold, 10));
+        // :1537-1539 pages with matches[0] (the closest to the last click once there is one; the first page has none)
+        foreach (string arrow in new[] { "rightchevron", "leftchevron" })
+        {
+            var (pageA, pageB) = (
+                _legacy.FindIcons(arrow, list, s.Detection.TemplateThreshold, 10),
+                _core.FindIcons(arrow, list, s.Detection.TemplateThreshold, 10));
+            RecordHits($"teleport-{arrow}", pageA, pageB);
+            Record($"teleport-{arrow}-first", Of(pageA.FirstOrDefault()), Of(pageB.FirstOrDefault()));
+        }
+
         CompareHits("teleport-next", side => side.FindIcons("rightchevron", list, 0.80, 3));
         CompareHits("teleport-prev", side => side.FindIcons("leftchevron", list, 0.80, 3));
 
@@ -514,7 +536,8 @@ internal sealed class ParityProbe
 
     // ------------------------------------------------------------------ results
 
-    private static DetectorResult Of(TemplateMatch? match) => match == null ? DetectorResult.None : new(true, match.Bounds, match.Score, null);
+    private static DetectorResult Of(TemplateMatch? match) => match == null ? DetectorResult.None
+        : new(true, match.Bounds, match.Score, null) { Scale = match.Scale };
 
     private static DetectorResult Of(PixelRect? box) => box is { } b ? new(true, b, null, null) : DetectorResult.None;
 
@@ -601,7 +624,7 @@ internal sealed class ParityProbe
     {
         _checks++;
         string family = check.Split('#')[0];
-        _seen.Add(family);
+        _ranThisFrame.Add(family);
         if (legacy.Found || current.Found)
             _foundThisFrame.Add(family);
 
@@ -621,14 +644,15 @@ internal sealed class ParityProbe
               Math.Abs(a.Right - b.Right) > BoxTolerance || Math.Abs(a.Bottom - b.Bottom) > BoxTolerance)))
         {
             _box++;
-            Print(check, legacy.Box?.ToString() ?? "no box", current.Box?.ToString() ?? "no box");
+            Print(check, (legacy.Box?.ToString() ?? "no box") + legacy.ScaleSuffix, (current.Box?.ToString() ?? "no box") + current.ScaleSuffix);
         }
 
         if (legacy.Score.HasValue != current.Score.HasValue ||
             (legacy.Score is { } sa && current.Score is { } sb && Math.Abs(sa - sb) > ScoreTolerance))
         {
             _score++;
-            Print(check, legacy.Score?.ToString("0.0000") ?? "no score", current.Score?.ToString("0.0000") ?? "no score");
+            Print(check, (legacy.Score?.ToString("0.0000") ?? "no score") + legacy.ScaleSuffix,
+                (current.Score?.ToString("0.0000") ?? "no score") + current.ScaleSuffix);
         }
 
         if ((legacy.Text == null) != (current.Text == null) ||
@@ -640,162 +664,4 @@ internal sealed class ParityProbe
     }
 
     private void Print(string check, string legacy, string current) => Console.WriteLine($"{_frame} {check} legacy={legacy} new={current}");
-}
-
-/// <summary>The frozen pre-port vision (tests/WuxAuto.SelfTest/Legacy, OpenCvSharp).</summary>
-internal sealed class LegacySide : IVisionSide
-{
-    private readonly WuxAuto.Legacy.ScreenAnalyzer _analyzer = new(new AppSettings());
-    private Mat? _frame;
-
-    private Mat Frame => _frame ?? throw new InvalidOperationException("no frame loaded");
-
-    public FrameInfo? Load(string path)
-    {
-        _frame?.Dispose();
-        _frame = null;
-        using var source = Cv2.ImRead(path, ImreadModes.Unchanged);
-        if (source.Empty())
-            return null;
-
-        var frame = new Mat();
-        switch (source.Channels())
-        {
-            case 4:
-                source.CopyTo(frame);
-                break;
-            case 3:
-                Cv2.CvtColor(source, frame, ColorConversionCodes.BGR2BGRA);
-                break;
-            case 1:
-                Cv2.CvtColor(source, frame, ColorConversionCodes.GRAY2BGRA);
-                break;
-            default:
-                frame.Dispose();
-                return null;
-        }
-
-        _frame = frame;
-        using var hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
-        int height = frame.Height;
-        var row = new byte[frame.Width * frame.ElemSize()];
-        for (int y = 0; y < height; y++)
-        {
-            Marshal.Copy(frame.Ptr(y), row, 0, row.Length);
-            hash.AppendData(row);
-        }
-
-        return new FrameInfo(frame.Width, frame.Height, Convert.ToHexString(hash.GetHashAndReset())[..16]);
-    }
-
-    public bool HasTemplate(string name) => _analyzer.Library.TryGet(name, out _);
-    public TemplateMatch? FindIcon(string template, PixelRect roi, double? threshold) => _analyzer.FindIcon(Frame, template, roi, threshold);
-    public IReadOnlyList<TemplateMatch> FindIcons(string template, PixelRect roi, double? threshold, int maxResults) => _analyzer.FindIcons(Frame, template, roi, threshold, maxResults);
-    public TemplateMatch? FindIconAnyScale(string template, PixelRect roi, double threshold) => _analyzer.FindIconAnyScale(Frame, template, roi, threshold).Match;
-    public async Task<TextHit?> FindTextAsync(PixelRect roi, string text) => (await _analyzer.FindTextAsync(Frame, roi, text)).Hit;
-    public Task<IReadOnlyList<OcrWord>> RecognizeAsync(PixelRect roi, double upscale) => _analyzer.Ocr.RecognizeAsync(Frame, roi, upscale);
-
-    public async Task<CoordinateRead?> ReadCoordinatesAsync()
-        => await _analyzer.ReadCoordinatesAsync(Frame) is { } c ? new CoordinateRead(c.X, c.Y, c.Bounds, c.Raw) : null;
-
-    public CompassReading? ReadCompass() => _analyzer.ReadCompass(Frame);
-    public PixelRect CompassRegion() => _analyzer.CompassRegion(Frame.Width, Frame.Height);
-    public PixelRect? FindSelectionRing() => _analyzer.FindSelectionRing(Frame);
-    public PixelRect? FindBossRing() => _analyzer.FindBossRing(Frame);
-    public PixelRect? FindBossBelt() => _analyzer.FindBossBelt(Frame);
-    public double RingFraction(PixelRect icon) => _analyzer.RingFraction(Frame, icon);
-    public IReadOnlyList<PixelRect> FindGoldButtons() => _analyzer.FindGoldButtons(Frame);
-    public PixelRect? FindRedOrangeGlow(PixelRect roi, int minArea) => _analyzer.FindRedOrangeGlow(Frame, roi, minArea);
-    public Task<(PixelRect? Up, PixelRect? Down)> FindMapScrollArrowsAsync(PixelRect roi) => _analyzer.FindMapScrollArrowsAsync(Frame, roi);
-    public Task<ConfirmDialog?> FindConfirmDialogAsync(string text, string button) => _analyzer.FindConfirmDialogAsync(Frame, text, button);
-    public Task<SettingRow?> ReadSettingRowAsync(string label, bool numeric) => _analyzer.ReadSettingRowAsync(Frame, label, numeric);
-    public PixelRect FindCheckboxLeftOf(PixelRect label) => _analyzer.FindCheckboxLeftOf(Frame, label);
-    public bool IsCheckboxTicked(PixelRect box) => _analyzer.IsCheckboxTicked(Frame, box);
-    public PixelRect FindCloseButtonRightOf(PixelRect title) => _analyzer.FindCloseButtonRightOf(Frame, title);
-    public IReadOnlyList<PixelRect> FindBrightBlobs(PixelRect roi) => _analyzer.FindBrightBlobs(Frame, roi);
-
-    public void Dispose()
-    {
-        _frame?.Dispose();
-        _analyzer.Dispose();
-    }
-}
-
-/// <summary>Core's vision (src/WuxAuto.Core) with the desktop OCR engine, as the app builds it.</summary>
-internal sealed class CoreSide : IVisionSide
-{
-    private readonly ScreenAnalyzer _analyzer = new(new AppSettings(), new OcrService());
-    private Mat? _frame;
-
-    private Mat Frame => _frame ?? throw new InvalidOperationException("no frame loaded");
-
-    public FrameInfo? Load(string path)
-    {
-        _frame?.Dispose();
-        _frame = null;
-        using var source = Cv2.ImRead(path, ImreadModes.Unchanged);
-        if (source.Empty())
-            return null;
-
-        var frame = new Mat();
-        switch (source.Channels())
-        {
-            case 4:
-                source.CopyTo(frame);
-                break;
-            case 3:
-                Cv2.CvtColor(source, frame, ColorConversionCodes.BGR2BGRA);
-                break;
-            case 1:
-                Cv2.CvtColor(source, frame, ColorConversionCodes.GRAY2BGRA);
-                break;
-            default:
-                frame.Dispose();
-                return null;
-        }
-
-        _frame = frame;
-        using var hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
-        int height = frame.Height;
-        var row = new byte[frame.Width * frame.ElemSize()];
-        for (int y = 0; y < height; y++)
-        {
-            Marshal.Copy(frame.Ptr(y), row, 0, row.Length);
-            hash.AppendData(row);
-        }
-
-        return new FrameInfo(frame.Width, frame.Height, Convert.ToHexString(hash.GetHashAndReset())[..16]);
-    }
-
-    public bool HasTemplate(string name) => _analyzer.Library.TryGet(name, out _);
-    public TemplateMatch? FindIcon(string template, PixelRect roi, double? threshold) => _analyzer.FindIcon(Frame, template, roi, threshold);
-    public IReadOnlyList<TemplateMatch> FindIcons(string template, PixelRect roi, double? threshold, int maxResults) => _analyzer.FindIcons(Frame, template, roi, threshold, maxResults);
-    public TemplateMatch? FindIconAnyScale(string template, PixelRect roi, double threshold) => _analyzer.FindIconAnyScale(Frame, template, roi, threshold).Match;
-    public async Task<TextHit?> FindTextAsync(PixelRect roi, string text) => (await _analyzer.FindTextAsync(Frame, roi, text)).Hit;
-    public Task<IReadOnlyList<OcrWord>> RecognizeAsync(PixelRect roi, double upscale) => _analyzer.Ocr.RecognizeAsync(Frame, roi, upscale);
-
-    public async Task<CoordinateRead?> ReadCoordinatesAsync()
-        => await _analyzer.ReadCoordinatesAsync(Frame) is { } c ? new CoordinateRead(c.X, c.Y, c.Bounds, c.Raw) : null;
-
-    public CompassReading? ReadCompass() => _analyzer.ReadCompass(Frame);
-    public PixelRect CompassRegion() => _analyzer.CompassRegion(Frame.Width, Frame.Height);
-    public PixelRect? FindSelectionRing() => _analyzer.FindSelectionRing(Frame);
-    public PixelRect? FindBossRing() => _analyzer.FindBossRing(Frame);
-    public PixelRect? FindBossBelt() => _analyzer.FindBossBelt(Frame);
-    public double RingFraction(PixelRect icon) => _analyzer.RingFraction(Frame, icon);
-    public IReadOnlyList<PixelRect> FindGoldButtons() => _analyzer.FindGoldButtons(Frame);
-    public PixelRect? FindRedOrangeGlow(PixelRect roi, int minArea) => _analyzer.FindRedOrangeGlow(Frame, roi, minArea);
-    public Task<(PixelRect? Up, PixelRect? Down)> FindMapScrollArrowsAsync(PixelRect roi) => _analyzer.FindMapScrollArrowsAsync(Frame, roi);
-    public Task<ConfirmDialog?> FindConfirmDialogAsync(string text, string button) => _analyzer.FindConfirmDialogAsync(Frame, text, button);
-    public Task<SettingRow?> ReadSettingRowAsync(string label, bool numeric) => _analyzer.ReadSettingRowAsync(Frame, label, numeric);
-    public PixelRect FindCheckboxLeftOf(PixelRect label) => _analyzer.FindCheckboxLeftOf(Frame, label);
-    public bool IsCheckboxTicked(PixelRect box) => _analyzer.IsCheckboxTicked(Frame, box);
-    public PixelRect FindCloseButtonRightOf(PixelRect title) => _analyzer.FindCloseButtonRightOf(Frame, title);
-    public IReadOnlyList<PixelRect> FindBrightBlobs(PixelRect roi) => _analyzer.FindBrightBlobs(Frame, roi);
-
-    public void Dispose()
-    {
-        _frame?.Dispose();
-        _analyzer.Dispose();
-    }
 }
