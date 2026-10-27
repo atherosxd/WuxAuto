@@ -17,4 +17,10 @@ public interface IGameInput
     bool CtrlWheel(int clientX, int clientY, int notches);
     bool Drag(int fromX, int fromY, int toX, int toY, int durationMs = 260);
     bool Wheel(int clientX, int clientY, int notches);
+
+    /// <summary>
+    /// The key name maps to a key this platform can press (a name that does not is refused on every press, which reads
+    /// like the game being behind another window). A platform that cannot tell says yes.
+    /// </summary>
+    bool IsKnownKey(string keyName) => true;
 }

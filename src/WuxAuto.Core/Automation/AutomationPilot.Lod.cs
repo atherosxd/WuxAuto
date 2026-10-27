@@ -43,8 +43,8 @@ public sealed partial class AutomationPilot
 
     private bool IsLod => _settings.Sequence.Mode == RunMode.AutoLod;
 
-    /// <summary>Teleport list entry and minimap zone for the selected mode.</summary>
-    private string Destination => IsLod ? _settings.Lod.Destination : _settings.Sequence.DestinationText;
+    /// <summary>Teleport list entry and minimap zone for the selected mode (Auto War: the cave).</summary>
+    private string Destination => IsWar ? WarHomeMap : IsLod ? _settings.Lod.Destination : _settings.Sequence.DestinationText;
 
     /// <summary>
     /// True when the minimap title (or one OCR line) names <paramref name="destination"/>. The title is
@@ -247,7 +247,7 @@ public sealed partial class AutomationPilot
 
         // Both out: the game's own auto war (Regular War ticked + J in the city, user), then stop.
         DebugArtifacts.SaveFrame(frame, _overlays, "out_of_keys");
-        BeginAutoWar("out of Temple of Fiends Keys and Den of Rebirth entries");
+        BeginRegularWar("out of Temple of Fiends Keys and Den of Rebirth entries");
         return true;
 
         static string Plain(string t) => new string(t.Normalize(System.Text.NormalizationForm.FormD)

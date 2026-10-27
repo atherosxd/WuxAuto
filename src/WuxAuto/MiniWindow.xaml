@@ -22,6 +22,9 @@
                     <RadioButton GroupName="MiniRunMode" Content="LOD" Style="{StaticResource ModeButton}"
                                  IsChecked="{Binding Settings.Sequence.Mode, Converter={x:Static vm:BoolConverters.EnumEquals}, ConverterParameter=AutoLod}"
                                  ToolTip="Auto LOD" />
+                    <RadioButton GroupName="MiniRunMode" Content="War" Style="{StaticResource ModeButton}"
+                                 IsChecked="{Binding Settings.Sequence.Mode, Converter={x:Static vm:BoolConverters.EnumEquals}, ConverterParameter=AutoWar}"
+                                 ToolTip="Auto War" />
                 </StackPanel>
                 <Button Content="▶ Start" Style="{StaticResource PrimaryButton}" Padding="12,7" Margin="4,0,6,0"
                         Command="{Binding StartCommand}"

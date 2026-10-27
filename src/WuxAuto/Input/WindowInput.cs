@@ -358,6 +358,8 @@ public sealed class WindowInput : IGameInput
         return false;
     }
 
+    public bool IsKnownKey(string keyName) => !string.IsNullOrWhiteSpace(keyName) && ResolveKey(keyName) != null;
+
     private (int VirtualKey, int ScanCode)? ResolveKey(string name)
     {
         if (_keyCache.TryGetValue(name, out var cached))

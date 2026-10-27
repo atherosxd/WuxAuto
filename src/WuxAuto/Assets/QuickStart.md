@@ -15,7 +15,7 @@ Everything it does is drawn on its preview and written to its log.
   | Display mode | **Windowed** (optimized for it; not exclusive fullscreen) |
   | Settings > VISUAL > Interface Scale | **Auto** |
   | Settings > VISUAL > Font Size | **110 - 120 %** (the pilot checks it on start and fixes it if outside) |
-  | Settings > VISUAL > TAB target | **Default** (the pilot checks it on start and sets it) |
+  | Settings > VISUAL > TAB target | **Default** for Laby / LOD (the pilot checks it on start and sets it); Auto War sets **Enemy worth CP** itself |
   | Skill bar | the **Run** skill on it (the pilot turns it on in town before every teleport - a ring round the icon = on; icon not found -> it presses the "Run key", default `W`, once) |
 
 * In the game: a
@@ -26,7 +26,7 @@ Everything it does is drawn on its preview and written to its log.
   through the screens, it never types a password.
 * Start in your **home town** - Piercing City, Molten City or Wandering City (or in the Labyrinth with a boss targeted - it picks up from there).
 
-## Two modes (the Mode drop-down above Start)
+## Three modes (the Mode buttons above Start)
 
 * **AutoLaby** - The Labyrinth (Adept): 4 stages + Sacred Sky Lord, back to your home town, repeat.
 * **AutoLod** - Ultimate Den of Rebirth: turns south, walks a little forward to 1199, 1782 and waits there,
@@ -45,6 +45,11 @@ Everything it does is drawn on its preview and written to its log.
   and stops.
   New and not well tested yet.
 
+* **AutoWar** - Bohai Outpost tribe wars for an alt. Start it **inside the cave** you want to hunt in (the cave must be on
+  **page 3** of the teleport scroll, the autohunt on, the six war buff icons + Shura on the skill bar). It reads the war
+  timer from Menu > Tribe Status, joins every war, fights, then teleports back to the same cave and monster. Not tested live yet.
+  Update every WuxAuto on the PC before choosing it: an older copy cannot read the Auto War setting and resets all settings.
+
 ## Run it
 
 1. Unzip the folder anywhere and start `WuxAuto.exe`. Windows may warn about an unknown app:
@@ -55,7 +60,7 @@ Everything it does is drawn on its preview and written to its log.
    is the active window, so it never types into anything else. If you switch away it waits.
 5. **F10** stops everything immediately.
    **Mini** (next to Stop) shrinks WuxAuto to a small always-on-top bar (bottom left of the
-   screen; Settings > Mini mode > Position picks another spot) with Laby / LOD, Start and Stop; **Full** brings the big window back.
+   screen; Settings > Mini mode > Position picks another spot) with Laby / LOD / War, Start and Stop; **Full** brings the big window back.
 6. **Restart on error** (on): after a problem the pilot starts over by itself, up to 5 times in 30 min.
 
 ## Did it loot?

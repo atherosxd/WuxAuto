@@ -86,6 +86,26 @@ int shuraIndex = Array.IndexOf(args, "--shura");
 if (shuraIndex >= 0 && shuraIndex + 1 < args.Length)
     return FrameProbe.Shura(args[shuraIndex + 1]);
 
+int hpIndex = Array.IndexOf(args, "--hp");
+if (hpIndex >= 0 && hpIndex + 1 < args.Length)
+    return await WarProbe.HpAsync(args[hpIndex + 1]);
+
+int targetIndex = Array.IndexOf(args, "--target");
+if (targetIndex >= 0 && targetIndex + 1 < args.Length)
+    return await WarProbe.TargetAsync(args[targetIndex + 1]);
+
+int warBarIndex = Array.IndexOf(args, "--warbar");
+if (warBarIndex >= 0 && warBarIndex + 1 < args.Length)
+    return WarProbe.WarBar(args[warBarIndex + 1]);
+
+int menuIndex = Array.IndexOf(args, "--menu");
+if (menuIndex >= 0 && menuIndex + 1 < args.Length)
+    return await WarProbe.MenuAsync(args[menuIndex + 1]);
+
+int tribeIndex = Array.IndexOf(args, "--tribe");
+if (tribeIndex >= 0 && tribeIndex + 1 < args.Length)
+    return await WarProbe.TribeAsync(args[tribeIndex + 1]);
+
 int ringIndex = Array.IndexOf(args, "--ring");
 if (ringIndex >= 0 && ringIndex + 1 < args.Length)
     return FrameProbe.Ring(args[ringIndex + 1]);

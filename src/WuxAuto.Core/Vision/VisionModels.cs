@@ -35,6 +35,12 @@ public sealed record OcrWord(string Text, PixelRect Bounds, string LineText, Pix
 public sealed record ConfirmDialog(string Message, PixelRect MessageBounds, PixelRect Button, string How);
 
 /// <summary>
+/// An open war window (Auto War): which one (<c>Window</c>: "TRIBE STATUS" or "MENU"), its title as read, and its X -
+/// null when no close button was seen (no blind click).
+/// </summary>
+public sealed record WarWindow(string Window, string Title, PixelRect TitleBounds, PixelRect? Close);
+
+/// <summary>
 /// A Settings window row: label, value box, value text and number (numeric rows), and the chevrons
 /// beside the value.
 /// </summary>
