@@ -50,7 +50,7 @@ internal static class ActionProbe
         if (previous == null)
             return 1;
 
-        using var analyzer = new WuxAuto.Vision.ScreenAnalyzer(settings);
+        using var analyzer = new WuxAuto.Vision.ScreenAnalyzer(settings, new WuxAuto.Vision.OcrService());
 
         Save(previous, "step0-start.png");
 

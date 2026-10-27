@@ -438,7 +438,7 @@ public sealed class SequenceSettings
     /// <summary>
     /// Kill alert (user, 2026-10-26: friends run the pilot on a second PC and LOD does not always
     /// pick up every drop - a reminder to check): a chime when a Labyrinth boss dies (every stage)
-    /// and when an LOD kill's loot step ends. <see cref="KillAlert.CustomChimeName"/> in the
+    /// and when an LOD kill's loot step ends. <c>KillAlert.CustomChimeName</c> (desktop project) in the
     /// templates folder replaces the built-in chime. Check box "Kill chime".
     /// </summary>
     public bool KillChime { get; set; } = true;

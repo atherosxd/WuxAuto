@@ -41,7 +41,7 @@ public sealed class TemplateLibrary : IDisposable
         var roots = new List<string>
         {
             AppPaths.TemplateFolder,
-            Path.Combine(AppContext.BaseDirectory, "Assets"),
+            AppPaths.AssetsFolder,
         };
         roots.AddRange(extraSearchPaths);
         _searchPaths.AddRange(roots.Where(Directory.Exists));
