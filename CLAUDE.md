@@ -21,6 +21,10 @@ The automation goal:
 
 Everything it does is visible: detections are drawn on the live preview and every step is logged.
 
+Two more modes sit beside the Labyrinth (the Mode buttons above Start): **Auto LOD** (§4.5) and
+**Auto War** (§4.8, user 2026-10-27: an alt waits in a page-3 cave, joins every Bohai Outpost tribe war,
+fights, comes back to the same cave and monster; one game per WuxAuto, no walking inside Bohai).
+
 The user is non-technical about the internals but precise about the game behaviour — when they
 report "it didn't click X", the fastest path is almost always (a) read the debug snapshot from
 `%LOCALAPPDATA%\WuxAuto\debug`, and (b) run the offline frame probe over it.
@@ -117,6 +121,13 @@ dotnet run --project .\tests\WuxAuto.SelfTest -- --alert <file>
 
 # auto-confirm dialog (message line + OK button) for every PNG (absolute path; tests\frames holds the user's crop)
 dotnet run --project .\tests\WuxAuto.SelfTest -- --confirm "$env:LOCALAPPDATA\WuxAuto\debug"
+
+# Auto War probes (tests/WuxAuto.SelfTest/WarProbe.cs), each over a folder of PNGs
+dotnet run --project .\tests\WuxAuto.SelfTest -- --hp "$env:LOCALAPPDATA\WuxAuto\debug"      # top-left "cur / max" HP read (white-text read, plain fallback)
+dotnet run --project .\tests\WuxAuto.SelfTest -- --target "$env:LOCALAPPDATA\WuxAuto\debug"  # target-box name + treasure chest
+dotnet run --project .\tests\WuxAuto.SelfTest -- --warbar "$env:LOCALAPPDATA\WuxAuto\debug"  # warbuff1-6 + Shura on the skill bar
+dotnet run --project .\tests\WuxAuto.SelfTest -- --menu "$env:LOCALAPPDATA\WuxAuto\debug"    # the menu button and the MENU window
+dotnet run --project .\tests\WuxAuto.SelfTest -- --tribe "$env:LOCALAPPDATA\WuxAuto\war-inputs"  # TRIBE STATUS: the Bohai row's countdown (the user's screenshot lives there, never in git)
 ```
 
 `--do` frames land in `%TEMP%\wuxauto-step<N>-<verb>.png`. Check the frame before every click: an
@@ -170,7 +181,9 @@ The app itself:
 ```
 src/WuxAuto.Core            net10.0 class library, platform-free (M1, 2026-10-27: move-only split so an Android
                             app can share the pilot). Holds everything that decides what to do:
-  Automation/          AutomationPilot (+ .Lod / .War / .KillShots partials) - the whole state machine,
+  Automation/          AutomationPilot (+ .Lod / .RegularWar / .War / .WarTimer / .WarFight / .KillShots partials) - the whole state machine,
+                       WarText (pure text rules of Auto War: countdown, war row, list entries, HP, target name, log lines),
+                       TabTargetOptions (the four TAB target values, steps between them),
                        AutohuntLog
   Core/                AppSettings (all tunables; positions reset per run), SettingsStore + AppPaths
                        (load/save/migrate; `AppPaths.Configure(root, assetsFolder?)`), Geometry
@@ -615,7 +628,7 @@ left, after a successful Labyrinth run). Labyrinth: teleport clicked but still i
 45 s lagging) → keep waiting (no second teleport) until `Sequence.LabyKeyWaitSeconds` (120 s, UI "Laby key
 wait (s)", user) after the teleport → still in town = out of Temple of Fiends Keys. LOD: not on teleport-list page 2 (or not on the last page) = out of Den of Rebirth
 entries. `OutOfKeys`: one used up → the other mode (saved, buttons refreshed); both used up this Start →
-**`AutoWar`** (`AutomationPilot.War.cs`, user 2026-10-22: players using the pilot get "Regular War" switched
+**"Regular War on"** (`AutomationPilot.RegularWar.cs`, `PilotPhase.RegularWarOn`, `BeginRegularWar` / `TickRegularWarAsync` / `FinishRegularWar`; renamed from `AutoWar` / `AutomationPilot.War.cs` in Auto War's Task 1 - **not** `RunMode.AutoWar`; user 2026-10-22: players using the pilot get "Regular War" switched
 off, so the character stayed in town during a war): `Sequence.AutohuntSettingsKey` **S** opens the autohunt
 settings (≤ 3 presses, 2.5 s apart) → the AUTO BUFF dialog covers the list on lower resolutions: its title
 (whole line "autobuff", not the "[Auto buff scroll]" item) → click the X right of it
@@ -665,6 +678,65 @@ read as text, always the gold button, click dead centre at 1024, 1273, 1920 and 
 use?", USE ALL (x100) / CANCEL / OK). **The sell dialog itself and the live click are not yet seen.**
 Note: while the pilot is idle the Bohai dialog is not cancelled; a Ctrl + right click within 3 s of it
 would confirm the move instead.
+
+### 4.8 Auto War (user, 2026-10-27, `Sequence.Mode` = `AutoWar`, `AutomationPilot.War.cs` / `.WarTimer.cs` / `.WarFight.cs`, settings `AppSettings.War`)
+
+Spec: `docs/superpowers/specs/2026-10-27-auto-war-design.md` (§4 flow, §9 not verified, §11 assumptions). The alt
+stands in a **cave on page 3 of the teleport scroll** with the autohunt on; every war (Bohai Outpost, Adept) it
+leaves, fights, and comes back to the **same cave and monster**. No town steps (autohunt off, Run skill, font size
+do not run); the 5 s Bohai-dialog Cancel is skipped in this mode (the OK is what we want). Phases (`PilotPhase`):
+`WarRemember, WarWait, WarJoin, WarEnter, WarBuff, WarFight, WarDead, WarBack, WarArrive, WarHuntOn`.
+
+* **Start (`WarRemember`).** Zone must be a cave (not a home town, Labyrinth, LOD or Bohai) - else warning "Auto War
+  must be started inside a cave on page 3..." and stop. Checks the six `warbuff1-6` icons + Shura on `Regions.Hotbar`
+  (`IconMatchScore` **0.90**, own score: warbuff2, a small grey streak, hit 0.871 on floor texture; Shura 0.951-1.000 on
+  real bars, <= 0.781 elsewhere) and the keys (Skill, Target, Autohunt, Inventory, Shura); any missing -> warning + stop.
+  Opens the teleport list on page 3 (`ListPage`), picks the entry that fits the minimap title (`WarText.BestListEntryFolded`:
+  case-blind, I/l/1/| and O/0 folded; **two caves that fit = ambiguous = stop, never a guess**; 3 reads then stop), closes
+  the list with its X, `Tab`s (<= 3) for the monster, **confirms the name against the map window's monster list** (a
+  player's name can never be saved), saves `War.HomeMap` / `War.HomeMonster` (settings.json; read-only "Back to:" line in the UI).
+  Start inside Bohai -> straight to the enter step with the saved spot; in a home town with a saved spot -> `WarBack`; else stop.
+* **Wait (`WarWait`, `.WarTimer.cs`).** The menu is the ☰ button at the top centre (`menubutton.png`; **no key**) ->
+  "Tribe Status" tile (`MenuTileText`) -> row `TribeRowText` "Bohai Outpost (Adept)" -> `hh:mm:ss` or `In progress`;
+  then closes TRIBE STATUS (`PickWarClose`: only the X read in the title row, tolerance 16 px - **never a blind click**) and
+  the MENU. Windows OCR drops `hh:mm:ss` in whole-frame reads, so `ScreenAnalyzer.ReadWarCountdownAsync` reads the
+  digits with a colon-gap band read (user's screenshot: `00:04:25` = 265 s). Missing row = unknown, not zero. Re-reads ~2 min
+  before zero and every ~15 min; `In progress` every ~5 min; 3 unreadable -> `tribe_unread`. Only reads the screen with the game in front.
+* **Join (`WarJoin`).** `LeadMs` (10 s) before zero: autohunt off, confirmed in the combat log (`EnsureAutohuntOffAsync` logic);
+  the WAR dialog (Auto confirm's `FindConfirmDialogAsync`, gold OK) is polled <= 1 s; none within `DialogWaitMs` (2 min) -> autohunt
+  on again, back to the wait. Then the load and the minimap title "Bohai Outpost" (`Destination`, 60 s).
+* **Enter / buff (`WarEnter`, `WarBuff`).** Settings visit sets TAB target to `TabTargetOption` ("Enemy worth CP"; the shared
+  FontSize phase takes the wanted option and steps the chevrons by `TabTargetOptions.StepsTo`; Laby/LOD still ask for Default; left
+  as is after the war). Autobuff? "[Auto buff scroll]" in the item list, else `S` + the AUTO BUFF title (closed with its X, then the
+  settings window; the "Regular War" label is the sign the settings are open). Autobuff -> `O`; else the six icons clicked
+  `BuffClickGapMs` (1 s) apart. Rebuff every `BuffEveryMs` (**345000** = 5 min 45 s), only between fight cycles.
+* **Fight (`WarFight`, `.WarFight.cs`).** `Tab` ~1/s until a **target** (`WarText.FindTargetName` in the target box only: not the
+  version/ping line, a system notice or a lone number) or the "Gate is Open" line; cycle = `Tab` -> X buff (`XBuffIcon` warbuff4) ->
+  **hold the Shura key `ShuraHoldMs` 1200** (`_heldSkill`, released by `Advance` / Stop / F10) -> skill spam (`TapSkill`, Ctrl + skill)
+  until no name for `TargetGoneMs` (2 s) -> next cycle. After the war has started a death/rebuff goes back to the cycle, not the start wait.
+* **Death watch (`WarDead`).** The top-left HP "cur / max" read about once a second. Death = `Cur == 0` and Max in 0.5-1.05x of the
+  **alive max** (the "0/3000" bar and the MP line never count; the alive max is learned from agreeing reads, a raise is capped at 1.5x
+  and warned once). Unreadable = alive (`war_hp_unread` after 10 s). Dead: release keys, wait for HP > 0, rebuff, fight; 30 s dead -> `war_dead`.
+* **Back (`WarBack`, `WarArrive`, `WarHuntOn`).** Home town (or the cave itself, or any other zone read 3x -> `wrong_zone`) = war over:
+  scroll -> page 3 -> the **exact** saved entry (`SameZone`; "[Dark Soul Cave IX]" must not pass for "[...X]"), twice in town -> stop; map icon -> the saved
+  monster -> `>` (the Laby pick with a monster name); wait for the combat-log line "Arrived: <monster>" (`ArrivedText`; **new lines only** - an old one
+  from an earlier trip is ignored; 90 s then carry on); `J` confirmed by "Auto hunt started" (<= 3 taps) -> back to `WarWait`.
+* Restart / reconnect land by zone: cave -> wait (autohunt may be off after a re-login - nothing turns it on until the next war), Bohai -> enter, town -> back.
+  Dry run never clicks the dialog OK, so `WarEnter` times out (60 s) and restarts - expected.
+
+**Probe numbers (Task 4, 561 saved frames, none from Bohai):** `--hp` 511 read (508 white-text + 3 plain fallback), none reads 0/N; `--target` 114 named,
+119 with the treasure chest; menu button score lowest real game frame 0.836 (1440x900), highest non-game 0.451, `MenuButtonScore` **0.70**;
+Shura on the bar 0.951-1.000; `warbuff1-6` crops: **no saved frame shows them** (0.90 unproven on a real alt bar). `--tribe` on the user's Tribe Status
+screenshot: `00:04:25` (265 s).
+
+**Not seen live (spec §9 + the task reports) - everything inside Bohai:** the Bohai minimap title after the dialog; "Gate is Open"; an enemy player in the target box
+(and whether it has the chest); HP 0 and the revive (does the game send a dead alt to town?); the six buff icons on a real alt bar at 0.90; the ☰ menu opened and
+the **MENU close geometry** (from faint glyphs on one screenshot; a window whose X is not read is left open with `war_close_stuck`) and whether ☰ toggles the menu shut;
+TRIBE STATUS X at other resolutions (one 795x829 crop); the AUTO BUFF X as a bright blob; the "Regular War" label in the autohunt settings; page 3 of the teleport list at other
+resolutions; the X of the TELEPORT SCROLL (closing it costs no scroll, and whether the inventory stays open); the wording "Arrived: <monster>"; "Auto hunt started" in a cave;
+"1F" vs "IF" in cave names (folded, but unseen). Known limits: buffs more than doubling max HP hide a death; the Settings visit (shared FontSize phase) has no War zone check;
+a war dialog during `WarRemember` joins before the spot is saved (the return then stops instead of guessing); a war dialog while a timer read has a window open can leave it open.
+Each part logs what it saw and saves `war_*` snapshots (<= 3 per tag per Start) - the first live war gives the frames to tune from.
 
 ## 6. Settings and persistence — read this before changing defaults
 
@@ -719,6 +791,7 @@ Dry run on in the real settings).
 | `AutohuntStallMs` | 15000 | stage 5 `WatchBoss`: autohunt on, boss up, no new attack line this long → `J` off, select and attack by hand again (`stall_s5`; user, 2026-10-27); clamp 3000–120000 |
 | `HoldBeforeAutohunt` | true | stages 1–4: hold the skill key once on the boss in view before `J` (user, 2026-10-27: "on other stages, before going autohunt, try to skill hold first"; UI "Hold skill before autohunt (stages 1-4)"); off = `J` in `WaitBoss` right after the spawn wait. New bool, a saved file without it loads `true` — no migration |
 | `CtrlSkill` | true | every manual skill press (stage 5: the held press and the `ManualAttacks` taps; stages 1–4: the held press before `J`; LOD skill spam) = the skill key, then Ctrl + skill key (user, 2026-10-26); with `Lod.HoldSkill` the held key is let go for a Ctrl tap every `Lod.SkillEveryMs`. New property, so a saved file without it loads `true` — no migration (checked on this PC's settings.json) |
+| `War.*` (`WarSettings`; UI block "Auto War": Shura hold, Rebuff every, Lead time, TAB target, read-only "Back to") | see right | `Destination` "Bohai Outpost" (teleport list entry + minimap zone), `TribeRowText` "Bohai Outpost (Adept)", `MenuTileText` "Tribe Status", `LeadMs` 10000 (user: 10 s before zero), `DialogWaitMs` 120000, `TabTargetOption` "Enemy worth CP" (user), `BuffIcons` warbuff1...warbuff6, `XBuffIcon` warbuff4, `BuffClickGapMs` 1000, `BuffEveryMs` 345000 (user: 5 min 45 s), `ShuraHoldMs` 1200, `TargetGoneMs` 2000, `GateText` "Gate is Open", `ListPage` 3, `ArrivedText` "Arrived", `ArriveWaitMs` 90000, `IconMatchScore` 0.90, `HomeMap` / `HomeMonster` "" (written by Start's remember step). New block, no version bump; keys are reused (`Dungeon.SkillKey` / `CtrlSkill` / `AutohuntKey` / `TabKey`, `Lod.ShuraKey` / `BuffKey`, `Sequence.AutohuntSettingsKey`) |
 | `HomeTowns` | Piercing City, Molten City, Wandering City | every clan's home town (user, 2026-10-21): any of them on the minimap = "in town" (zone guard, LOD kill, stage 5 closed, still-in-town, re-login); the one seen (`TownIn`, remembered per Start) is where the return teleport goes |
 | `ReturnDestination` | `Piercing City` | fallback until a home town has been seen; after stage 5: `J` (autohunt off) → teleport scroll there → `Done`; only then may `Loop` start the next run |
 | `RunClickPx` / `RunStepWaitMs` / `RunMaxSteps` | 200 / 1500 / 200 | final run steering |

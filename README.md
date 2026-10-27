@@ -175,6 +175,34 @@ AutoConfirmText` (`Confirm`) is the word that marks the dialog and `AutoConfirmB
 button - read as text, or found as the lowest gold button under the message (OK and USE ALL are
 gold, CANCEL is dark). The first dialogs of each app start are saved as `autoconfirm` snapshots.
 
+### Auto War (Bohai Outpost tribe wars)
+
+Pick **Auto War** (Mode buttons above Start; **War** in the mini window) for an alt that should join every
+Bohai Outpost war: it waits in a cave, goes in when the war opens, buffs and fights, and when the game sends it
+home it teleports back to the **same cave and the same monster**, turns the autohunt on and waits for the next war.
+
+1. Put the character in the cave you want it to hunt in. That cave must be on **page 3** of the teleport scroll
+   (setting `War > ListPage`), and the autohunt on. Bind the game, pick **Auto War**, press **Start**.
+2. At Start the pilot checks the screen and stops with a message (it never guesses) when: you are not in a cave; the
+   cave's name could match **two** entries on page 3; the monster cannot be confirmed in the map's monster list; or the
+   six war buff icons (`warbuff1`-`warbuff6`), the **Shura** icon, or the war keys (skill, target, autohunt, inventory,
+   Shura) are not on the skill bar / not set. Everything must be there.
+3. It then reads the time to the next war from **Menu (the button at the top centre) > Tribe Status**, closes those
+   windows, waits, and 10 s before the war (`Lead time`) turns the autohunt off and clicks OK on the war dialog.
+   Inside it sets the game's TAB target to **Enemy worth CP**, buffs (auto-buff key `O` or the six icons one by one,
+   again every 5 min 45 s), then repeats: Tab to an enemy, the X buff, hold Shura, attack until the target is gone.
+   It watches the HP numbers (top left) and rebuffs after a death. When the war is over it goes back as above.
+4. Safety: it never clicks a guessed spot to close a window (a window whose X it cannot read stays open, with a
+   warning); it reads the screen only while the game window is in front; the Bohai dialog is never cancelled in this
+   mode. One game per WuxAuto - do not run it next to a Laby / LOD client on the same PC. It does not walk inside Bohai.
+5. Settings (Settings panel > Auto War): **Shura hold (ms)**, **Rebuff every (ms)**, **Lead time (ms)**, **TAB target**,
+   and the read-only **Back to** line (the saved cave and monster). The rest is in `settings.json` under `War`.
+
+**Not verified yet - no live war has been run.** Everything inside Bohai (the minimap title, "Gate is Open", enemy
+players in the target box, HP 0 and the revive), the buff icons on a real skill bar, the Menu close geometry and whether
+the menu button toggles it shut, the "Regular War" label in the autohunt settings, and the "Arrived:" wording. Every part logs
+what it saw and saves `war_*` pictures to the debug folder the first time, so send the log and those pictures after the first war.
+
 ### Input safety
 
 By default (`Input ▸ Mode = ForegroundSendInput`, `Only while game is focused`) the pilot sends

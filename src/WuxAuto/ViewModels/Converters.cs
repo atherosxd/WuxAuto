@@ -50,6 +50,7 @@ public static class OptionLists
     {
         RunMode.AutoLaby,
         RunMode.AutoLod,
+        RunMode.AutoWar,
     };
 
     public static InputMode[] InputModes { get; } =
