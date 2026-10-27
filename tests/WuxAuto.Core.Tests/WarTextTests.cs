@@ -203,6 +203,37 @@ public class WarTextTests
         Assert.Equal(new[] { lines[2] }, WarText.WarRowLines(lines, "Bohai Outpost (Adept)"));
     }
 
+    // The menu screenshot's tile row: "Tribe Status" with "Level Bonus" and "Item Mall" beside it.
+    static readonly (string, PixelRect) Tile = L("Tribe Status", 21, 491, 81, 13);
+    static readonly (string, PixelRect)[] TileRow = [Tile, L("Level Bonus", 150, 491, 81, 12), L("Item Mall", 285, 491, 70, 12)];
+
+    [Fact]
+    public void IsMenuTileHit_TheMenusMixedCaseTile()
+        => Assert.True(WarText.IsMenuTileHit(Tile.Item1, Tile.Item2, TileRow, "Tribe Status"));
+
+    [Fact]
+    public void IsMenuTileHit_TheTileWithTribeStatusOpenElsewhere_IsStillTheTile()
+        => Assert.True(WarText.IsMenuTileHit(Tile.Item1, Tile.Item2, [.. TileRow, L("TRIBE STATUS", 322, 8, 145, 16)], "Tribe Status"));
+
+    [Theory]
+    [InlineData("TRIBE STATUS")]    // the window title itself
+    [InlineData("Tribe STATUS")]    // a title read with too few capitals for FindWindowTitle (7 of 11)
+    [InlineData("TRIBE Status")]
+    public void IsMenuTileHit_AHitMostlyInCapitals_IsATitle(string text)
+        => Assert.False(WarText.IsMenuTileHit(text, new PixelRect(322, 8, 145, 16), [], "Tribe Status"));   // the hit alone decides
+
+    [Fact]
+    public void IsMenuTileHit_AMixedCaseHitOnTheRowOfACapitalsTitle_IsATitle()
+    {
+        // e.g. the title's two words merged into one mixed-case word, its line read in capitals.
+        var line = L("TRIBE STATUS", 322, 8, 145, 16);
+        Assert.False(WarText.IsMenuTileHit("TribeStatus", new PixelRect(322, 9, 145, 15), [line], "Tribe Status"));
+    }
+
+    [Fact]
+    public void IsMenuTileHit_TooLittleOfTheTileText_IsNone()
+        => Assert.False(WarText.IsMenuTileHit("status", new PixelRect(1359, 872, 37, 10), [L("Hide item apply status", 1250, 872, 146, 10)], "Tribe Status"));
+
     [Fact]
     public void TribeStatusShows_ByItsTitleOrTheBareRow_NotByTheChatNotice()
     {

@@ -717,18 +717,23 @@ public sealed class ScreenAnalyzer : IDisposable
     public PixelRect FindCloseButtonRightOf(Mat frame, PixelRect title)
     {
         int h = Math.Max(6, title.Height);
+        var fallback = new PixelRect(title.Right + 2 * h - h / 2, title.CenterY - h / 2, h, h);
         var band = new PixelRect(title.Right + 2, title.Y - h, 6 * h, title.Height + 2 * h).Clamp(frame.Width, frame.Height);
-        return ButtonBlobs(frame, band, h).OrderBy(b => b.X).Select(b => (PixelRect?)b).FirstOrDefault() ?? CloseFallback(title);
+        if (band.Width < 4 || band.Height < 4)
+            return fallback;
+
+        var blob = FindBrightBlobs(frame, band)
+            .Where(b => b.Width <= 3 * h && b.Height <= 3 * h && b.Width >= 3 && b.Height >= 3)
+            .OrderBy(b => b.X)
+            .Select(b => (PixelRect?)b)
+            .FirstOrDefault();
+        return blob ?? fallback;
     }
 
-    /// <summary>Two text heights right of a title, on its title bar: where a close button is clicked when none is seen.</summary>
-    private static PixelRect CloseFallback(PixelRect title)
-    {
-        int h = Math.Max(6, title.Height);
-        return new PixelRect(title.Right + 2 * h - h / 2, title.CenterY - h / 2, h, h);
-    }
-
-    /// <summary>The bright blobs in <paramref name="band"/> of button size (3 px to 3 text heights each way).</summary>
+    /// <summary>
+    /// Auto War: the bright blobs in <paramref name="band"/> of button size (3 px to 3 text heights each way, as
+    /// <see cref="FindCloseButtonRightOf"/> takes them).
+    /// </summary>
     private IEnumerable<PixelRect> ButtonBlobs(Mat frame, PixelRect band, int h)
     {
         if (band.Width < 4 || band.Height < 4)
@@ -1245,8 +1250,9 @@ public sealed class ScreenAnalyzer : IDisposable
     /// Auto War: what closes the windows the war timer opened - the TRIBE STATUS window first, else the MENU:
     /// its title in capitals (<see cref="WarText.FindWindowTitle"/>; the Menu's mixed-case "Tribe Status" tile is
     /// not one) and the X in the window's top right corner, far further from the title than a dialog's: the
-    /// button-sized bright blob in <see cref="WarCloseBand"/> picked by <see cref="PickWarClose"/>, else the title
-    /// bar (<see cref="CloseFallback"/>). Null when neither title shows.
+    /// button-sized bright blob in <see cref="WarCloseBand"/> picked by <see cref="PickWarClose"/>. No such blob =
+    /// <see cref="WarWindow.Close"/> null: no blind click (with the MENU grid scrolled under the title, a point on
+    /// the title's row can be a tile, which opens another window). Null when neither title shows.
     /// Measured on the user's screenshots (title box, X, window's right edge; title widths right of the title's
     /// centre for the X's centre / the X's right side / the edge):
     /// TRIBE STATUS 322-467 x 8-24 (16 px), X 753-767 x 12-26, edge 795 - 2.52 / 2.57 / 2.76; a corner ornament
@@ -1254,7 +1260,7 @@ public sealed class ScreenAnalyzer : IDisposable
     /// is scrolled under it) 171-226 x 22-35 (13 px), X 352-366 x 26-39, edge ~380 - 2.93 / 3.05 / 3.3; the tile
     /// label "Inventory (I)" (279-361 x 28-41) shares the title's rows, left of the X.
     /// </summary>
-    public (string Title, PixelRect TitleBounds, PixelRect Close)? FindWarWindowClose(Mat frame, IReadOnlyList<(string Text, PixelRect Bounds)> lines)
+    public WarWindow? FindWarWindowClose(Mat frame, IReadOnlyList<(string Text, PixelRect Bounds)> lines)
     {
         foreach (var (title, reach, edge, x) in new[] { (WarText.TribeStatusTitle, 22, 2.7, 2.52), (WarText.MenuTitle, 12, 3.2, 2.93) })
         {
@@ -1263,7 +1269,7 @@ public sealed class ScreenAnalyzer : IDisposable
 
             var band = WarCloseBand(line.Bounds, reach, edge, frame.Width, frame.Height);
             var buttons = ButtonBlobs(frame, band, Math.Max(6, line.Bounds.Height));
-            return (line.Text, line.Bounds, PickWarClose(buttons, line.Bounds, x) ?? CloseFallback(line.Bounds));
+            return new WarWindow(title, line.Text, line.Bounds, PickWarClose(buttons, line.Bounds, x));
         }
 
         return null;
@@ -1290,8 +1296,8 @@ public sealed class ScreenAnalyzer : IDisposable
     /// Where a war window's X is looked for: the title's rows (half a title height above and below, so the rows
     /// under the title stay out), from just right of the title to the nearer of <paramref name="reachHeights"/>
     /// title heights and <paramref name="edgeWidths"/> title widths right of the title's centre. The width bound
-    /// stops short of the window's right edge (measured in <see cref="FindWarWindowClose"/>), so a missed X never
-    /// turns into a click in the world beyond it, which walks the character; it holds while OCR's title box is
+    /// stops short of the window's right edge (measured in <see cref="FindWarWindowClose"/>), so nothing in the world
+    /// beyond it (a click there walks the character) is ever taken for the X; it holds while OCR's title box is
     /// within a few pixels of the glyphs. The height bound keeps a mis-sized title box from reaching far. Not
     /// everything is kept out: with the MENU grid scrolled under its title (the user's screenshot) the tile labels
     /// share the title's rows - "Inventory (I)" at 279-361 x 28-41 lies inside the band, left of the X - and

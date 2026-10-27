@@ -140,23 +140,46 @@ public static class WarText
     /// </summary>
     public static (string Text, PixelRect Bounds)? FindWindowTitle(IReadOnlyList<(string Text, PixelRect Bounds)> lines, string title)
     {
-        string t = TextMatcher.Normalize(title);
-        if (t.Length == 0)
-            return null;
-
-        int allowed = Math.Max(1, t.Length / 5);
         foreach (var line in lines.OrderBy(l => l.Bounds.Y))
         {
-            string n = TextMatcher.Normalize(line.Text);
-            if (Math.Abs(n.Length - t.Length) > allowed || TextMatcher.Levenshtein(n, t) > allowed)
-                continue;
-
-            int letters = line.Text.Count(char.IsLetter);
-            if (letters > 0 && line.Text.Count(char.IsUpper) >= letters * 0.8)
+            if (ReadsAsTitle(line.Text, title) && CapitalShare(line.Text) >= 0.8)
                 return line;
         }
 
         return null;
+    }
+
+    /// <summary>
+    /// A whole-frame hit for the menu's tile text (<paramref name="tileText"/>, "Tribe Status") that is the tile, not
+    /// the TRIBE STATUS window's title, which reads the same case aside: the hit covers most of the tile's letters
+    /// (<see cref="TextMatcher.CoversMost"/>), under half of its letters are capitals, and no line on its row that
+    /// reads as the title (<see cref="ReadsAsTitle"/>) has half or more of its letters in capitals. A title read with
+    /// too few capitals for <see cref="FindWindowTitle"/> is therefore not taken for the menu.
+    /// </summary>
+    public static bool IsMenuTileHit(string hitText, PixelRect hitBounds, IReadOnlyList<(string Text, PixelRect Bounds)> lines, string tileText)
+    {
+        if (!TextMatcher.CoversMost(hitText, tileText) || CapitalShare(hitText) >= 0.5)
+            return false;
+
+        return !lines.Any(l => Math.Abs(l.Bounds.CenterY - hitBounds.CenterY) <= Math.Max(l.Bounds.Height, hitBounds.Height)
+                               && ReadsAsTitle(l.Text, TribeStatusTitle)
+                               && CapitalShare(l.Text) >= 0.5);
+    }
+
+    /// <summary><paramref name="text"/> reads <paramref name="title"/>, case aside: one letter off per five, at least one.</summary>
+    static bool ReadsAsTitle(string text, string title)
+    {
+        string t = TextMatcher.Normalize(title);
+        string n = TextMatcher.Normalize(text);
+        int allowed = Math.Max(1, t.Length / 5);
+        return t.Length > 0 && Math.Abs(n.Length - t.Length) <= allowed && TextMatcher.Levenshtein(n, t) <= allowed;
+    }
+
+    /// <summary>The share of <paramref name="text"/>'s letters that are capitals (0 without letters).</summary>
+    static double CapitalShare(string text)
+    {
+        int letters = text.Count(char.IsLetter);
+        return letters == 0 ? 0 : text.Count(char.IsUpper) / (double)letters;
     }
 
     /// <summary>

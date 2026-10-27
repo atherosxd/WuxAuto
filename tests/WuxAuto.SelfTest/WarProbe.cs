@@ -183,15 +183,15 @@ internal static class WarProbe
     /// covers most of the tile's (TextMatcher.CoversMost of the hit, which is the whole line when the line
     /// matched best), and "line only" when just its line does: on every in-game frame the best hit is the
     /// word "status" of the "Hide item apply status" check box, whose line passes CoversMost. Last, what the
-    /// pilot's close step would click (<see cref="CloseStepAsync"/>): on frames without the MENU or TRIBE STATUS
-    /// window it must find neither a window title nor the menu's tile.
+    /// pilot's close step would do (<see cref="CloseStepAsync"/>): on frames without the MENU or TRIBE STATUS
+    /// window it must find no window title and neither click nor warn.
     /// </summary>
     public static async Task<int> MenuAsync(string dir)
     {
         var settings = SettingsStore.Load();
         using var analyzer = new ScreenAnalyzer(settings, new OcrService());
         string tileText = settings.War.MenuTileText;
-        int total = 0, buttons = 0, tiles = 0, lineOnly = 0, titles = 0, menusUp = 0;
+        int total = 0, buttons = 0, tiles = 0, lineOnly = 0, titles = 0, acts = 0;
         foreach (string path in Frames(dir))
         {
             using var frame = Load(path);
@@ -220,8 +220,8 @@ internal static class WarProbe
             var close = await CloseStepAsync(analyzer, settings, frame);
             if (close.Title)
                 titles++;
-            if (close.MenuUp)
-                menusUp++;
+            if (close.Acts)
+                acts++;
 
             string buttonText = button == null ? "not found"
                 : $"{button.Score:0.000} at {button.Bounds.CenterX},{button.Bounds.CenterY} {button.Bounds.Width}x{button.Bounds.Height} scale {button.Scale:0.00}";
@@ -230,7 +230,7 @@ internal static class WarProbe
             Console.WriteLine($"{Path.GetFileName(path)} {frame.Width}x{frame.Height} | menubutton {buttonText} ({ms:0} ms) | tile {hitText} | close {close.Text}");
         }
 
-        Console.WriteLine($"{total} frames, menubutton seen (>= 0.30) on {buttons}; '{tileText}': TILE {tiles}, line only {lineOnly}; close step: a window title on {titles}, a menu up without its title on {menusUp}");
+        Console.WriteLine($"{total} frames, menubutton seen (>= 0.30) on {buttons}; '{tileText}': TILE {tiles}, line only {lineOnly}; close step: a window title on {titles}, would click or warn on {acts}");
         return 0;
     }
 
@@ -314,20 +314,33 @@ internal static class WarProbe
 
     /// <summary>
     /// The pilot's close step (AutomationPilot.TickWarCloseAsync) on one frame: one whole-frame read for
-    /// War.MenuTileText at the OCR scale; a TRIBE STATUS or MENU title in capitals -> the X found right of it
-    /// (ScreenAnalyzer.FindWarWindowClose); else the menu's tile (step 2's test: CoversMost of the hit) -> the
-    /// MENU button; else nothing to close.
+    /// War.MenuTileText at the OCR scale. A TRIBE STATUS or MENU title in capitals (ScreenAnalyzer.FindWarWindowClose)
+    /// -> its X, or no X seen (TRIBE STATUS: left open; MENU: the MENU button); no title but the menu's tile
+    /// (WarText.IsMenuTileHit) -> the MENU button; a hit with the tile's text that reads like the TRIBE STATUS title
+    /// -> left open; else nothing to close. <c>Title</c>: a window title was found; <c>Acts</c>: the step would
+    /// click or warn.
     /// </summary>
-    private static async Task<(string Text, bool Title, bool MenuUp)> CloseStepAsync(ScreenAnalyzer analyzer, AppSettings settings, Mat frame)
+    private static async Task<(string Text, bool Title, bool Acts)> CloseStepAsync(ScreenAnalyzer analyzer, AppSettings settings, Mat frame)
     {
         string tileText = settings.War.MenuTileText;
         var full = new PixelRect(0, 0, frame.Width, frame.Height);
         var (hit, _, words) = await analyzer.FindTextAsync(frame, full, tileText);
-        if (analyzer.FindWarWindowClose(frame, ScreenAnalyzer.ToLines(words)) is { } c)
-            return ($"title '{c.Title}' {Box(c.TitleBounds)}, X at {c.Close.CenterX},{c.Close.CenterY} ({Box(c.Close)})", true, false);
-        if (hit != null && TextMatcher.CoversMost(hit.Text, tileText))
-            return ($"menu up without its title ('{hit.Text}' at {Box(hit.Bounds)}) -> the menu button", false, true);
-        return ("nothing open", false, false);
+        var lines = ScreenAnalyzer.ToLines(words);
+        if (analyzer.FindWarWindowClose(frame, lines) is { } w)
+        {
+            string title = $"title '{w.Title}' {Box(w.TitleBounds)}";
+            if (w.Close is { } x)
+                return ($"{title}, X at {x.CenterX},{x.CenterY} ({Box(x)})", true, true);
+            return w.Window == WarText.MenuTitle
+                ? ($"{title}, no X seen -> the menu button", true, true)
+                : ($"{title}, no X seen -> left open (warning)", true, true);
+        }
+
+        if (hit == null || !TextMatcher.CoversMost(hit.Text, tileText))
+            return ("nothing open", false, false);
+        return WarText.IsMenuTileHit(hit.Text, hit.Bounds, lines, tileText)
+            ? ($"menu up without its title ('{hit.Text}' at {Box(hit.Bounds)}) -> the menu button", false, true)
+            : ($"'{hit.Text}' at {Box(hit.Bounds)} reads like the {WarText.TribeStatusTitle} title -> left open (warning)", false, true);
     }
 
     private static string Describe(WarCountdown? row) => row switch

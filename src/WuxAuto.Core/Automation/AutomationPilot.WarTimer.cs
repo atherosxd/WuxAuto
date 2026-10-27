@@ -269,10 +269,13 @@ public sealed partial class AutomationPilot
     }
 
     /// <summary>
-    /// Step 4: TRIBE STATUS, then the MENU, closed with their X. A menu still up whose title does not read (the
-    /// grid scrolled under it, the user's screenshot) shows by its Tribe Status tile - step 2's test - and gets one
-    /// click on the MENU button; still up after that = warning, left open. One click per tick, each decided on a
-    /// fresh frame, at most 4; nothing open = done. A dry run logs the first click it would make and ends.
+    /// Step 4: TRIBE STATUS, then the MENU, closed with their X. The MENU up without a visible X - its title read
+    /// but no close button seen, or no title at all but its Tribe Status tile (<see cref="WarText.IsMenuTileHit"/>;
+    /// the grid scrolled under the title, the user's screenshot) - gets one click on the MENU button; still up after
+    /// that = warning, left open. TRIBE STATUS without a visible X, or a hit that reads like its title rather than
+    /// the tile, gets no click at all (no blind clicks; the MENU button would open the menu over it): warning, left
+    /// open. One click per tick, each decided on a fresh frame, at most 4; nothing open = done. A dry run logs the
+    /// first click it would make and ends.
     /// </summary>
     private async Task TickWarCloseAsync(Mat frame)
     {
@@ -281,21 +284,34 @@ public sealed partial class AutomationPilot
         var full = new PixelRect(0, 0, frame.Width, frame.Height);
         // One read: its lines for the window titles, its best hit for the menu's tile.
         var (hit, _, words) = await _analyzer.FindTextAsync(frame, full, tile);
-        var open = _analyzer.FindWarWindowClose(frame, ScreenAnalyzer.ToLines(words));
-        bool menuUp = open == null && hit != null && TextMatcher.CoversMost(hit.Text, tile);
-        if (open == null && !menuUp)
+        var lines = ScreenAnalyzer.ToLines(words);
+        var open = _analyzer.FindWarWindowClose(frame, lines);
+        bool tileTextSeen = open == null && hit != null && TextMatcher.CoversMost(hit.Text, tile);
+        if (open == null && !tileTextSeen)
         {
             _warTimerStep = 0;
             return;
         }
 
-        _overlays.Add(open is { } shown
-            ? new OverlayItem(shown.TitleBounds, shown.Title, OverlayColor.Blue)
+        _overlays.Add(open != null
+            ? new OverlayItem(open.TitleBounds, open.Title, OverlayColor.Blue)
             : new OverlayItem(hit!.Bounds, tile, OverlayColor.Blue));
+
+        bool menuUp = open is { Window: WarText.MenuTitle, Close: null }
+                      || (open == null && WarText.IsMenuTileHit(hit!.Text, hit.Bounds, lines, tile));
+        if (!menuUp && open?.Close == null)
+        {
+            Log?.Invoke(LogLevel.Warning, open != null
+                ? $"'{open.Title}' is open, but no close button shows right of its title - leaving it."
+                : $"'{hit!.Text}' reads like the {WarText.TribeStatusTitle} title (capitals), not the menu's tile - no close button to click; leaving it.");
+            WarShot(frame, "war_close_stuck");
+            _warTimerStep = 0;
+            return;
+        }
 
         if (menuUp && _warMenuToggled)
         {
-            Log?.Invoke(LogLevel.Warning, $"The menu is still open (its '{tile}' tile shows) after a click on the menu button - leaving it.");
+            Log?.Invoke(LogLevel.Warning, "The menu is still open after a click on the menu button - leaving it.");
             WarShot(frame, "war_menu_open");
             _warTimerStep = 0;
             return;
@@ -311,10 +327,10 @@ public sealed partial class AutomationPilot
 
         PixelRect target;
         string what;
-        if (open is { } window)
+        if (!menuUp)
         {
-            target = window.Close;
-            what = $"the X of '{window.Title}'";
+            target = open!.Close!.Value;
+            what = $"the X of '{open.Title}'";
         }
         else
         {
@@ -323,14 +339,16 @@ public sealed partial class AutomationPilot
             var button = _analyzer.FindIcon(frame, "menubutton", roi, MenuButtonScore);
             if (button == null)
             {
-                Log?.Invoke(LogLevel.Warning, $"The menu is still open (its '{tile}' tile shows) without a readable title, and the menu button is not found - leaving it.");
+                Log?.Invoke(LogLevel.Warning, "The menu is still open without a visible close button, and the menu button is not found - leaving it.");
                 WarShot(frame, "war_menu_open");
                 _warTimerStep = 0;
                 return;
             }
 
             target = button.Bounds;
-            what = $"the menu button ({button.Score:0.00}) - the menu is still open, its title unread";
+            what = open != null
+                ? $"the menu button ({button.Score:0.00}) - the menu's X does not show"
+                : $"the menu button ({button.Score:0.00}) - the menu is still open, its title unread";
         }
 
         _overlays.Add(new OverlayItem(target, "close", OverlayColor.Green));
@@ -344,9 +362,9 @@ public sealed partial class AutomationPilot
             return;
         }
 
-        _warMenuToggled |= open == null;
+        _warMenuToggled |= menuUp;
         _warStepTries++;
-        _waitUntil = now + (open == null ? 900 : 700);
+        _waitUntil = now + (menuUp ? 900 : 700);
     }
 
     /// <summary>
