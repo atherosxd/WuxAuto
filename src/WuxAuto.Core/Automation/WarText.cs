@@ -266,17 +266,18 @@ public static class WarText
     public const string TeleportScrollTitle = "TELEPORT SCROLL";
 
     /// <summary>
-    /// A zone or map name as Auto War compares it: <see cref="TextMatcher.Normalize"/> after folding the characters OCR
-    /// mixes up - 'I', 'l' and '|' read as '1', 'O' as '0' (page 3's "[Dark Soul Cave 1F (WD)]" reads "IF"). A '|' that
-    /// ends the text is its closing bracket, not a '1'. "IX" and "X" stay apart.
+    /// A zone or map name as Auto War compares it: <see cref="TextMatcher.Normalize"/> (lower case, letters and digits),
+    /// then the characters OCR mixes up folded - i / I / l / L / '|' read as '1', o / O as '0' (page 3's "[Dark Soul Cave
+    /// 1F (WD)]" reads "IF"). Folding after lower-casing keeps it case-blind, as Normalize is ("SOUL" = "Soul"). A '|'
+    /// that ends the text is its closing bracket, not a '1'. "IX" and "X" stay apart; two real names that fold the same
+    /// are reported as ambiguous by the list pick, never taken for one another.
     /// </summary>
     public static string FoldedKey(string text)
     {
         string t = text.TrimEnd();
         if (t.EndsWith('|'))
             t = t[..^1];
-        var folded = t.Select(c => c is 'I' or 'l' or '|' ? '1' : c == 'O' ? '0' : c).ToArray();
-        return TextMatcher.Normalize(new string(folded));
+        return TextMatcher.Normalize(t.Replace('|', '1')).Replace('i', '1').Replace('l', '1').Replace('o', '0');
     }
 
     /// <summary>
@@ -336,13 +337,19 @@ public static class WarText
     static readonly Regex CoordinateLike = new(@"\d{3,6}\s*[,.]\s*\d{3,6}", RegexOptions.Compiled);
 
     /// <summary>
-    /// A minimap line that can be the zone title in Auto War: starts with '[', has at least 4 letters and is not the
-    /// coordinates line ("3592 , 7297"). Digits are allowed - page 3 has "[Dark Soul Cave 2F (WD)]".
+    /// A minimap line that can be the zone title in Auto War: one bracketed name - it starts with '[', has no second
+    /// '[' and no "minute" (the "[Bohai Outpost (Adept)] [10] minute(s) to opening" notice can show in the minimap
+    /// band), at least 4 letters, and is not the coordinates line ("3592 , 7297"). Digits are allowed - page 3 has
+    /// "[Dark Soul Cave 2F (WD)]".
     /// </summary>
     public static bool IsZoneTitleLine(string line)
     {
         string t = line.Trim();
-        return t.StartsWith('[') && t.Count(char.IsLetter) >= 4 && !CoordinateLike.IsMatch(t);
+        return t.StartsWith('[')
+               && t.Count(c => c == '[') == 1
+               && !t.Contains("minute", StringComparison.OrdinalIgnoreCase)
+               && t.Count(char.IsLetter) >= 4
+               && !CoordinateLike.IsMatch(t);
     }
 
     /// <summary>
@@ -533,7 +540,9 @@ public static class WarText
     /// The lines of <paramref name="after"/> not used up by a line of <paramref name="before"/>, in
     /// <paramref name="after"/>'s order. Each line of <paramref name="before"/> is used up once: first by an equal line,
     /// then - for the lines left on both sides - by one at most one letter off (Levenshtein), so an old log line that
-    /// only moved up, or is re-read with one letter of OCR noise, is not new.
+    /// only moved up, or is re-read with one letter of OCR noise, is not new. Meant for the "Arrived: &lt;monster&gt;"
+    /// lines: it is unfit for lines that differ only in a number ("damage(+50)" / "damage(+58)" would count as the same
+    /// line) - another use needs a minimum length or a digit-free condition for the one-letter step.
     /// </summary>
     public static IReadOnlyList<string> NewLines(IReadOnlyList<string> before, IReadOnlyList<string> after)
     {

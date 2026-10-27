@@ -288,7 +288,7 @@ public class WarTextTests
     [InlineData("[Coliseum", "[Coliseum]")]                         // a short name read whole, ']' dropped
     [InlineData("[Maya Cliff)", "[Maya Cliff]")]                     // list entries at 1024x768 read some ']' as ')'
     [InlineData("[Dark Soul Cave IF", "[Dark Soul Cave IF (WD)]")]  // page 3 at 2048x1152 (OCR reads "1F" as "IF"), cut
-    [InlineData("[Dark Soul Cave 1F", "[Dark Soul Cave IF (WD)]")]  // I / l / | fold to 1, O to 0
+    [InlineData("[Dark Soul Cave 1F", "[Dark Soul Cave IF (WD)]")]  // i, l and | fold to 1, o to 0 (any case)
     [InlineData("[Dark Soul Cave lF (WD)]", "[Dark Soul Cave 1F (WD)]")]
     [InlineData("[Bohai 0utpost (Adept)]", "[Bohai Outpost (Adept)]")]
     public void SameZone_TheSavedMap(string read, string home) => Assert.True(WarText.SameZone(read, home));
@@ -388,7 +388,33 @@ public class WarTextTests
     }
 
     [Theory]
+    [InlineData("SOUL", "Soul")]                      // OCR case flips: folding works on the lower-cased key
+    [InlineData("OUTPOST", "Outpost")]
+    [InlineData("ISLAND", "island")]
+    [InlineData("[Dark Soul Cave IF (WD)]", "[dark soul cave 1f (wd)]")]
+    [InlineData("[Dark Soul Cave X|", "[Dark Soul Cave X]")]
+    public void FoldedKey_SameAcrossCaseAndConfusableCharacters(string a, string b) => Assert.Equal(WarText.FoldedKey(a), WarText.FoldedKey(b));
+
+    [Theory]
+    [InlineData("[Dark Soul Cave IX]", "[Dark Soul Cave X]")]
+    [InlineData("[Dark Soul Cave 1F (WD)]", "[Dark Soul Cave 2F (WD)]")]
+    public void FoldedKey_KeepsCavesApart(string a, string b) => Assert.NotEqual(WarText.FoldedKey(a), WarText.FoldedKey(b));
+
+    [Theory]
+    [InlineData("[Dark SOUL Cave X]", "[Dark Soul Cave X]")]
+    [InlineData("[dark soul cave if", "[Dark Soul Cave IF (WD)]")]
+    public void SameZone_ACaseFlipIsTheSameZone(string read, string home) => Assert.True(WarText.SameZone(read, home));
+
+    [Theory]
+    [InlineData("[Bohai OUTPOST (Adept)]", "[Bohai Outpost (Adept)]")]
+    [InlineData("[Taji ISLAND (WD)]", "[Taji Island (WD)]")]
+    public void SameEntry_ACaseFlipIsTheSameEntry(string entry, string saved) => Assert.True(WarText.SameEntry(entry, saved));
+
+    [Theory]
+    [InlineData("[Dark Soul Cave 2F (WD)]", true)]
     [InlineData("[Dark Soul Cave 2F (WD)", true)]     // a digit in the name (page 3)
+    [InlineData("[Bohai Outpost (Adept)] [10] minute(s) to opening of the entrance", false)]   // the war notice, not a title
+    [InlineData("[Bohai Outpost (Adept)) 10 minute(s) to opening", false)]
     [InlineData("[Piercing City]", true)]
     [InlineData("[The Labyrinth (Adep", true)]
     [InlineData("[3592 , 7297", false)]                // the coordinates line
