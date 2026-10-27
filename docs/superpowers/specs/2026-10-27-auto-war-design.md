@@ -182,7 +182,11 @@ Anti-goals (failure even if the war part works)
 1. Read the **top-left HP numbers** "cur / max" (e.g. `42833 / 42833`, big red bar next to the level badge;
    readable on every saved frame) about once a second **(user: either this or the centre bar)**. `0 / …` =
    dead. Backup when the numbers do not read 3× in a row: the small HP bar under the character in the
-   middle of the client, red → black **(user; numbers first is my call)**.
+   middle of the client, red → black **(user; numbers first is my call)**. *Plan note (2026-10-27): the
+   backup is not built in the first version — no saved frame shows that bar at a death, and a wrong
+   "dead" there would stall the fight. Unreadable numbers count as alive and save `war_hp_unread`; the bar
+   comes later from the first live frames **(my call)**.* A `0 / max` read only counts when `max` is the HP
+   maximum seen while alive (the "0/3000" bar below it must never pass for a death) **(my call)**.
 2. Dead → release any held key, stop pressing anything, wait until HP is above 0 again (the game puts the
    character back at the base by itself **(my guess, user did not object)**) → rebuff everything (§4.4.3)
    → fight (§4.5) **(user)**.
