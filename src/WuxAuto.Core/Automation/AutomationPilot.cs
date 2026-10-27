@@ -152,7 +152,8 @@ public sealed partial class AutomationPilot
     private int _waypointGatePolls;
     private int _manualPresses = -1;    // -1 = not attacking by hand yet
     private bool _manualHit;
-    private long? _holdUntil;                // stage 5: the first manual attack holds the skill key down until then
+    private long? _holdUntil;                // a held skill press (stage 5's first manual attack, stages 1-4 before J) is let go at this time
+    private bool _heldBeforeHunt;            // stages 1-4: the held skill press before J is done (HoldBeforeAutohunt)
     private bool _huntOn;                    // stage 5: autohunt on, clicking round the centre until a new attack line shows
     private long _huntOnAt;
     private long? _huntBaselineAt;           // stage 5: the attack log re-read AutohuntSettleMs after J (the manual attacks' late hits are gone by then)
@@ -431,6 +432,7 @@ public sealed partial class AutomationPilot
         _manualPresses = -1;
         _manualHit = false;
         _holdUntil = null;
+        _heldBeforeHunt = false;
         _manualRounds = 0;
         _huntOn = false;
         _huntOnAt = 0;
@@ -2320,6 +2322,15 @@ public sealed partial class AutomationPilot
     /// <summary>Stage index past the map stages = the 5th boss reached on foot.</summary>
     private bool IsFinalBoss => _stageIndex >= _settings.Dungeon.Stages.Count;
 
+    /// <summary>
+    /// Stages 1-4: one held skill press on the boss before J (user, 2026-10-27: "on other stages,
+    /// before going autohunt, try to skill hold first") - the switch, a skill key and a hold length.
+    /// </summary>
+    private bool HoldBeforeAutohunt =>
+        _settings.Dungeon.HoldBeforeAutohunt
+        && !string.IsNullOrWhiteSpace(_settings.Dungeon.SkillKey)
+        && _settings.Dungeon.HoldSkillMs > 0;
+
     private string StageName(int index)
         => index < _settings.Dungeon.Stages.Count ? _settings.Dungeon.Stages[index] : _settings.Dungeon.FinalBoss;
 
@@ -3043,8 +3054,9 @@ public sealed partial class AutomationPilot
 
 
     /// <summary>
-    /// Waits out the spawn timer, turns the autohunt on (J), presses Tab for the monster marker,
-    /// and once the boss has been visible for a moment hands over to the select step.
+    /// Waits out the spawn timer, turns the autohunt on (J - stages 1-4 only, and only without a held
+    /// skill press first), presses Tab for the monster marker, and once the boss has been visible
+    /// for a moment hands over to the select step.
     /// </summary>
     private async Task TickWaitBossAsync(Mat frame)
     {
@@ -3071,10 +3083,12 @@ public sealed partial class AutomationPilot
             elapsed = 0;
         }
 
-        // Stages 1-4: autohunt on after the spawn wait, as it always was (user: that works). Stage 5
-        // only after the boss is selected and attacked by hand (SelectBoss -> EngageAutohunt) - it
+        // Stages 1-4: autohunt on after the spawn wait, as it always was (user: that works) - unless
+        // a held skill press comes first (HoldBeforeAutohunt, user 2026-10-27: "on other stages,
+        // before going autohunt, try to skill hold first"); J then follows the hold in SelectBoss.
+        // Stage 5 only after the boss is attacked by hand (SelectBoss -> EngageAutohunt) - it
         // engaged there before the character was at the boss (user).
-        if (!IsFinalBoss && !_autohuntPressed && elapsed >= spawnWait)
+        if (!IsFinalBoss && !_autohuntPressed && !HoldBeforeAutohunt && elapsed >= spawnWait)
         {
             if (!string.IsNullOrWhiteSpace(dungeon.AutohuntKey) && _input.KeyTap(dungeon.AutohuntKey))
             {
@@ -3241,12 +3255,56 @@ public sealed partial class AutomationPilot
             return;
         }
 
+        // Stages 1-4 (user, 2026-10-27: "on other stages, before going autohunt, try to skill hold
+        // first"): the boss in view -> one held skill press (the character runs at the boss and
+        // attacks it), then J, then the centre clicks as before. The hold's last hits still print
+        // for a moment after J, so the log baseline for the clicks is taken again after a settle.
+        if (!IsFinalBoss && !_autohuntPressed && HoldBeforeAutohunt)
+        {
+            if (!_heldBeforeHunt)
+            {
+                if (_holdUntil == null)
+                {
+                    if (!StartHeldSkill())
+                        return;
+
+                    Log?.Invoke(LogLevel.Info,
+                        $"Holding '{dungeon.SkillKey}' for {dungeon.HoldSkillMs} ms on the stage {_stageIndex + 1} boss before the autohunt.");
+                    return;
+                }
+
+                if (!TickHeldSkill())
+                    return;
+
+                _heldBeforeHunt = true;
+            }
+
+            if (!EngageAutohunt())
+            {
+                _waitUntil = Environment.TickCount64 + 300;
+                return;
+            }
+
+            _selectBaselineTaken = false;
+            _detail = "autohunt on - letting the held attack's hits settle before the select clicks";
+            _waitUntil = Environment.TickCount64 + AutohuntSettleMs;
+            return;
+        }
+
         if (_selectClickedAt.HasValue)
         {
             string log = await ReadAttackLogAsync(frame, msgRoi, dungeon.AttackConfirmText);
             if (log.Length > 0 && log != _attackLog && !IsFinalBoss)
             {
-                // Stages 1-4: the old flow (user) - autohunt is on already, just watch.
+                // Stages 1-4: the old flow (user) - the autohunt is on already (WaitBoss, or J after
+                // the held press), just watch. A no-op then; J only when the hold switch was turned
+                // off between WaitBoss and here.
+                if (!EngageAutohunt())
+                {
+                    _waitUntil = Environment.TickCount64 + 300;
+                    return;
+                }
+
                 Log?.Invoke(LogLevel.Success,
                     $"'{dungeon.AttackConfirmText}' - boss selected on click {_selectTries} at {_lastClick?.X},{_lastClick?.Y}.");
                 Advance(PilotPhase.WatchBoss, 500);
@@ -3373,6 +3431,58 @@ public sealed partial class AutomationPilot
     private string SkillText(string key) => _settings.Dungeon.CtrlSkill ? $"'{key}' + Ctrl+{key}" : $"'{key}'";
 
     /// <summary>
+    /// Starts a held skill press: the key goes down now and stays down until <c>HoldSkillMs</c> is
+    /// over (<see cref="TickHeldSkill"/>). Between ticks <see cref="ReleaseHeldSkill"/> lets go of it
+    /// on Stop / a phase change, like the LOD hold. False while the key is blocked (retried next tick).
+    /// </summary>
+    private bool StartHeldSkill()
+    {
+        var dungeon = _settings.Dungeon;
+        long now = Environment.TickCount64;
+        if (!_input.KeyDown(dungeon.SkillKey))
+        {
+            _detail = "skill key blocked - waiting for the game to be in front";
+            _waitUntil = now + 300;
+            return false;
+        }
+
+        _heldSkill = dungeon.SkillKey;
+        _holdUntil = now + dungeon.HoldSkillMs;
+        _detail = $"holding '{dungeon.SkillKey}' (0/{dungeon.HoldSkillMs} ms)";
+        _waitUntil = now + 250;
+        return true;
+    }
+
+    /// <summary>
+    /// Ticks a held skill press: false while the key is still down (waits), true once it has been
+    /// let go - followed by Ctrl + skill key with <see cref="DungeonSettings.CtrlSkill"/>.
+    /// </summary>
+    private bool TickHeldSkill()
+    {
+        var dungeon = _settings.Dungeon;
+        long now = Environment.TickCount64;
+        if (_holdUntil is not long holdUntil)
+            return true;
+
+        if (now < holdUntil)
+        {
+            _detail = $"holding '{dungeon.SkillKey}' ({now - (holdUntil - dungeon.HoldSkillMs)}/{dungeon.HoldSkillMs} ms)";
+            _waitUntil = Math.Min(holdUntil, now + 250);
+            return false;
+        }
+
+        ReleaseHeldSkill();
+        _holdUntil = null;
+        if (dungeon.CtrlSkill)
+        {
+            Thread.Sleep(CtrlSkillGapMs);
+            _input.CtrlKeyTap(dungeon.SkillKey);
+        }
+
+        return true;
+    }
+
+    /// <summary>
     /// Stage 5, the boss in view (user, 2026-10-27: "Attack Hold skill, then do 10x attack (total
     /// 11); check if has attack succeeded, then auto hunt then click on the boss"): press 1 holds
     /// the skill key down for <c>HoldSkillMs</c> (the character runs at the target and keeps
@@ -3397,22 +3507,10 @@ public sealed partial class AutomationPilot
 
         // Press 1 = the hold: the key is down between two ticks, so Stop / a phase change can let
         // go of it (ReleaseHeldSkill) and the preview keeps running.
-        if (_holdUntil is long holdUntil)
+        if (_holdUntil != null)
         {
-            if (now < holdUntil)
-            {
-                _detail = $"holding '{dungeon.SkillKey}' ({now - (holdUntil - dungeon.HoldSkillMs)}/{dungeon.HoldSkillMs} ms)";
-                _waitUntil = Math.Min(holdUntil, now + 250);
+            if (!TickHeldSkill())
                 return;
-            }
-
-            ReleaseHeldSkill();
-            _holdUntil = null;
-            if (dungeon.CtrlSkill)
-            {
-                Thread.Sleep(CtrlSkillGapMs);
-                _input.CtrlKeyTap(dungeon.SkillKey);
-            }
 
             _manualPresses = 1;
             _lastManualPressAt = Environment.TickCount64;
@@ -3461,17 +3559,7 @@ public sealed partial class AutomationPilot
 
             if (_manualPresses == 0 && hold)
             {
-                if (!_input.KeyDown(dungeon.SkillKey))
-                {
-                    _detail = "skill key blocked - waiting for the game to be in front";
-                    _waitUntil = now + 300;
-                    return;
-                }
-
-                _heldSkill = dungeon.SkillKey;
-                _holdUntil = Environment.TickCount64 + dungeon.HoldSkillMs;
-                _detail = $"holding '{dungeon.SkillKey}' (0/{dungeon.HoldSkillMs} ms)";
-                _waitUntil = now + 250;
+                StartHeldSkill();
                 return;
             }
 
@@ -3551,7 +3639,7 @@ public sealed partial class AutomationPilot
     /// <summary>Stage 5: the autohunt may select the boss and attack it by hand this many times in a row before the pilot goes back to the Tab wait.</summary>
     private const int MaxManualRounds = 3;
 
-    /// <summary>Stage 5: after J, attack lines this old are the manual attacks' own late hits, not the autohunt's.</summary>
+    /// <summary>After J: attack lines this old are the held press' / manual attacks' own late hits, not the autohunt's (stage 5, and stages 1-4 with HoldBeforeAutohunt).</summary>
     private const int AutohuntSettleMs = 1000;
 
     /// <summary>

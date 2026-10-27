@@ -817,9 +817,18 @@ public sealed class DungeonSettings
     /// <summary>
     /// Stage 5: the first manual attack holds the skill key down this long (user, 2026-10-27: the
     /// character "didn't get near or inside the boss" with taps alone - a held skill keeps it running
-    /// at the target). 0 = no hold, taps only. UI "Hold skill (ms)".
+    /// at the target); stages 1-4 hold it this long before the autohunt (<see cref="HoldBeforeAutohunt"/>).
+    /// 0 = no hold: taps only on stage 5, J right after the spawn wait on stages 1-4. UI "Hold skill (ms)".
     /// </summary>
     public int HoldSkillMs { get; set; } = 3000;
+
+    /// <summary>
+    /// Stages 1-4: with the boss in view, hold the skill key (<see cref="HoldSkillMs"/>) once before
+    /// the autohunt goes on, then J and the select clicks (user, 2026-10-27: "on other stages, before
+    /// going autohunt, try to skill hold first"). Off = J right after the spawn wait, as before. UI
+    /// "Hold skill before autohunt (stages 1-4)".
+    /// </summary>
+    public bool HoldBeforeAutohunt { get; set; } = true;
 
     /// <summary>At least this long between two skill presses (user, 2026-10-26: 300 ms or more).</summary>
     public int ManualAttackIntervalMs { get; set; } = 300;
