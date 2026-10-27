@@ -29,9 +29,9 @@ Everything it does is drawn on its preview and written to its log.
 ## Two modes (the Mode drop-down above Start)
 
 * **AutoLaby** - The Labyrinth (Adept): 4 stages + Sacred Sky Lord, back to your home town, repeat.
-* **AutoLod** - Ultimate Den of Rebirth: turns south, then stays where the teleport put you and presses
-  Tab until the boss **Bai Gu Great** shows (setting "Walk to the boss spot (LOD)" walks to it instead, the
-  old way), then spams skill `1` until it is dead (it auto-buffs with `O` on arrival and every ~5 min). After the first hit of
+* **AutoLod** - Ultimate Den of Rebirth: turns south, walks a little forward to 1199, 1782 and waits there,
+  pressing Tab until the boss **Bai Gu Great** shows (untick "Walk to the boss spot (LOD)" to stay where
+  the teleport put you), then spams skill `1` until it is dead (it auto-buffs with `O` on arrival and every ~5 min). After the first hit of
   each fight it stops attacking, Ctrl+clicks the pink ring round the boss's feet to walk up to
   it, then attacks again (setting "Walk up to the boss (LOD)"); after that it checks every 3 s and walks
   back to the ring whenever the character is off it. The attack is stopped with **Shura**:

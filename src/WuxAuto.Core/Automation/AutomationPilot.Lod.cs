@@ -6,12 +6,13 @@ using LogLevel = WuxAuto.Core.LogLevel;
 namespace WuxAuto.Automation;
 
 /// <summary>
-/// Auto LOD (user, 2026-10-21): teleport to the Ultimate Den of Rebirth, face south, press Tab where
-/// the teleport put the character (since 2026-10-27; <see cref="LodSettings.WalkToBossSpot"/> walks to
-/// the boss spot meanwhile, as before), and once "Bai Gu Great..." is targeted spam the skill key until
-/// it is dead. The boss respawns, so the map is unlimited until its timer runs out and the game sends
-/// the character to town (user) - the zone guard then teleports in again. Killed by the boss, the
-/// character is put back at the map's starting point: face south and Tab (or walk in) again.
+/// Auto LOD (user, 2026-10-21): teleport to the Ultimate Den of Rebirth, face south, walk forward to
+/// 1199,1782 pressing Tab and wait there tabbing (<see cref="LodSettings.WalkToBossSpot"/>, since
+/// 2026-10-28; off = stay where the teleport put the character), and once "Bai Gu Great..." is
+/// targeted spam the skill key until it is dead. The boss respawns, so the map is unlimited until its
+/// timer runs out and the game sends the character to town (user) - the zone guard then teleports in
+/// again. Killed by the boss, the character is put back at the map's starting point: face south and
+/// walk in (or Tab) again.
 /// </summary>
 public sealed partial class AutomationPilot
 {
@@ -446,8 +447,9 @@ public sealed partial class AutomationPilot
     }
 
     /// <summary>
-    /// Tab every TabEveryMs until the boss name shows. By default the character stays where it is
-    /// (user, 2026-10-27); with <see cref="LodSettings.WalkToBossSpot"/> it walks to the boss spot meanwhile.
+    /// Tab every TabEveryMs until the boss name shows. With <see cref="LodSettings.WalkToBossSpot"/> (on)
+    /// the character walks to the boss spot meanwhile and waits there (user, 2026-10-28: 1199,1782);
+    /// off, it stays where it is (user, 2026-10-27).
     /// </summary>
     private async Task TickLodRunAsync(Mat frame)
     {

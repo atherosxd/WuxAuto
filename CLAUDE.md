@@ -130,7 +130,7 @@ words and the map scroll-arrow result. `--crop` writes `<frame>.crop.png` next t
 Core tests and the refactor parity gate (M1, 2026-10-27):
 
 ```powershell
-dotnet test tests\WuxAuto.Core.Tests        # xUnit, platform-free Core only (23 tests, ~20 s; the pilot tests tick a
+dotnet test tests\WuxAuto.Core.Tests        # xUnit, platform-free Core only (27 tests, ~20 s; the pilot tests tick a
                                            # blank Mat with a scripted OCR scene - see tests/ in section 3)
 # probe baseline: runs every SelfTest probe over a frozen, local-only frame set (never committed)
 # and writes normalised output; run it before and after a refactor and diff the two
@@ -204,8 +204,10 @@ tests/WuxAuto.Core.Tests    xUnit tests of Core (AppPathsTests, which round-trip
                             asked, FakeGameInput records every call - and asserts the input order: hold on → Tab, KeyDown/KeyUp 1,
                             Ctrl+1, J, centre click, "boss selected on click 1" → WatchBoss; hold off → J, Tab, click. No templates
                             (AppPaths points at an empty temp root), so the boss is found by name; needs OpenCvSharp4.runtime.win
-                            in the test project; LodStandStillTests: the same doubles from `Start(LodRun)` in AutoLod - only
-                            Tab until "[LOD] Bai Gu Great" reads, then LodAttack; `WalkToBossSpot` on → a walk click;
+                            in the test project; LodStandStillTests: the same doubles from `Start(LodRun)` in AutoLod -
+                            defaults: a walk click from 1195,1578, then at 1201,1760 "the boss spot" and only Tab;
+                            `WalkToBossSpot` off → only Tab until "[LOD] Bai Gu Great" reads, then LodAttack;
+                            SettingsMigrationTests: an edited settings.json loaded back (v22: LOD walk on, 1191,2413 → 1199,1782);
                             LodRingCheckTests: a pink ellipse drawn on the frame, the log gains a hit per skill tap - ring far →
                             2 Ctrl+clicks, then "Ring check 1" and a 3rd, each after Shura's key; ring underfoot → 1 click only;
                             `RingCheckEveryMs` 0 → 2 only; ring + a cyan "belt" gone / shown after the click → "under the boss", 1 click; a cyan "belt" after the
@@ -449,16 +451,27 @@ the name — `ZoneMatches` — so a plain "[Den of Rebirth]" cannot pass) → zo
 minimap background. It was first turned 180° by mistake (I misread its orientation from pixel
 brightness) and the pilot "lined up" facing north at ~0.82 — user caught it. flashlight3 only reached
 0.78; the arrival heading is about WSW) →
-`LodRun`: **stands still** where the teleport put the character and taps Tab every `Lod.TabEveryMs` (1.5 s)
+`LodRun`: **walks forward to 1199, 1782** and waits there, tapping Tab every `Lod.TabEveryMs` (1.5 s) all along
 → name **`Lod.BossName` "Bai Gu Great"** on screen → `LodAttack`: spam `Dungeon.SkillKey` every 0.3 s — or hold it down (`Lod.HoldSkill`, "Hold skill (LOD)"; released on every phase change, Stop, panic and failure) — Tab when the name is missing.
-* **Stand still, no walk** (user, 2026-10-27: "instead of trying to go to the Center of the map, stay still
-  on the same place upon teleport. just keep tabbing until the boss name shows. but retain the rotate to
-  south so you will be able to target on the ring"): `LodRun` sends no clicks and reads no coordinates; the
-  south turn on arrival / after a respawn stays. `Lod.WalkToBossSpot` (off, check box "Walk to the boss
-  spot (LOD)"; a saved file without it loads off) brings back the old walk: SimpleSteer with `_headingBase`
-  = π (screen-up = world-south) towards **1191, 2413** (`Lod.TargetX/Y`, tolerance 60) while tabbing.
-  Pinned offline by `tests/WuxAuto.Core.Tests/LodStandStillTests` (only Tab until the name, then
-  `LodAttack`; the switch on → a walk click). Not yet seen live.
+* **Walk forward to 1199, 1782, then wait** (user, 2026-10-28: "sometimes the boss doesn't go near the
+  char. move the character forward to 1199, 1782" ... "that is after facing south"; `Lod.WalkToBossSpot`
+  **on** + `Lod.TargetX/Y` **1199, 1782**, tolerance 60; settings v22 turns the walk on and moves the old
+  1191, 2413 default - a spot set by hand stays): after the south turn (arrival, respawn, a kill / lost
+  target → `LodRun`) SimpleSteer with `_headingBase` = π (screen-up = world-south) walks there while
+  tabbing, then `At x, y, the boss spot - tabbing ...` and only Tab; drifted off → walks back. The
+  teleport lands at **1195, 1578** (5 of the 6 LOD walks in the logs of 2026-10-22/24; one 1201, 1530), so it is ~204 units
+  straight south, 2-3 clicks (those walks made 80-140 units a click); the boss was fought at ~1212, 1775
+  on 2026-10-24. The boss name seen at any point → attack, the walk stops. **Death check:** a death puts
+  the character back at ~1195, 1578, only ~200 from a fight at the spot - less than `Lod.TeleportJump`
+  (400), so the coordinate jump may not see it (no `killed by the boss?` line in any log so far); the lost
+  target then most likely reads as "gone 2 s" → loot → `LodRun`, and the walk brings it back, without the
+  respawn buff. Lowering `TeleportJump` risks a running chase reading as a death (~100 units/s).
+  History: until v0.15 the walk went to 1191, 2413 (the middle of the map); v0.16/0.17 stood still where the teleport landed (user,
+  2026-10-27: "stay still on the same place upon teleport ... retain the rotate to south so you will be
+  able to target on the ring") - check box "Walk to the boss spot (LOD)" off brings that back (no clicks,
+  no coordinate reads). Pinned offline by `tests/WuxAuto.Core.Tests/LodStandStillTests` (defaults: from
+  1195, 1578 a walk click, then at 1201, 1760 only Tab; off: only Tab until the name, then `LodAttack`)
+  and `SettingsMigrationTests` (v22). The walk to 1199, 1782 itself is not yet seen live.
 * **Ctrl + skill key** (user, 2026-10-26: "when manually attacking couple it with ctrl+ skill key";
   `Dungeon.CtrlSkill` on, check box "Ctrl + skill key too"): every press of the spam is `TapSkill` =
   the plain key, 60 ms (`CtrlSkillGapMs`), then `WindowInput.CtrlKeyTap` (Ctrl down, 40 ms, key tap,

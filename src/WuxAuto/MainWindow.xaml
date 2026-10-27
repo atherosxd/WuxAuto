@@ -403,7 +403,7 @@
                                 <CheckBox Content="Walk up to the boss (LOD)" IsChecked="{Binding Settings.Lod.ApproachBoss}"
                                           ToolTip="Auto LOD: after the first hit, stop attacking (Shura, else Space) and Ctrl+click the pink ring round the boss's feet, then attack again. After that the ring is checked every 3 s: the character off it -> Shura and Ctrl+click it again." />
                                 <CheckBox Content="Walk to the boss spot (LOD)" IsChecked="{Binding Settings.Lod.WalkToBossSpot}"
-                                          ToolTip="Auto LOD: after the south turn, walk to 1191,2413 pressing Tab (the old way). Off = stay where the teleport put the character and press Tab until the boss shows." />
+                                          ToolTip="Auto LOD: after the south turn, walk forward to 1199,1782 pressing Tab and wait there until the boss shows. Off = stay where the teleport put the character and press Tab." />
                                 <CheckBox Content="TAB target: Default" IsChecked="{Binding Settings.Sequence.TabTargetDefault}"
                                           ToolTip="On Start in town, with the font size: the game's Settings > VISUAL > TAB target is set to Default and saved." />
                                 <CheckBox Content="Autohunt off in town" IsChecked="{Binding Settings.Sequence.AutohuntOffInTown}"
