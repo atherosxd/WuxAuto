@@ -184,19 +184,29 @@ home it teleports back to the **same cave and the same monster**, turns the auto
 1. Put the character in the cave you want it to hunt in. That cave must be on **page 3** of the teleport scroll
    (setting `War > ListPage`), and the autohunt on. Bind the game, pick **Auto War**, press **Start**.
 2. At Start the pilot checks the screen and stops with a message (it never guesses) when: you are not in a cave; the
-   cave's name could match **two** entries on page 3; the monster cannot be confirmed in the map's monster list; or the
+   cave's name could match **two** entries on page 3; the monster cannot be confirmed in the map's monster list (the row
+   must carry the whole name - "Goblin" is never the "Goblin Elite" row - and only one row may); or the
    six war buff icons (`warbuff1`-`warbuff6`), the **Shura** icon, or the war keys (skill, target, autohunt, inventory,
    Shura) are not on the skill bar / not set. Everything must be there.
 3. It then reads the time to the next war from **Menu (the button at the top centre) > Tribe Status**, closes those
    windows, waits, and 10 s before the war (`Lead time`) turns the autohunt off and clicks OK on the war dialog.
    Inside it sets the game's TAB target to **Enemy worth CP**, buffs (auto-buff key `O` or the six icons one by one,
    again every 5 min 45 s), then repeats: Tab to an enemy, the X buff, hold Shura, attack until the target is gone.
-   It watches the HP numbers (top left) and rebuffs after a death. When the war is over it goes back as above.
+   It watches the HP numbers (top left) and rebuffs after a death. When the war is over it goes back as above - at most
+   3 times in 30 min without a war in between (a cave that keeps sending the character to town would otherwise cost a
+   teleport every round); then it stops.
 4. Safety: it never clicks a guessed spot to close a window (a window whose X it cannot read stays open, with a
-   warning); it reads the screen only while the game window is in front; the Bohai dialog is never cancelled in this
-   mode. One game per WuxAuto - do not run it next to a Laby / LOD client on the same PC. It does not walk inside Bohai.
+   warning); every war step that reads the screen waits while the game window is behind another window (a second game
+   client's war dialog, map or combat log is never taken for its own) - only the teleport-scroll steps and logging back
+   in keep reading then, and they cannot send anything until the game is in front; the Bohai dialog is never cancelled
+   in this mode. One game per WuxAuto - do not run it next to a Laby / LOD client on the same PC. It does not walk
+   inside Bohai.
 5. Settings (Settings panel > Auto War): **Shura hold (ms)**, **Rebuff every (ms)**, **Lead time (ms)**, **TAB target**,
    and the read-only **Back to** line (the saved cave and monster). The rest is in `settings.json` under `War`.
+
+**Upgrade note:** once Auto War is chosen, `settings.json` holds `"Mode": "AutoWar"`, which a WuxAuto from before Auto War
+cannot read - it starts with the default settings and saves them on close, and your Laby / LOD settings are gone. On a PC
+where an older copy shares `settings.json` (`%LOCALAPPDATA%\WuxAuto`), update every installed copy first, then choose Auto War.
 
 **Not verified yet - no live war has been run.** Everything inside Bohai (the minimap title, "Gate is Open", enemy
 players in the target box, HP 0 and the revive), the buff icons on a real skill bar, the Menu close geometry and whether

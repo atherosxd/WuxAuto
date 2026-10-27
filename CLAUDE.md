@@ -732,7 +732,9 @@ do not run); the 5 s Bohai-dialog Cancel is skipped in this mode (the OK is what
   Opens the teleport list on page 3 (`ListPage`), picks the entry that fits the minimap title (`WarText.BestListEntryFolded`:
   case-blind, I/l/1/| and O/0 folded; **two caves that fit = ambiguous = stop, never a guess**; 3 reads then stop), closes
   the list with its X, `Tab`s (<= 3) for the monster, **confirms the name against the map window's monster list** (a
-  player's name can never be saved), saves `War.HomeMap` / `War.HomeMonster` (settings.json; read-only "Back to:" line in the UI).
+  player's name can never be saved; the row whose **whole name column** is the name - `WarText.MonsterRows`, see Back - and
+  the list's spelling is saved), saves `War.HomeMap` / `War.HomeMonster` (settings.json; the read-only "Back to:" line in the
+  UI refreshes through `ModeChanged`, "(not set yet - press Start in the cave)" while empty).
   Start inside Bohai -> straight to the enter step with the saved spot; in a home town with a saved spot -> `WarBack`; else stop.
 * **Wait (`WarWait`, `.WarTimer.cs`).** The menu is the ☰ button at the top centre (`menubutton.png`; **no key**) ->
   "Tribe Status" tile (`MenuTileText`) -> row `TribeRowText` "Bohai Outpost (Adept)" -> `hh:mm:ss` or `In progress`;
@@ -742,7 +744,15 @@ do not run); the 5 s Bohai-dialog Cancel is skipped in this mode (the OK is what
   before zero and every ~15 min; `In progress` every ~5 min; 3 unreadable -> `tribe_unread`. Only reads the screen with the game in front.
 * **Join (`WarJoin`).** `LeadMs` (10 s) before zero: autohunt off, confirmed in the combat log (`EnsureAutohuntOffAsync` logic);
   the WAR dialog (Auto confirm's `FindConfirmDialogAsync`, gold OK) is polled <= 1 s; none within `DialogWaitMs` (2 min) -> autohunt
-  on again, back to the wait. Then the load and the minimap title "Bohai Outpost" (`Destination`, 60 s).
+  on again, back to the wait. Then the load and the minimap title "Bohai Outpost" (`Destination`, 60 s). The 5 s whole-screen
+  check also watches for the dialog in `WarWait` / `WarRemember` (not once the remember step has its monster confirmed: that tick
+  saves the spot first). Only with the game in front: the dialog wait runs on the war clock (`FrontClock`) and stands still behind
+  another window.
+* **Game in front.** Every Auto War step that reads the screen waits while the game window is behind another window
+  (`WarInFront`: the timer read's steps, the join, the autohunt at the monster, the Settings visit and everything in Bohai; the map
+  pick through the zone guard; the 5 s whole-screen check is skipped) - a second game client's dialog, map or log is never read as
+  ours. The shared teleport steps (inventory, scroll, list pages, load) and the re-login still read, but send nothing then
+  (input is refused while the game is behind).
 * **Enter / buff (`WarEnter`, `WarBuff`).** Settings visit sets TAB target to `TabTargetOption` ("Enemy worth CP"; the shared
   FontSize phase takes the wanted option and steps the chevrons by `TabTargetOptions.StepsTo`; Laby/LOD still ask for Default; left
   as is after the war). Autobuff? "[Auto buff scroll]" in the item list, else `S` + the AUTO BUFF title (closed with its X, then the
@@ -756,11 +766,20 @@ do not run); the 5 s Bohai-dialog Cancel is skipped in this mode (the OK is what
   **alive max** (the "0/3000" bar and the MP line never count; the alive max is learned from agreeing reads, a raise is capped at 1.5x
   and warned once). Unreadable = alive (`war_hp_unread` after 10 s). Dead: release keys, wait for HP > 0, rebuff, fight; 30 s dead -> `war_dead`.
 * **Back (`WarBack`, `WarArrive`, `WarHuntOn`).** Home town (or the cave itself, or any other zone read 3x -> `wrong_zone`) = war over:
-  scroll -> page 3 -> the **exact** saved entry (`SameZone`; "[Dark Soul Cave IX]" must not pass for "[...X]"), twice in town -> stop; map icon -> the saved
-  monster -> `>` (the Laby pick with a monster name); wait for the combat-log line "Arrived: <monster>" (`ArrivedText`; **new lines only** - an old one
-  from an earlier trip is ignored; 90 s then carry on); `J` confirmed by "Auto hunt started" (<= 3 taps) -> back to `WarWait`.
-* Restart / reconnect land by zone: cave -> wait (autohunt may be off after a re-login - nothing turns it on until the next war), Bohai -> enter, town -> back.
+  scroll -> page 3 -> the **exact** saved entry (`SameEntry`; "[Dark Soul Cave IX]" must not pass for "[...X]"), twice in town -> stop; map icon -> the saved
+  monster's row -> `>` (the Laby pick, but the row is `WarText.MonsterRows`: the OCR line whose **whole name column** - the words before the Lv / Spawns
+  numbers, a one-letter marker dropped - is the name, same `FoldedKey` or >= 0.90 and not longer: "Goblin" never clicks the "Goblin Elite" row, which the best
+  single word did, and "Cave Bat" is found; two such rows = stop, never a guess); wait for the combat-log line "Arrived: <monster>" (`ArrivedText`; **new lines
+  only** - an old one from an earlier trip is ignored; 90 s then carry on); `J` confirmed by "Auto hunt started" (<= 3 taps) -> back to `WarWait`. At most
+  **3 trips back in 30 min without a war in between** (`WarReturnAllowed`; `BeginWarEnter` clears the count), then stop - a cave that takes the teleport but
+  sends the alt back to town would loop, a teleport a round.
+* Restart / reconnect land by zone: the saved cave -> `WarHuntOn` (the autohunt on, read-confirmed) -> wait; Bohai -> enter; town -> back. After a re-login
+  the reconnect counts the war map or any zone title on the minimap as back in (`WarReloginZone`; the cave is `Destination`, but a re-login during the war
+  lands in Bohai), not while a login screen still shows.
   Dry run never clicks the dialog OK, so `WarEnter` times out (60 s) and restarts - expected.
+* **Upgrade note (settings across versions).** Once settings.json holds `"Mode": "AutoWar"`, a build from before Auto War throws on the unknown
+  enum name in `Load`, falls back to the defaults and saves them on close - the Laby/LOD settings are gone. Release and update every installed copy
+  before choosing Auto War on a PC where an older copy shares settings.json (`%LOCALAPPDATA%\WuxAuto`). The loader is not changed: old builds cannot be fixed.
 
 **Probe numbers (Task 4, 561 saved frames, none from Bohai):** `--hp` 511 read (508 white-text + 3 plain fallback), none reads 0/N; `--target` 114 named,
 119 with the treasure chest; menu button score lowest real game frame 0.836 (1440x900), highest non-game 0.451, `MenuButtonScore` **0.70**;
@@ -773,7 +792,8 @@ the **MENU close geometry** (from faint glyphs on one screenshot; a window whose
 TRIBE STATUS X at other resolutions (one 795x829 crop); the AUTO BUFF X as a bright blob; the "Regular War" label in the autohunt settings; page 3 of the teleport list at other
 resolutions; the X of the TELEPORT SCROLL (closing it costs no scroll, and whether the inventory stays open); the wording "Arrived: <monster>"; "Auto hunt started" in a cave;
 "1F" vs "IF" in cave names (folded, but unseen). Known limits: buffs more than doubling max HP hide a death; the Settings visit (shared FontSize phase) has no War zone check;
-a war dialog during `WarRemember` joins before the spot is saved (the return then stops instead of guessing); a war dialog while a timer read has a window open can leave it open.
+a war dialog during `WarRemember` before the monster is confirmed joins before the spot is saved (the return then stops instead of guessing) - once it is
+confirmed, the dialog watch waits for the save; a war dialog while a timer read has a window open can leave it open.
 Each part logs what it saw and saves `war_*` snapshots (<= 3 per tag per Start) - the first live war gives the frames to tune from.
 
 ## 6. Settings and persistence — read this before changing defaults
@@ -829,7 +849,7 @@ Dry run on in the real settings).
 | `AutohuntStallMs` | 15000 | stage 5 `WatchBoss`: autohunt on, boss up, no new attack line this long → `J` off, select and attack by hand again (`stall_s5`; user, 2026-10-27); clamp 3000–120000 |
 | `HoldBeforeAutohunt` | true | stages 1–4: hold the skill key once on the boss in view before `J` (user, 2026-10-27: "on other stages, before going autohunt, try to skill hold first"; UI "Hold skill before autohunt (stages 1-4)"); off = `J` in `WaitBoss` right after the spawn wait. New bool, a saved file without it loads `true` — no migration |
 | `CtrlSkill` | true | every manual skill press (stage 5: the held press and the `ManualAttacks` taps; stages 1–4: the held press before `J`; LOD skill spam) = the skill key, then Ctrl + skill key (user, 2026-10-26); with `Lod.HoldSkill` the held key is let go for a Ctrl tap every `Lod.SkillEveryMs`. New property, so a saved file without it loads `true` — no migration (checked on this PC's settings.json) |
-| `War.*` (`WarSettings`; UI block "Auto War": Shura hold, Rebuff every, Lead time, TAB target, read-only "Back to") | see right | `Destination` "Bohai Outpost" (teleport list entry + minimap zone), `TribeRowText` "Bohai Outpost (Adept)", `MenuTileText` "Tribe Status", `LeadMs` 10000 (user: 10 s before zero), `DialogWaitMs` 120000, `TabTargetOption` "Enemy worth CP" (user), `BuffIcons` warbuff1...warbuff6, `XBuffIcon` warbuff4, `BuffClickGapMs` 1000, `BuffEveryMs` 345000 (user: 5 min 45 s), `ShuraHoldMs` 1200, `TargetGoneMs` 2000, `GateText` "Gate is Open", `ListPage` 3, `ArrivedText` "Arrived", `ArriveWaitMs` 90000, `IconMatchScore` 0.90, `HomeMap` / `HomeMonster` "" (written by Start's remember step). New block, no version bump; keys are reused (`Dungeon.SkillKey` / `CtrlSkill` / `AutohuntKey` / `TabKey`, `Lod.ShuraKey` / `BuffKey`, `Sequence.AutohuntSettingsKey`) |
+| `War.*` (`WarSettings`; UI block "Auto War": Shura hold, Rebuff every, Lead time, TAB target, read-only "Back to") | see right | `Destination` "Bohai Outpost" (teleport list entry + minimap zone), `TribeRowText` "Bohai Outpost (Adept)", `MenuTileText` "Tribe Status", `LeadMs` 10000 (user: 10 s before zero), `DialogWaitMs` 120000, `TabTargetOption` "Enemy worth CP" (user), `BuffIcons` warbuff1...warbuff6, `XBuffIcon` warbuff4, `BuffClickGapMs` 1000, `BuffEveryMs` 345000 (my call: 5 min 45 s; the user's buffs last at least 6 min), `ShuraHoldMs` 1200, `TargetGoneMs` 2000, `GateText` "Gate is Open", `ListPage` 3, `ArrivedText` "Arrived", `ArriveWaitMs` 90000, `IconMatchScore` 0.90, `HomeMap` / `HomeMonster` "" (written by Start's remember step). New block, no version bump; keys are reused (`Dungeon.SkillKey` / `CtrlSkill` / `AutohuntKey` / `TabKey`, `Lod.ShuraKey` / `BuffKey`, `Sequence.AutohuntSettingsKey`) |
 | `HomeTowns` | Piercing City, Molten City, Wandering City | every clan's home town (user, 2026-10-21): any of them on the minimap = "in town" (zone guard, LOD kill, stage 5 closed, still-in-town, re-login); the one seen (`TownIn`, remembered per Start) is where the return teleport goes |
 | `ReturnDestination` | `Piercing City` | fallback until a home town has been seen; after stage 5: `J` (autohunt off) → teleport scroll there → `Done`; only then may `Loop` start the next run |
 | `RunClickPx` / `RunStepWaitMs` / `RunMaxSteps` | 200 / 1500 / 200 | final run steering |
