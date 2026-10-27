@@ -301,17 +301,22 @@ public sealed class LodSettings
     public string BossName { get; set; } = "Bai Gu Great";
 
     /// <summary>
-    /// Walk to <see cref="TargetX"/>/<see cref="TargetY"/> after the south turn, pressing Tab (UI "Walk
-    /// to the boss spot (LOD)"). Off (default; user, 2026-10-27: "instead of trying to go to the center
-    /// of the map, stay still on the same place upon teleport, just keep tabbing until the boss name
-    /// shows"): the character stays where it is and Tab is pressed every <see cref="TabEveryMs"/>. The
-    /// south turn happens either way (user: so the ring round the boss's feet can be targeted).
+    /// Walk to <see cref="TargetX"/>/<see cref="TargetY"/> after the south turn, pressing Tab, then
+    /// wait there tabbing (UI "Walk to the boss spot (LOD)"; on, settings v22). User, 2026-10-28:
+    /// "sometimes the boss doesn't go near the char. move the character forward to 1199, 1782 ...
+    /// after facing south" - the teleport lands at ~1195,1578. Off (user, 2026-10-27: "stay still on
+    /// the same place upon teleport, just keep tabbing until the boss name shows"): the character stays
+    /// where it is and Tab is pressed every <see cref="TabEveryMs"/>. The south turn happens either way
+    /// (user: so the ring round the boss's feet can be targeted).
     /// </summary>
-    public bool WalkToBossSpot { get; set; }
+    public bool WalkToBossSpot { get; set; } = true;
 
-    /// <summary>Where to walk to with <see cref="WalkToBossSpot"/>; the boss is near and may come to the character.</summary>
-    public int TargetX { get; set; } = 1191;
-    public int TargetY { get; set; } = 2413;
+    /// <summary>
+    /// Where to walk to with <see cref="WalkToBossSpot"/> (user, 2026-10-28; the boss fought at ~1212,1775
+    /// on 2026-10-24). Until v22 it was 1191,2413, the middle of the map.
+    /// </summary>
+    public int TargetX { get; set; } = 1199;
+    public int TargetY { get; set; } = 1782;
     public int TargetTolerance { get; set; } = 60;
 
     /// <summary>Tab while waiting for the boss (or walking to it; user: every 1-2 s).</summary>

@@ -42,7 +42,7 @@ public static class AppPaths
 public static class SettingsStore
 {
     /// <summary>Bump when an existing settings.json must be migrated (see <see cref="Migrate"/>).</summary>
-    private const int CurrentVersion = 21;
+    private const int CurrentVersion = 22;
 
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
@@ -173,6 +173,19 @@ public static class SettingsStore
         // v21: the stage 5 attack is one held press + 10 taps (user, 2026-10-27); the v20 15 becomes 10.
         if (s.Version < 21 && s.Dungeon is { ManualAttacks: 15 })
             s.Dungeon.ManualAttacks = 10;
+
+        // v22: Auto LOD walks forward to 1199,1782 after the south turn and waits there (user,
+        // 2026-10-28: "sometimes the boss doesn't go near the char"). The old 1191,2413 default moves;
+        // a spot set by hand stays.
+        if (s.Version < 22 && s.Lod != null)
+        {
+            s.Lod.WalkToBossSpot = true;
+            if (s.Lod is { TargetX: 1191, TargetY: 2413 })
+            {
+                s.Lod.TargetX = 1199;
+                s.Lod.TargetY = 1782;
+            }
+        }
 
         s.Version = CurrentVersion;
         return true;
