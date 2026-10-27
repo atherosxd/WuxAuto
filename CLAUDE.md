@@ -10,7 +10,8 @@ earlier history exists only in this file.
 
 `WuxAuto` is a **.NET 10 / WPF** pilot for the game window `Wuxen2.exe` (TwelveSky2, Unity port).
 It captures the game with the **Desktop Duplication API**, finds UI elements with **OpenCV template
-matching + Windows.Media.Ocr**, and sends **keyboard/mouse input only to the bound window**.
+matching (through Emgu CV 5) + Windows.Media.Ocr**, and sends **keyboard/mouse input only to the
+bound window**.
 
 The automation goal:
 
@@ -40,9 +41,13 @@ dotnet build .\WuxAuto.slnx
 .\src\WuxAuto\bin\Debug\net10.0-windows10.0.19041.0\WuxAuto.exe
 ```
 
-Another PC: `.\publish.ps1` → `dist\WuxAuto-win-x64.zip` (self-contained, no .NET install; the
-unused `opencv_videoio_ffmpeg` DLL is dropped). `App.OnStartup` runs `Core/StartupCheck` (desktop project) before
-the window: Media Foundation DLLs (imported by `OpenCvSharpExtern.dll` — missing on Windows N and
+Another PC: `.\publish.ps1` → `dist\WuxAuto-win-x64.zip` (self-contained, no .NET install; Emgu CV's
+native `cvextern.dll` and the MSVC runtime are kept once, next to the exe — the second copies the
+runtime packages' build targets add under `runtimes\win-x64\native` made the process load
+`cvextern.dll` twice and are dropped, as is the unused `opencv_videoio_ffmpeg` plugin; the script
+fails unless exactly one `cvextern.dll` is left; `LICENSE` goes in as `LICENSE.txt`).
+`App.OnStartup` runs `Core/StartupCheck` (desktop project) before the window: Media Foundation
+DLLs (`MF.dll`, `MFPlat.DLL`, `MFReadWrite.dll`, imported by `cvextern.dll` — missing on Windows N and
 trimmed "lite" builds such as Ghost Spectre; fatal), OpenCV load (fatal), English OCR and build
 ≥ 19041 (warnings). Report → `logs\startup_check_*.txt`, unhandled errors → `logs\crash_*.txt`.
 `StartupUri` was removed: `App` creates `MainWindow` itself so a failed start exits instead of
@@ -64,7 +69,7 @@ Package for someone else (self-contained, no .NET needed; `src/WuxAuto/Assets/Qu
 the zip's top-level `README.md`):
 
 ```powershell
-.\publish.ps1     # -> dist\build\WuxAuto\ (the build), dist\WuxAuto-win-x64.zip (~93 MB) and dist\WuxAuto\
+.\publish.ps1     # -> dist\build\WuxAuto\ (the build), dist\WuxAuto-win-x64.zip (~76 MB) and dist\WuxAuto\
                   # (refreshed from the build only while no WuxAuto.exe runs from it - the user's live
                   # copy lives there and updates itself from the release; 2026-10-27 a release died on
                   # "Access to the path '...\dist\WuxAuto\Accessibility.dll' is denied" mid-run, and
@@ -118,7 +123,7 @@ dotnet run --project .\tests\WuxAuto.SelfTest -- --alert <file>
 # auto-confirm dialog (message line + OK button) for every PNG (absolute path; tests\frames holds the user's crop)
 dotnet run --project .\tests\WuxAuto.SelfTest -- --confirm "$env:LOCALAPPDATA\WuxAuto\debug"
 
-# M2 parity: every pilot detector on the frozen legacy vision (tests\...\Legacy) vs Core's, per frame (~46 min; differences=0 to pass)
+# M2 parity: every pilot detector on the frozen legacy vision (tests\...\Legacy, OpenCvSharp 4.13) vs Core's (Emgu CV), per frame (~46 min; differences=0 to pass)
 dotnet run --project .\tests\WuxAuto.SelfTest -- --parity "$env:LOCALAPPDATA\WuxAuto\parity-frames"
 ```
 
@@ -183,7 +188,10 @@ src/WuxAuto.Core            net10.0 class library, platform-free (M1, 2026-10-27
                        in `WuxAuto.Input`. ScreenAnalyzer takes (and disposes) its IOcrEngine, the pilot takes
                        an IGameInput; `AutomationPilot.TickAsync(Mat, CancellationToken)` gets only the frame
   Vision/              TemplateMatcher, TemplateLibrary, ScreenAnalyzer, CompassDetector, OverlayRenderer,
-                       KillScreenshots, TextMatcher, VisionModels
+                       KillScreenshots, TextMatcher, VisionModels. OpenCV through Emgu CV 5.0 (M2): Core
+                       references only the managed `Emgu.CV`; each host adds the native runtime (desktop:
+                       `Emgu.CV.runtime.mini.windows`). CvHelpers supplies the OpenCV default
+                       arguments that Emgu leaves to the caller
   RULE: Core must stay OS-free - no WPF, WinRT, Win32/P-Invoke, System.Windows.*, registry. Anything
   that touches the OS goes behind a Platform/ interface and is implemented in the desktop project.
 src/WuxAuto                 WPF desktop app, references Core
@@ -198,7 +206,8 @@ src/WuxAuto                 WPF desktop app, references Core
   Interop/             NativeMethods, window enumeration, global hotkeys, process info
   Vision/              OcrService (Windows.Media.Ocr, implements IOcrEngine)
   ViewModels/, MainWindow.*   WPF UI
-tests/WuxAuto.SelfTest      offline probes (see above)
+tests/WuxAuto.SelfTest      offline probes (see above); Legacy/ = the frozen pre-port vision on OpenCvSharp
+                            4.13, only for `--parity`
 tests/WuxAuto.Core.Tests    xUnit tests of Core (AppPathsTests, which round-trips settings through SettingsStore; TextMatcherTests); `dotnet test`
 tests/probe-baseline.ps1    runs every SelfTest probe over a frozen frame set and writes normalised
                             output for before/after diffs (refactor parity check, section 2)
@@ -206,6 +215,7 @@ tests/WuxAuto.UiShot        renders the window to a PNG
 branding/                   wuxen2-source.png + make_icon.py -> WuxAuto-logo.png (README) and
                             src/WuxAuto/WuxAuto.ico (exe + window icon; "AUTO" drawn over "ONLINE")
 README.md                   user-facing documentation (kept up to date - read it too)
+LICENSE                     GPL-3.0 (gnu.org text); Emgu CV's open-source licence is the GPL v3
 ```
 
 Threading: `WuxEngine.VisionLoopAsync` owns capture → `AutomationPilot.TickAsync` → preview
@@ -851,9 +861,14 @@ Template scores seen on real 1024×768 frames:
 ## 10. Gotchas / hard-won lessons
 
 * **Settings JSON overrides defaults** — see §6. This is the single biggest time sink so far.
-* **OpenCvSharp ships only `win-x64` natives** — the app must stay `PlatformTarget x64` (it is).
-* **Do not `Marshal.Copy` into `mat.Data`** on this machine (Windows on ARM, x64 emulation) — it
-  crashed the CLR. Use `Mat.FromPixelData(...)` over a pinned buffer, and `.Clone()` for copies.
+* **The app stays x64** (`PlatformTarget x64`, `publish.ps1 -r win-x64`). Emgu CV's runtime package
+  also carries win-x86 and win-arm64 `cvextern.dll`, but only the win-x64 build is shipped and tested
+  (OpenCvSharp, used until the M2 port, had only win-x64 natives).
+* **Never write into a Mat's memory from managed code** on this machine (Windows on ARM, x64
+  emulation): `Marshal.Copy` into OpenCvSharp's `mat.Data` crashed the CLR. With Emgu CV a frame is a
+  Mat header over the pinned capture buffer (`new Mat(rows, cols, DepthType.Cv8U, 4, ptr, stride)`,
+  `WuxEngine`), pixels are read out through OpenCV (`CvHelpers.Bytes` = `Mat.CopyTo(byte[])`) or
+  copied *from* `DataPointer` (preview, OCR), and copies are `.Clone()`.
 * **Desktop Duplication cannot capture exclusive fullscreen**; the game must be windowed/borderless.
 * **Hybrid-GPU laptops:** the default adapter (dGPU) cannot duplicate a monitor wired to the iGPU
   (`DXGI_ERROR_UNSUPPORTED`), so the device must be created on the output's own adapter — and with an

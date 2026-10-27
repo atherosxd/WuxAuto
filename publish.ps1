@@ -28,11 +28,34 @@ dotnet publish (Join-Path $root 'src\WuxAuto\WuxAuto.csproj') `
     -c Release -r win-x64 --self-contained true -p:DebugType=none -o $build @versionArgs
 if ($LASTEXITCODE -ne 0) { throw "dotnet publish failed ($LASTEXITCODE)" }
 
-# OpenCV's video I/O plugin (27 MB) is only loaded by VideoCapture/VideoWriter, which the app does not use.
-Get-ChildItem $build -Filter 'opencv_videoio_ffmpeg*.dll' | Remove-Item -Force
+# Emgu CV's natives arrive twice in a win-x64 publish: NuGet puts the runtime packages' files next
+# to the exe (WuxAuto.deps.json lists them there) and their build targets copy the same files again
+# to runtimes\win-x64\native (cvextern.dll, the ffmpeg plugin, the MSVC runtime; ~50 MB). With both
+# present the process loads cvextern.dll twice: Emgu's loader takes the subfolder copy, while .NET
+# binds every P/Invoke to the one next to the exe. Without the subfolder Emgu loads that one too, so
+# the subfolder copies go (only the files that also sit next to the exe).
+$natives = Join-Path $build 'runtimes\win-x64\native'
+if (Test-Path $natives) {
+    Get-ChildItem $natives -File | Where-Object { Test-Path (Join-Path $build $_.Name) } | Remove-Item -Force
+}
+
+# OpenCV's video I/O plugin (opencv_videoio_ffmpeg*, ~30 MB) is only loaded by VideoCapture/VideoWriter,
+# which the app does not use.
+Get-ChildItem $build -Recurse -Filter 'opencv_videoio_ffmpeg*.dll' | Remove-Item -Force
+
+$runtimes = Join-Path $build 'runtimes'
+if ((Test-Path $runtimes) -and -not (Get-ChildItem $runtimes -Recurse -File)) { Remove-Item $runtimes -Recurse -Force }
+
+# Exactly one OpenCV native: the win-x64 cvextern.dll next to the exe (the app is x64 only).
+$cvextern = @(Get-ChildItem $build -Recurse -Filter 'cvextern.dll')
+if ($cvextern.Count -ne 1 -or $cvextern[0].DirectoryName -ne $build) {
+    throw "Expected one cvextern.dll, next to WuxAuto.exe; found: $(($cvextern | ForEach-Object FullName) -join ', ')"
+}
 
 # The quick start for whoever gets the zip goes on top, where it is seen first.
 Move-Item (Join-Path $build 'Assets\QuickStart.md') (Join-Path $build 'README.md') -Force
+# GPL-3.0: whoever gets the program gets the licence text with it.
+Copy-Item (Join-Path $root 'LICENSE') (Join-Path $build 'LICENSE.txt')
 
 # The zip holds one WuxAuto\ folder (the in-app updater accepts the exe at the root or one level down).
 Compress-Archive -Path $build -DestinationPath $zip

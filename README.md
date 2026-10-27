@@ -3,9 +3,9 @@
 <img src="branding/WuxAuto-logo.png" alt="WuxAuto" width="160" align="right" />
 
 A small WPF pilot for the game window `Wuxen2.exe` (TwelveSky2 / Unity port). It captures the
-game with the Desktop Duplication API, finds UI elements with OpenCV template matching and the
-built-in Windows OCR engine, and then drives the **teleport-to-Labyrinth** sequence with input
-that is addressed to the bound window only.
+game with the Desktop Duplication API, finds UI elements with OpenCV template matching (through
+[Emgu CV](https://www.emgu.com/)) and the built-in Windows OCR engine, and then drives the
+**teleport-to-Labyrinth** sequence with input that is addressed to the bound window only.
 
 Everything the pilot does is visible in the app: detections are drawn on the live preview and
 every step is logged.
@@ -51,7 +51,7 @@ Do not copy `bin\Debug`: that build needs the .NET 10 Desktop Runtime installed.
 .\publish.ps1
 ```
 
-and hand over `dist\WuxAuto-win-x64.zip` (~93 MB, .NET included). The other PC unzips it
+and hand over `dist\WuxAuto-win-x64.zip` (~76 MB, .NET included). The other PC unzips it
 (right-click the zip ▸ Properties ▸ *Unblock* first, or SmartScreen asks "Windows protected your
 PC" ▸ *More info* ▸ *Run anyway*) and starts `WuxAuto.exe`.
 
@@ -329,6 +329,7 @@ tests/WuxAuto.Core.Tests     unit tests of the shared library
 tests/WuxAuto.UiShot         renders MainWindow to a PNG (no desktop session needed)
 CLAUDE.md                    developer/handoff notes: architecture, measured UI facts,
                              current state, open items and debugging workflow
+LICENSE                      GPL-3.0
 ```
 
 ## Development checks
@@ -363,3 +364,9 @@ dotnet run --project .\tests\WuxAuto.UiShot -- "$env:TEMP\ui.png"
 The self-test is the fast way to confirm a change did not break the vision stack; it asserts
 exact match positions, a 1.00 template score for the flashlight at 0/40/135/200/330 degrees and
 the OCR round-trip for the word "Labyrinth".
+
+## Licence
+
+WuxAuto is free software under the GNU General Public License v3.0 - see [LICENSE](LICENSE). Its
+image matching uses [Emgu CV](https://www.emgu.com/), whose open-source licence is the GPL v3, so
+the app, which ships Emgu CV, is GPL-3.0 as well.
