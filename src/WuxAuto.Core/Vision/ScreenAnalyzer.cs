@@ -1052,15 +1052,19 @@ public sealed class ScreenAnalyzer : IDisposable
     }
 
     /// <summary>
-    /// Auto War: the player's HP as "cur / max" from <see cref="RegionSettings.PlayerHp"/>, OCR x2 of the
-    /// white text only (<see cref="OcrWhiteTextAsync"/>). Saved frames (561): read on 508 - every frame
-    /// with the game's HUD at the top left; plain OCR x2 read 493 and dropped a leading digit on three
-    /// ("1073 / 41073" for 41073). Null when unread.
+    /// Auto War: the player's HP as "cur / max" from <see cref="RegionSettings.PlayerHp"/>: OCR x2 of the
+    /// white text only (<see cref="OcrWhiteTextAsync"/>), then plain OCR x2 when that reads none - the white
+    /// read blacks out digits that are not white, should the game tint them at low HP or at death (no frame
+    /// shows that yet). Saved frames (561): the white read alone reads 508 - every frame with the game's
+    /// HUD at the top left - and plain x2 alone 493, dropping a leading digit on three ("1073 / 41073" for
+    /// 41073); both together 511 (the fallback only adds desktop captures with the game window offset).
+    /// Null when unread.
     /// </summary>
     public async Task<(int Cur, int Max)?> ReadPlayerHpAsync(Mat frame)
     {
         var roi = _settings.Regions.PlayerHp.ToPixels(frame.Width, frame.Height);
-        return WarText.ParseHp(await OcrWhiteTextAsync(frame, roi, 2.0));
+        return WarText.ParseHp(await OcrWhiteTextAsync(frame, roi, 2.0))
+               ?? WarText.ParseHp(ToLines(await Ocr.RecognizeAsync(frame, roi, 2.0)));
     }
 
     /// <summary>

@@ -32,15 +32,16 @@ internal static class WarProbe
     private static string Box(PixelRect r) => $"{r.X},{r.Y} {r.Width}x{r.Height}";
 
     /// <summary>
-    /// --hp &lt;dir&gt;: the player's HP as ScreenAnalyzer.ReadPlayerHpAsync reads it, plus the lines of its read
-    /// (the white text of Regions.PlayerHp at x2) with a '/' - every line when nothing was read. The summary
-    /// counts frames whose region holds a "0 / N" line at all (the "0/3000" bar must stay outside it).
+    /// --hp &lt;dir&gt;: the player's HP as ScreenAnalyzer.ReadPlayerHpAsync reads it and which read gave it (the
+    /// white text of Regions.PlayerHp at x2, or the plain x2 fallback), plus the white read's lines with a '/'
+    /// - every line when nothing was read. The summary counts frames whose region holds a "0 / N" line in the
+    /// white read (the "0/3000" bar must stay outside it).
     /// </summary>
     public static async Task<int> HpAsync(string dir)
     {
         var settings = SettingsStore.Load();
         using var analyzer = new ScreenAnalyzer(settings, new OcrService());
-        int read = 0, full = 0, zeroLines = 0, total = 0;
+        int read = 0, byPlain = 0, full = 0, zeroLines = 0, total = 0;
         foreach (string path in Frames(dir))
         {
             using var frame = Load(path);
@@ -60,13 +61,22 @@ internal static class WarProbe
             var lines = await analyzer.OcrWhiteTextAsync(frame, roi, 2.0);
             if (lines.Any(l => WarText.ParseHp([l]) is { Cur: 0 }))
                 zeroLines++;
+            string via = "";
+            if (hp != null)
+            {
+                bool white = WarText.ParseHp(lines) == hp;
+                if (!white)
+                    byPlain++;
+                via = white ? " (white x2)" : " (plain x2)";
+            }
+
             var shown = lines
                 .Where(l => hp == null || l.Text.Contains('/'))
                 .Select(l => $"'{l.Text}' {Box(l.Bounds)}");
-            Console.WriteLine($"{Path.GetFileName(path)} {frame.Width}x{frame.Height} | hp {(hp == null ? "not found" : $"{hp.Value.Cur} / {hp.Value.Max}")} ({ms} ms) | {(hp == null ? "lines" : "slash lines")}: {string.Join(" ; ", shown)}");
+            Console.WriteLine($"{Path.GetFileName(path)} {frame.Width}x{frame.Height} | hp {(hp == null ? "not found" : $"{hp.Value.Cur} / {hp.Value.Max}{via}")} ({ms} ms) | {(hp == null ? "lines" : "white slash lines")}: {string.Join(" ; ", shown)}");
         }
 
-        Console.WriteLine($"{read}/{total} frames with an HP read ({full} with cur = max); {zeroLines} with a '0 / N' line in the region");
+        Console.WriteLine($"{read}/{total} frames with an HP read ({read - byPlain} by the white read, {byPlain} by the plain fallback; {full} with cur = max); {zeroLines} with a '0 / N' line in the region");
         return 0;
     }
 
