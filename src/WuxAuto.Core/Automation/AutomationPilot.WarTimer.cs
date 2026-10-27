@@ -1,0 +1,389 @@
+using OpenCvSharp;
+using WuxAuto.Core;
+using WuxAuto.Vision;
+using LogLevel = WuxAuto.Core.LogLevel;
+
+namespace WuxAuto.Automation;
+
+/// <summary>
+/// Auto War, between wars (design §4.2, §4.3): the next Bohai war's countdown is read from the MENU button
+/// (top centre) -> Tribe Status -> NEXT WARS while the alt hunts; LeadMs before it the autohunt goes off and
+/// the "[Bohai Outpost (Adept)] Confirm to move?" dialog is answered with OK. The dialog is also answered
+/// when it comes without the timer (the 5 s whole-screen check calls <see cref="BeginWarJoin"/>).
+/// </summary>
+public sealed partial class AutomationPilot
+{
+    /// <summary>
+    /// The MENU button (menubutton.png in <see cref="RegionSettings.MenuButton"/>): 0.836-1.000 on every clear real
+    /// game frame (lowest 1440x900), at most 0.451 on frames without the game (561 saved frames, Task 4's probe).
+    /// </summary>
+    private const double MenuButtonScore = 0.70;
+
+    private long? _warAt;              // TickCount64 of the next war's start; null = unknown or in progress
+    private long _warNextReadAt;       // when the timer is read again; long.MaxValue = not before the war
+    private int _warTimerStep;         // WarWait: 0 wait, 1 open the menu, 2 Tribe Status tile, 3 read, 4 close
+    private int _warTimerFails;        // timer reads in a row that told nothing
+    private int _warStepTries;         // WarWait: looks / clicks within the current step
+    private long _warZoneCheckAt;      // WarWait: next minimap title read
+    private bool _warInProgress;       // the last read said "In progress" (logged once)
+    private bool _warJoinHuntOff;      // WarJoin: the autohunt is off (or the check gave up)
+    private bool _warJoinGaveUp;       // WarJoin: no dialog in time - turning the autohunt back on
+    private long _warJoinUntil;        // WarJoin: the dialog is waited for until then
+    private long _warJoinZoneAt;       // WarJoin: next minimap title read
+
+    /// <summary>Waits for the next Bohai war (<see cref="PilotPhase.WarWait"/>), reading its timer at once.</summary>
+    private void BeginWarWait(string why)
+    {
+        Log?.Invoke(LogLevel.Info, $"Waiting for the next {_settings.War.Destination} war ({why}).");
+        _warAt = null;
+        _warTimerStep = 0;
+        _warStepTries = 0;
+        _warTimerFails = 0;
+        _warInProgress = false;
+        _warNextReadAt = Environment.TickCount64;
+        _warZoneCheckAt = 0;
+        Advance(PilotPhase.WarWait, 300);
+    }
+
+    /// <summary>
+    /// What one timer read means for the wait: the war's start, when to read again and the unread count.
+    /// A countdown: start = now + the time left; read again 2 min before the war when it is more than 3 min
+    /// away (a misread shows up then), but no later than 15 min from now; 3 min or less, not again (the lead
+    /// takes over). "In progress": this war is missed, read again in 5 min. Nothing read: the known start is
+    /// kept and the read is tried again at once - from the third in a row on, 2 min later.
+    /// </summary>
+    internal static (long? WarAt, long NextReadAt, int Fails) PlanTimerRead(long now, WarCountdown? read, long? warAt, int fails)
+    {
+        if (read is { Remaining: { } left })
+        {
+            long at = now + (long)left.TotalMilliseconds;
+            long next = at - now > 180_000 ? Math.Min(at - 120_000, now + 900_000) : long.MaxValue;
+            return (at, next, 0);
+        }
+
+        if (read is { InProgress: true })
+            return (null, now + 300_000, 0);
+
+        fails++;
+        return (warAt, fails >= 3 ? now + 120_000 : now, fails);
+    }
+
+    /// <summary>
+    /// Until when the war dialog is waited for: <paramref name="dialogWaitMs"/> after the timer's start when the
+    /// lead began the join (the start lies 0 to <paramref name="leadMs"/> ahead), else after now - the dialog is
+    /// up already, or the start is stale (an earlier wait's) or far ahead (the timer was wrong).
+    /// </summary>
+    internal static long WarJoinDeadline(long now, long? warAt, int leadMs, int dialogWaitMs)
+    {
+        long basis = warAt is long at && at >= now && at - now <= leadMs ? at : now;
+        return basis + dialogWaitMs;
+    }
+
+    private async Task TickWarWaitAsync(Mat frame)
+    {
+        switch (_warTimerStep)
+        {
+            case 1:
+                TickWarOpenMenu(frame);
+                return;
+            case 2:
+                await TickWarTribeTileAsync(frame);
+                return;
+            case 3:
+                await TickWarReadTimerAsync(frame);
+                return;
+            case 4:
+                await TickWarCloseAsync(frame);
+                return;
+        }
+
+        long now = Environment.TickCount64;
+        var war = _settings.War;
+
+        // Where is the character? Only with the game in front: behind another window the capture shows that
+        // window's minimap (a second game client once read as "sent to town", 2026-10-27).
+        if (now >= _warZoneCheckAt)
+        {
+            _warZoneCheckAt = now + 10000;
+            if (_input.IsTargetForeground)
+            {
+                string? title = await ReadMinimapTitleAsync(frame);
+                if (TownIn(title) != null)
+                {
+                    BeginWarReturn(frame, "sent to town while waiting");
+                    return;
+                }
+
+                if (ZoneMatches(title, war.Destination))
+                {
+                    BeginWarEnter($"already in {war.Destination}");
+                    return;
+                }
+            }
+        }
+
+        if (_warAt is long at && at - now <= war.LeadMs)
+        {
+            BeginWarJoin($"the war starts in {Math.Max(0, at - now) / 1000} s");
+            return;
+        }
+
+        if (now >= _warNextReadAt)
+        {
+            // The menu button is looked for on the next tick's frame.
+            _warTimerStep = 1;
+            _warStepTries = 0;
+            return;
+        }
+
+        string spot = string.IsNullOrWhiteSpace(war.HomeMap) ? "the cave" : $"{war.HomeMap} / {(string.IsNullOrWhiteSpace(war.HomeMonster) ? "?" : war.HomeMonster)}";
+        _detail = _warAt is long start
+            ? $"waiting for the {war.Destination} war in {Clock(start - now)} - back to {spot}"
+            : _warInProgress
+                ? $"the {war.Destination} war is in progress (missed) - timer read again in {Clock(_warNextReadAt - now)}; back to {spot}"
+                : _warTimerFails > 0
+                    ? $"waiting for the {war.Destination} war (timer unread, next try in {Clock(_warNextReadAt - now)}) - back to {spot}"
+                    : $"waiting for the {war.Destination} war (timer not read yet) - back to {spot}";
+        _waitUntil = now + 500;
+    }
+
+    /// <summary>Step 1: the MENU button (top centre) opens the menu grid.</summary>
+    private void TickWarOpenMenu(Mat frame)
+    {
+        long now = Environment.TickCount64;
+        var roi = _settings.Regions.MenuButton.ToPixels(frame.Width, frame.Height);
+        var button = _analyzer.FindIcon(frame, "menubutton", roi, MenuButtonScore);
+        if (button == null)
+        {
+            if (++_warStepTries < 3)
+            {
+                _detail = $"looking for the menu button ({_warStepTries}/3)";
+                _waitUntil = now + 700;
+                return;
+            }
+
+            Log?.Invoke(LogLevel.Warning, "The menu button (top centre) was not found 3 times - the war timer is not read; trying again in 2 min.");
+            WarShot(frame, "war_menu_missing");
+            _warNextReadAt = now + 120000;
+            _warTimerStep = 0;
+            return;
+        }
+
+        _overlays.Add(new OverlayItem(button.Bounds, $"menu {button.Score:0.00}", OverlayColor.Green));
+        if (!WarClick(button.Bounds, $"the menu button ({button.Score:0.00})"))
+            return;
+
+        _warTimerStep = 2;
+        _warStepTries = 0;
+        _waitUntil = now + 900;
+    }
+
+    /// <summary>Step 2: the Tribe Status tile of the menu grid opens TRIBE STATUS.</summary>
+    private async Task TickWarTribeTileAsync(Mat frame)
+    {
+        long now = Environment.TickCount64;
+        string tile = _settings.War.MenuTileText;
+        var full = new PixelRect(0, 0, frame.Width, frame.Height);
+        var (hit, _, _) = await _analyzer.FindTextAsync(frame, full, tile);
+        // The hit's own text must cover the tile's: its line would also pass for the "status" of the
+        // "Hide item apply status" check box, the best hit on every in-game frame without the menu (490 of 561).
+        if (hit != null && TextMatcher.CoversMost(hit.Text, tile))
+        {
+            _overlays.Add(new OverlayItem(hit.Bounds, tile, OverlayColor.Green));
+            if (!WarClick(hit.Bounds, $"the '{tile}' tile"))
+                return;
+
+            _warTimerStep = 3;
+            _warStepTries = 0;
+            _waitUntil = now + 1200;
+            return;
+        }
+
+        if (++_warStepTries < 3)
+        {
+            _detail = $"looking for the '{tile}' tile ({_warStepTries}/3)";
+            _waitUntil = now + 600;
+            return;
+        }
+
+        ApplyTimerRead(frame, now, null, $"the menu showed no '{tile}' tile");
+        _warTimerStep = 4;
+        _warStepTries = 0;
+    }
+
+    /// <summary>Step 3: the war row's countdown in TRIBE STATUS.</summary>
+    private async Task TickWarReadTimerAsync(Mat frame)
+    {
+        long now = Environment.TickCount64;
+        var read = await _analyzer.ReadWarCountdownAsync(frame, _settings.War.TribeRowText);
+        ApplyTimerRead(frame, now, read, $"TRIBE STATUS showed no '{_settings.War.TribeRowText}' countdown");
+        _warTimerStep = 4;
+        _warStepTries = 0;
+    }
+
+    private void ApplyTimerRead(Mat frame, long now, WarCountdown? read, string unreadWhy)
+    {
+        string war = _settings.War.Destination;
+        (_warAt, _warNextReadAt, _warTimerFails) = PlanTimerRead(now, read, _warAt, _warTimerFails);
+        if (read is { Remaining: { } left })
+        {
+            _warInProgress = false;
+            string again = _warNextReadAt == long.MaxValue ? "" : $"; read again in {Clock(_warNextReadAt - now)}";
+            Log?.Invoke(LogLevel.Info, $"Next {war} war in {HoursClock(left)} (at {DateTime.Now + left:HH:mm:ss} PC time){again}.");
+        }
+        else if (read is { InProgress: true })
+        {
+            if (!_warInProgress)
+                Log?.Invoke(LogLevel.Info, $"The {war} war is in progress - this one is missed; reading the timer again every 5 min.");
+            _warInProgress = true;
+        }
+        else
+        {
+            bool giveUp = _warTimerFails >= 3;
+            Log?.Invoke(LogLevel.Warning, $"War timer not read: {unreadWhy} ({_warTimerFails} in a row) - "
+                                          + (giveUp ? "trying again in 2 min." : "trying again."));
+            if (giveUp)
+                WarShot(frame, "tribe_unread");
+        }
+    }
+
+    /// <summary>
+    /// Step 4: TRIBE STATUS, then the MENU, closed with their X - one click per tick, each on a fresh frame,
+    /// at most 4; neither title on screen = done.
+    /// </summary>
+    private async Task TickWarCloseAsync(Mat frame)
+    {
+        long now = Environment.TickCount64;
+        var full = new PixelRect(0, 0, frame.Width, frame.Height);
+        var lines = ScreenAnalyzer.ToLines(await _analyzer.Ocr.RecognizeAsync(frame, full, 1.0));
+        var open = _analyzer.FindWarWindowClose(frame, lines, _settings.War.MenuTileText);
+        if (open is not { } window)
+        {
+            _warTimerStep = 0;
+            return;
+        }
+
+        if (_warStepTries >= 4)
+        {
+            Log?.Invoke(LogLevel.Warning, $"'{window.Title}' is still open after {_warStepTries} clicks on its X - leaving it.");
+            WarShot(frame, "war_close_stuck");
+            _warTimerStep = 0;
+            return;
+        }
+
+        _overlays.Add(new OverlayItem(window.TitleBounds, window.Title, OverlayColor.Blue));
+        _overlays.Add(new OverlayItem(window.Close, "close", OverlayColor.Green));
+        if (!WarClick(window.Close, $"the X of '{window.Title}'"))
+            return;
+
+        _warStepTries++;
+        _waitUntil = now + 700;
+    }
+
+    /// <summary>
+    /// Joins the Bohai war (<see cref="PilotPhase.WarJoin"/>): autohunt off (so the alt is not mid-fight when the
+    /// dialog comes), then OK on the war dialog. Called LeadMs before the timer's start, or when the dialog is up.
+    /// </summary>
+    private void BeginWarJoin(string why)
+    {
+        long now = Environment.TickCount64;
+        var war = _settings.War;
+        _warJoinUntil = WarJoinDeadline(now, _warAt, war.LeadMs, war.DialogWaitMs);
+        _warJoinHuntOff = false;
+        _warJoinGaveUp = false;
+        _warJoinZoneAt = now + 5000;
+        ResetAutohuntCheck();
+        Log?.Invoke(LogLevel.Info, $"Joining the {war.Destination} war ({why}): autohunt off, then OK on the war dialog.");
+        Advance(PilotPhase.WarJoin, 200);
+    }
+
+    private async Task TickWarJoinAsync(Mat frame)
+    {
+        long now = Environment.TickCount64;
+        var war = _settings.War;
+        var seq = _settings.Sequence;
+
+        if (_warJoinGaveUp)
+        {
+            if (await EnsureAutohuntAsync(frame, "after waiting for the war dialog", wantOn: true, trustVisibleLine: false))
+                BeginWarWait("no war dialog");
+            return;
+        }
+
+        if (now >= _warJoinUntil)
+        {
+            Log?.Invoke(LogLevel.Warning, $"No {war.Destination} war dialog came - turning the autohunt back on and waiting for the next war.");
+            ResetAutohuntCheck();
+            _warJoinGaveUp = true;
+            return;
+        }
+
+        if (!_warJoinHuntOff)
+        {
+            if (!await EnsureAutohuntAsync(frame, "before the war", wantOn: false, trustVisibleLine: false))
+                return;
+
+            _warJoinHuntOff = true;
+            _waitUntil = now + 200;
+            return;
+        }
+
+        // Moved there without our OK (the user clicked it, or the game's own "Regular War" joined): go on inside.
+        if (now >= _warJoinZoneAt)
+        {
+            _warJoinZoneAt = now + 5000;
+            if (_input.IsTargetForeground && ZoneMatches(await ReadMinimapTitleAsync(frame), war.Destination))
+            {
+                BeginWarEnter($"already in {war.Destination}");
+                return;
+            }
+        }
+
+        var dialog = await _analyzer.FindConfirmDialogAsync(frame, seq.AutoConfirmText, seq.AutoConfirmButton);
+        if (dialog != null && WarText.IsWarDialogLine(dialog.Message, war.Destination))
+        {
+            _overlays.Add(new OverlayItem(dialog.MessageBounds, "war dialog", OverlayColor.Blue));
+            _overlays.Add(new OverlayItem(dialog.Button, seq.AutoConfirmButton, OverlayColor.Green));
+            if (!WarClick(dialog.Button, $"'{seq.AutoConfirmButton}' on the war dialog ({dialog.How})"))
+                return;
+
+            if (!_input.IsDryRun)
+                Log?.Invoke(LogLevel.Success, $"Answered '{dialog.Message}' with {seq.AutoConfirmButton}.");
+            WarShot(frame, "war_dialog", (dialog.Button.CenterX, dialog.Button.CenterY));
+            BeginWarEnter("clicked OK on the war dialog");
+            return;
+        }
+
+        _detail = $"autohunt off - waiting for the {war.Destination} war dialog ({Clock(_warJoinUntil - now)} left)";
+        _waitUntil = now + 700;
+    }
+
+    /// <summary>
+    /// A click of the war timer / join steps; a dry run logs where it would click and sends nothing. False when
+    /// the game is not in front (<see cref="Click"/> waits; the tick tries again).
+    /// </summary>
+    private bool WarClick(PixelRect target, string what)
+    {
+        if (_input.IsDryRun)
+        {
+            Log?.Invoke(LogLevel.Info, $"Dry run - would click {what} at {target.CenterX},{target.CenterY}.");
+            return true;
+        }
+
+        if (!Click(target))
+            return false;
+
+        Log?.Invoke(LogLevel.Info, $"Clicked {what} at {target.CenterX},{target.CenterY}.");
+        return true;
+    }
+
+    /// <summary>A time left as mm:ss ("04:25", "75:00"), for the status line; never negative.</summary>
+    private static string Clock(long ms)
+    {
+        var t = TimeSpan.FromMilliseconds(Math.Clamp(ms, 0, 100L * 86_400_000));
+        return $"{(int)t.TotalMinutes:00}:{t.Seconds:00}";
+    }
+
+    /// <summary>A time left as hh:mm:ss, the way TRIBE STATUS shows it ("00:04:25").</summary>
+    private static string HoursClock(TimeSpan t) => $"{(int)t.TotalHours:00}:{t.Minutes:00}:{t.Seconds:00}";
+}

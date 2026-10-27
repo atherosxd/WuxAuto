@@ -1,4 +1,5 @@
 using OpenCvSharp;
+using WuxAuto.Vision;
 
 namespace WuxAuto.Automation;
 
@@ -28,6 +29,25 @@ public sealed partial class AutomationPilot
     /// <summary>The cave to go back to: the one being remembered at Start, else the saved one.</summary>
     private string WarHomeMap => _warPendingMap ?? _settings.War.HomeMap;
 
+    // War snapshots taken per tag, at most 3 each (WarShot). "Per Start": Start clears it (Task 7 adds that;
+    // until then the limit holds per app run).
+    private readonly Dictionary<string, int> _warShots = new(StringComparer.Ordinal);
+
+    /// <summary>
+    /// Saves a war snapshot (<c>war_*</c>, <c>tribe_unread</c>) with the overlays, at most 3 per tag; every war
+    /// snapshot goes through here. True when it was saved.
+    /// </summary>
+    private bool WarShot(Mat frame, string tag, (int X, int Y)? click = null)
+    {
+        int taken = _warShots.GetValueOrDefault(tag);
+        if (taken >= 3)
+            return false;
+
+        _warShots[tag] = taken + 1;
+        DebugArtifacts.SaveFrame(frame, _overlays, tag, click);
+        return true;
+    }
+
     // stubs - replaced by Tasks 6-8
     private Task TickWarListCheckAsync(Mat frame)
     {
@@ -38,8 +58,6 @@ public sealed partial class AutomationPilot
     private void BeginWarReturn(Mat? frame, string why) => Fail(null, $"Auto War step not built yet: {why}");
 
     private void WarStop(Mat? frame, string why) => Fail(null, $"Auto War step not built yet: {why}");
-
-    private void BeginWarJoin(string why) => Fail(null, $"Auto War step not built yet: {why}");
 
     private void BeginWarEnter(string why) => Fail(null, $"Auto War step not built yet: {why}");
 }

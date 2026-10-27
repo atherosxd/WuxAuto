@@ -57,17 +57,11 @@ public static class WarText
     /// </summary>
     public static WarCountdown? FindWarRow(IReadOnlyList<(string Text, PixelRect Bounds)> lines, string rowText)
     {
-        string wanted = TextMatcher.Normalize(rowText);
-        if (wanted.Length == 0)
-            return null;
-
         // Every row-like line is tried in order: the "[Bohai Outpost (Adept)] [10] minute(s) to opening"
         // notice matches the row text too but carries no time, and must not hide the real row.
         for (int rowIndex = 0; rowIndex < lines.Count; rowIndex++)
         {
-            string normalized = TextMatcher.Normalize(lines[rowIndex].Text);
-            if (!normalized.Contains(wanted, StringComparison.Ordinal)
-                && TextMatcher.Similarity(lines[rowIndex].Text, rowText) < 0.80)
+            if (!IsWarRowLine(lines[rowIndex].Text, rowText))
                 continue;
 
             var (rowLine, rowBounds) = lines[rowIndex];
@@ -98,6 +92,54 @@ public static class WarText
         if (time is not null)
             return new WarCountdown(time, false);
         return IsInProgress(text) ? new WarCountdown(null, true) : null;
+    }
+
+    /// <summary>
+    /// A line that names the war row: <paramref name="rowText"/> contained, or at least 0.80 similar. The Tribe
+    /// Status row itself, or a notice that names the war ("[Bohai Outpost (Adept)] [10] minute(s) to opening").
+    /// </summary>
+    public static bool IsWarRowLine(string line, string rowText)
+    {
+        string wanted = TextMatcher.Normalize(rowText);
+        return wanted.Length > 0
+               && (TextMatcher.Normalize(line).Contains(wanted, StringComparison.Ordinal)
+                   || TextMatcher.Similarity(line, rowText) >= 0.80);
+    }
+
+    /// <summary>
+    /// Every line naming the war row (<see cref="IsWarRowLine"/>), the closest to the row text's length first: the
+    /// bare Tribe Status row comes before a chat notice that names the war, whatever their order on screen. Ties
+    /// keep the given order.
+    /// </summary>
+    public static IReadOnlyList<(string Text, PixelRect Bounds)> WarRowLines(IReadOnlyList<(string Text, PixelRect Bounds)> lines, string rowText)
+        => lines.Where(l => IsWarRowLine(l.Text, rowText))
+            .OrderBy(l => Math.Abs(TextMatcher.Normalize(l.Text).Length - TextMatcher.Normalize(rowText).Length))
+            .ToList();
+
+    /// <summary>
+    /// A game window's title line ("TRIBE STATUS", "MENU"): it reads <paramref name="title"/> (case aside; one
+    /// letter off per five, at least one) and at least 80 % of its letters are capitals. The Menu's
+    /// "Tribe Status" tile and chat text, in mixed case, are not a title. Top to bottom, the first; null when none.
+    /// </summary>
+    public static (string Text, PixelRect Bounds)? FindWindowTitle(IReadOnlyList<(string Text, PixelRect Bounds)> lines, string title)
+    {
+        string t = TextMatcher.Normalize(title);
+        if (t.Length == 0)
+            return null;
+
+        int allowed = Math.Max(1, t.Length / 5);
+        foreach (var line in lines.OrderBy(l => l.Bounds.Y))
+        {
+            string n = TextMatcher.Normalize(line.Text);
+            if (Math.Abs(n.Length - t.Length) > allowed || TextMatcher.Levenshtein(n, t) > allowed)
+                continue;
+
+            int letters = line.Text.Count(char.IsLetter);
+            if (letters > 0 && line.Text.Count(char.IsUpper) >= letters * 0.8)
+                return line;
+        }
+
+        return null;
     }
 
     /// <summary>

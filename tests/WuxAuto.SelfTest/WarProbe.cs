@@ -182,14 +182,16 @@ internal static class WarProbe
     /// whole-frame OCR hit for War.MenuTileText ("Tribe Status"). The hit is marked TILE when its own text
     /// covers most of the tile's (TextMatcher.CoversMost of the hit, which is the whole line when the line
     /// matched best), and "line only" when just its line does: on every in-game frame the best hit is the
-    /// word "status" of the "Hide item apply status" check box, whose line passes CoversMost.
+    /// word "status" of the "Hide item apply status" check box, whose line passes CoversMost. Last, what the
+    /// pilot's close step would click (ScreenAnalyzer.FindWarWindowClose over a whole-frame OCR x1): on frames
+    /// without the MENU or TRIBE STATUS window it must find no title.
     /// </summary>
     public static async Task<int> MenuAsync(string dir)
     {
         var settings = SettingsStore.Load();
         using var analyzer = new ScreenAnalyzer(settings, new OcrService());
         string tileText = settings.War.MenuTileText;
-        int total = 0, buttons = 0, tiles = 0, lineOnly = 0;
+        int total = 0, buttons = 0, tiles = 0, lineOnly = 0, titles = 0;
         foreach (string path in Frames(dir))
         {
             using var frame = Load(path);
@@ -215,24 +217,34 @@ internal static class WarProbe
                     lineOnly++;
             }
 
+            // The pilot's close step: whole-frame OCR x1, a TRIBE STATUS or MENU title in capitals, its X.
+            var lines = ScreenAnalyzer.ToLines(await analyzer.Ocr.RecognizeAsync(frame, full, 1.0));
+            var close = analyzer.FindWarWindowClose(frame, lines, tileText);
+            if (close != null)
+                titles++;
+
             string buttonText = button == null ? "not found"
                 : $"{button.Score:0.000} at {button.Bounds.CenterX},{button.Bounds.CenterY} {button.Bounds.Width}x{button.Bounds.Height} scale {button.Scale:0.00}";
             string hitText = tile == null ? "-"
                 : $"{verdict} '{tile.Text}' {tile.Similarity:0.00} in line '{tile.LineText}' at {Box(tile.Bounds)}";
-            Console.WriteLine($"{Path.GetFileName(path)} {frame.Width}x{frame.Height} | menubutton {buttonText} ({ms:0} ms) | tile {hitText}");
+            string closeText = close is { } c
+                ? $"title '{c.Title}' {Box(c.TitleBounds)}, X at {c.Close.CenterX},{c.Close.CenterY} ({Box(c.Close)})"
+                : "-";
+            Console.WriteLine($"{Path.GetFileName(path)} {frame.Width}x{frame.Height} | menubutton {buttonText} ({ms:0} ms) | tile {hitText} | close {closeText}");
         }
 
-        Console.WriteLine($"{total} frames, menubutton seen (>= 0.30) on {buttons}; '{tileText}': TILE {tiles}, line only {lineOnly}");
+        Console.WriteLine($"{total} frames, menubutton seen (>= 0.30) on {buttons}; '{tileText}': TILE {tiles}, line only {lineOnly}; a window title to close on {titles}");
         return 0;
     }
 
     /// <summary>
-    /// --tribe &lt;file or dir&gt;: the War.TribeRowText row of the Tribe Status window and its countdown,
-    /// whole-frame OCR -> ScreenAnalyzer.ToLines -> WarText.FindWarRow at x1, x1.5 and x2. A file may be any
-    /// image OpenCV reads (the user's screenshot is a .webp); a folder means its PNGs.
-    /// Windows OCR drops every "h:mm:ss" token (a synthetic "00:04:25" reads as nothing, "00: 04: 25" reads),
-    /// so a second read copies the band right of the row with a gap after each colon (<see cref="GapAfterColons"/>)
-    /// and OCRs that at x2 ("colon gap"); the first output line shows the quirk on synthetic text.
+    /// --tribe &lt;file or dir&gt;: the War.TribeRowText row of the Tribe Status window and its countdown, as the
+    /// pilot reads it (ScreenAnalyzer.ReadWarCountdownAsync: whole-frame OCR x1 -> WarText.FindWarRow, then the
+    /// band right of each row line with a gap after each colon, OCR x2 - "pilot"), next to plain whole-frame reads
+    /// at x1, x1.5 and x2; then what the pilot's close step would click (ScreenAnalyzer.FindWarWindowClose).
+    /// A file may be any image OpenCV reads (the user's screenshot is a .webp); a folder means its PNGs.
+    /// The first output lines show Windows OCR dropping "h:mm:ss" on synthetic text, and the pilot's read of a
+    /// synthetic row (it must say 00:04:25).
     /// </summary>
     public static async Task<int> TribeAsync(string path)
     {
@@ -251,6 +263,22 @@ internal static class WarProbe
 
         Console.WriteLine($"synthetic OCR x2: {string.Join(", ", synthetic)}");
 
+        // A synthetic Tribe Status row under a notice naming the war and a stray bare row line with no time
+        // (both tried before it, neither decides), and another war's row below it.
+        using (var image = new Mat(240, 700, MatType.CV_8UC4, new Scalar(25, 25, 25, 255)))
+        {
+            var white = new Scalar(240, 240, 240, 255);
+            Cv2.PutText(image, $"[{rowText}] [10] minute(s) to opening", new Point(10, 40), HersheyFonts.HersheySimplex, 0.6, white, 1, LineTypes.AntiAlias);
+            Cv2.PutText(image, rowText, new Point(10, 90), HersheyFonts.HersheySimplex, 0.6, white, 1, LineTypes.AntiAlias);
+            Cv2.PutText(image, rowText, new Point(10, 140), HersheyFonts.HersheySimplex, 0.6, white, 1, LineTypes.AntiAlias);
+            Cv2.PutText(image, "00:04:25", new Point(520, 140), HersheyFonts.HersheySimplex, 0.6, white, 1, LineTypes.AntiAlias);
+            Cv2.PutText(image, "Dragonfall Outpost", new Point(10, 190), HersheyFonts.HersheySimplex, 0.6, white, 1, LineTypes.AntiAlias);
+            Cv2.PutText(image, "In progress", new Point(520, 190), HersheyFonts.HersheySimplex, 0.6, white, 1, LineTypes.AntiAlias);
+            var trace = new List<string>();
+            var row = await analyzer.ReadWarCountdownAsync(image, rowText, trace);
+            Console.WriteLine($"synthetic row (expect 00:04:25): pilot {Describe(row)} | {string.Join(" ; ", trace)}");
+        }
+
         var files = Directory.Exists(path) ? Frames(path).ToList() : [path];
         foreach (string file in files)
         {
@@ -262,6 +290,11 @@ internal static class WarProbe
             }
 
             var full = new PixelRect(0, 0, frame.Width, frame.Height);
+            var pilotWatch = Stopwatch.StartNew();
+            var pilotTrace = new List<string>();
+            var pilot = await analyzer.ReadWarCountdownAsync(frame, rowText, pilotTrace);
+            long pilotMs = pilotWatch.ElapsedMilliseconds;
+
             var parts = new List<string>();
             IReadOnlyList<(string Text, PixelRect Bounds)> firstRead = [];
             foreach (double scale in new[] { 1.0, 1.5, 2.0 })
@@ -274,29 +307,11 @@ internal static class WarProbe
                     firstRead = lines;
             }
 
-            // The row line of the x1 read (as FindWarRow picks it), then the band right of it with gapped colons.
-            string wanted = TextMatcher.Normalize(rowText);
-            var rowLine = firstRead.FirstOrDefault(l => TextMatcher.Normalize(l.Text).Contains(wanted, StringComparison.Ordinal)
-                                                        || TextMatcher.Similarity(l.Text, rowText) >= 0.80);
-            string gapped = "no row";
-            string rowRead = "";
-            if (rowLine.Text != null)
-            {
-                var sameRow = firstRead.Where(l => l != rowLine && Math.Abs(l.Bounds.CenterY - rowLine.Bounds.CenterY) <= rowLine.Bounds.Height);
-                rowRead = $" | x1.0 row '{rowLine.Text}' {Box(rowLine.Bounds)}, same row: {string.Join(" ; ", sameRow.Select(l => $"'{l.Text}' {Box(l.Bounds)}"))}";
-
-                var watch = Stopwatch.StartNew();
-                int h = rowLine.Bounds.Height;
-                var band = PixelRect.FromBounds(rowLine.Bounds.Right, rowLine.Bounds.Y - h / 2, frame.Width, rowLine.Bounds.Bottom + h / 2)
-                    .Clamp(frame.Width, frame.Height);
-                using var spaced = GapAfterColons(frame, band, h, out int colons);
-                var bandLines = ScreenAnalyzer.ToLines(await analyzer.Ocr.RecognizeAsync(spaced, new PixelRect(0, 0, spaced.Width, spaced.Height), 2.0))
-                    .Select(l => (l.Text, new PixelRect(band.X + l.Bounds.X, band.Y + l.Bounds.Y, l.Bounds.Width, l.Bounds.Height)));
-                var row = WarText.FindWarRow([rowLine, .. bandLines], rowText);
-                gapped = $"{Describe(row)}, {colons} colon(s) ({watch.ElapsedMilliseconds} ms)";
-            }
-
-            Console.WriteLine($"{Path.GetFileName(file)} {frame.Width}x{frame.Height} | '{rowText}' {string.Join(" | ", parts)}{rowRead} | colon gap x2: {gapped}");
+            var close = analyzer.FindWarWindowClose(frame, firstRead, settings.War.MenuTileText);
+            string closeText = close is { } c
+                ? $"title '{c.Title}' {Box(c.TitleBounds)}, X at {c.Close.CenterX},{c.Close.CenterY} ({Box(c.Close)})"
+                : "no TRIBE STATUS / MENU title";
+            Console.WriteLine($"{Path.GetFileName(file)} {frame.Width}x{frame.Height} | '{rowText}' pilot: {Describe(pilot)} ({pilotMs} ms; {string.Join(" ; ", pilotTrace)}) | whole frame {string.Join(" | ", parts)} | close: {closeText}");
         }
 
         return 0;
@@ -308,69 +323,4 @@ internal static class WarProbe
         { Remaining: { } left } => $"{left:hh\\:mm\\:ss} ({left.TotalSeconds:0} s)",
         _ => "not found",
     };
-
-    /// <summary>
-    /// A copy of <paramref name="band"/> with a blank gap (half the text height) after each colon: two small
-    /// bright blobs (Otsu) stacked between two glyphs of the line, <paramref name="textHeight"/> = the row's OCR line height.
-    /// </summary>
-    private static Mat GapAfterColons(Mat frame, PixelRect band, int textHeight, out int colons)
-    {
-        using var crop = new Mat(frame, new Rect(band.X, band.Y, band.Width, band.Height));
-        using var gray = new Mat();
-        Cv2.CvtColor(crop, gray, ColorConversionCodes.BGRA2GRAY);
-        using var bright = new Mat();
-        Cv2.Threshold(gray, bright, 0, 255, ThresholdTypes.Binary | ThresholdTypes.Otsu);
-        using var labels = new Mat();
-        using var stats = new Mat();
-        using var centroids = new Mat();
-        int count = Cv2.ConnectedComponentsWithStats(bright, labels, stats, centroids);
-
-        var blobs = Enumerable.Range(1, Math.Max(0, count - 1))
-            .Select(i => (X: stats.At<int>(i, 0), Y: stats.At<int>(i, 1), Right: stats.At<int>(i, 0) + stats.At<int>(i, 2),
-                Bottom: stats.At<int>(i, 1) + stats.At<int>(i, 3), Height: stats.At<int>(i, 3)))
-            .ToList();
-        // Glyphs are at least half the text height (the window border is taller and is neither); dots a quarter or less.
-        var dots = blobs.Where(b => b.Height <= textHeight / 4.0 && b.Right - b.X <= textHeight / 4.0).ToList();
-        var glyphs = blobs.Where(b => b.Height >= textHeight / 2.0 && b.Height <= textHeight * 1.5).ToList();
-        // A colon: two dots, one above the other (overlapping columns), between two glyphs of one text line.
-        var gaps = new List<int>();
-        foreach (var top in dots)
-        {
-            foreach (var bottom in dots)
-            {
-                bool stacked = bottom.Y >= top.Bottom && bottom.X < top.Right && bottom.Right > top.X;
-                bool inLine = glyphs.Any(g => g.Right <= top.X && top.X - g.Right <= textHeight && g.Y <= top.Y && g.Bottom >= bottom.Bottom)
-                              && glyphs.Any(g => g.X >= top.Right && g.X - top.Right <= textHeight && g.Y <= top.Y && g.Bottom >= bottom.Bottom);
-                int cut = Math.Max(top.Right, bottom.Right); // first column right of the colon
-                if (stacked && inLine && !gaps.Contains(cut))
-                    gaps.Add(cut);
-            }
-        }
-
-        gaps.Sort();
-
-        colons = gaps.Count;
-        int gap = Math.Max(4, textHeight / 2);
-        using var dark = new Mat();
-        Cv2.BitwiseNot(bright, dark);
-        var background = Cv2.Mean(crop, dark);
-        var result = new Mat(crop.Rows, crop.Cols + gap * gaps.Count, crop.Type(), background);
-        int from = 0, to = 0;
-        foreach (int cut in gaps.Append(crop.Cols))
-        {
-            int end = Math.Min(crop.Cols, cut);
-            if (end > from)
-            {
-                using var source = new Mat(crop, new Rect(from, 0, end - from, crop.Rows));
-                using var target = new Mat(result, new Rect(to, 0, end - from, crop.Rows));
-                source.CopyTo(target);
-            }
-
-            to += end - from + gap;
-            from = end;
-        }
-
-        return result;
-    }
 }
-

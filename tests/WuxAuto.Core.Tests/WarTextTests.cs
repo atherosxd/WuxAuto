@@ -172,4 +172,46 @@ public class WarTextTests
         Assert.Empty(WarText.NewLines(["arrivedcavebat", "a"], ["a", "arrivedcavebat"]));   // an old line moved up
         Assert.Equal(new[] { "a" }, WarText.NewLines(["a"], ["a", "a"]));
     }
+
+    [Theory]
+    [InlineData("Bohai Outpost (Adept)", true)]
+    [InlineData("Bohai Outpost (Adep", true)]
+    [InlineData("[Bohai Outpost (Adept)] [10] minute(s) to opening of the entrance", true)]
+    [InlineData("Dragonfall Outpost", false)]
+    [InlineData("Legacy Holy Stone", false)]
+    public void IsWarRowLine(string line, bool expected) => Assert.Equal(expected, WarText.IsWarRowLine(line, "Bohai Outpost (Adept)"));
+
+    [Fact]
+    public void IsWarRowLine_EmptyRowTextMatchesNothing() => Assert.False(WarText.IsWarRowLine("Bohai Outpost (Adept)", " "));
+
+    [Fact]
+    public void WarRowLines_TheBareRowComesBeforeANoticeAboveIt()
+    {
+        var notice = L("[Bohai Outpost (Adept)] [10] minute(s) to opening", 10, 100, 400);
+        var row = L("Bohai Outpost (Adept)", 448, 241);
+        var lines = new[] { notice, L("NEXT WARS", 560, 212), row, L("Dragonfall Outpost", 448, 270) };
+
+        Assert.Equal(new[] { row, notice }, WarText.WarRowLines(lines, "Bohai Outpost (Adept)"));
+    }
+
+    [Fact]
+    public void FindWindowTitle_OnlyTheCapitalsTitle_NotTheMenuTile()
+    {
+        var tile = L("Tribe Status", 21, 491, 81, 13);
+        var title = L("TRIBE STATUS", 322, 8, 145, 16);
+
+        Assert.Equal(title, WarText.FindWindowTitle([tile, title], "Tribe Status"));
+        Assert.Null(WarText.FindWindowTitle([tile], "Tribe Status"));
+    }
+
+    [Theory]
+    [InlineData("TRlBE STATUS", "Tribe Status", true)]   // one OCR slip, still mostly capitals
+    [InlineData("TRIBE STATU", "Tribe Status", true)]
+    [InlineData("MENU", "MENU", true)]
+    [InlineData("Menu", "MENU", false)]
+    [InlineData("HIDE ITEM APPLY STATUS", "Tribe Status", false)]
+    [InlineData("DRAGON TRIBE", "Tribe Status", false)]
+    [InlineData("MAIN", "MENU", false)]
+    public void FindWindowTitle_Reads(string text, string title, bool found)
+        => Assert.Equal(found, WarText.FindWindowTitle([L(text, 300, 10)], title) != null);
 }

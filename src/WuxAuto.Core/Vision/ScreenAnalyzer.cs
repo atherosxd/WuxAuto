@@ -712,13 +712,14 @@ public sealed class ScreenAnalyzer : IDisposable
 
     /// <summary>
     /// A dialog's X right of its title (AUTO BUFF: title ends ~878, X at 905,116 at 1024x768): the
-    /// first bright blob in the band right of the title, else two text heights right of it.
+    /// first bright blob in the band right of the title, <paramref name="reach"/> text heights long,
+    /// else two text heights right of it (on the title bar).
     /// </summary>
-    public PixelRect FindCloseButtonRightOf(Mat frame, PixelRect title)
+    public PixelRect FindCloseButtonRightOf(Mat frame, PixelRect title, int reach = 6)
     {
         int h = Math.Max(6, title.Height);
         var fallback = new PixelRect(title.Right + 2 * h - h / 2, title.CenterY - h / 2, h, h);
-        var band = new PixelRect(title.Right + 2, title.Y - h, 6 * h, title.Height + 2 * h).Clamp(frame.Width, frame.Height);
+        var band = new PixelRect(title.Right + 2, title.Y - h, reach * h, title.Height + 2 * h).Clamp(frame.Width, frame.Height);
         if (band.Width < 4 || band.Height < 4)
             return fallback;
 
@@ -1105,6 +1106,143 @@ public sealed class ScreenAnalyzer : IDisposable
 
         double top = hits.Max(h => h.Score);
         return hits.Where(h => h.Score >= top - 0.01).MinBy(h => h.Bounds.CenterX);
+    }
+
+    /// <summary>
+    /// Auto War: the countdown of the Tribe Status row <paramref name="rowText"/> ("Bohai Outpost (Adept)" under
+    /// NEXT WARS) - its time or "In progress"; null when it cannot tell (never zero). Whole-frame OCR x1 and
+    /// <see cref="WarText.FindWarRow"/> first. Windows OCR drops every "h:mm:ss" token in such a read (a synthetic
+    /// "00:04:25" reads as nothing, "00: 04: 25" reads), so when that decides nothing each line naming the row
+    /// (<see cref="WarText.WarRowLines"/>, the bare row before a chat notice naming the war) is read again: the band
+    /// right of it, half a line height above and below, with a gap after each colon (<see cref="GapAfterColons"/>),
+    /// OCR x2. The user's Tribe Status screenshot (795x829): x1, x1.5 and x2 read no time, the gapped band 00:04:25.
+    /// </summary>
+    public async Task<WarCountdown?> ReadWarCountdownAsync(Mat frame, string rowText, List<string>? trace = null)
+    {
+        var full = new PixelRect(0, 0, frame.Width, frame.Height);
+        var lines = ToLines(await Ocr.RecognizeAsync(frame, full, 1.0));
+        var row = WarText.FindWarRow(lines, rowText);
+        if (row != null)
+        {
+            trace?.Add("decided by the whole-frame read");
+            return row;
+        }
+
+        var candidates = WarText.WarRowLines(lines, rowText);
+        if (candidates.Count == 0)
+            trace?.Add($"no line names '{rowText}'");
+
+        foreach (var line in candidates)
+        {
+            int h = Math.Max(4, line.Bounds.Height);
+            var band = PixelRect.FromBounds(line.Bounds.Right, line.Bounds.Y - h / 2, frame.Width, line.Bounds.Bottom + h / 2)
+                .Clamp(frame.Width, frame.Height);
+            using var spaced = GapAfterColons(frame, band, h, out int colons);
+            var bandLines = ToLines(await Ocr.RecognizeAsync(spaced, new PixelRect(0, 0, spaced.Width, spaced.Height), 2.0))
+                .Select(l => (l.Text, new PixelRect(band.X + l.Bounds.X, band.Y + l.Bounds.Y, l.Bounds.Width, l.Bounds.Height)))
+                .ToList();
+            var decided = WarText.FindWarRow([line, .. bandLines], rowText);
+            trace?.Add($"row '{line.Text}' {line.Bounds}: {colons} colon(s), band read '{string.Join(" | ", bandLines.Select(l => l.Text))}'");
+            if (decided != null)
+                return decided;
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// A copy of <paramref name="band"/> with a blank gap (half the text height, at least 4 px, in the band's
+    /// background colour) after each colon (<see cref="ColonCuts"/> over the Otsu-bright blobs);
+    /// <paramref name="textHeight"/> = the row's OCR line height.
+    /// </summary>
+    private static Mat GapAfterColons(Mat frame, PixelRect band, int textHeight, out int colons)
+    {
+        using var crop = new Mat(frame, new Rect(band.X, band.Y, band.Width, band.Height));
+        using var gray = new Mat();
+        Cv2.CvtColor(crop, gray, crop.Channels() == 4 ? ColorConversionCodes.BGRA2GRAY : ColorConversionCodes.BGR2GRAY);
+        using var bright = new Mat();
+        Cv2.Threshold(gray, bright, 0, 255, ThresholdTypes.Binary | ThresholdTypes.Otsu);
+        using var labels = new Mat();
+        using var stats = new Mat();
+        using var centroids = new Mat();
+        int count = Cv2.ConnectedComponentsWithStats(bright, labels, stats, centroids);
+
+        var blobs = Enumerable.Range(1, Math.Max(0, count - 1))
+            .Select(i => new PixelRect(stats.At<int>(i, 0), stats.At<int>(i, 1), stats.At<int>(i, 2), stats.At<int>(i, 3)))
+            .ToList();
+        var cuts = ColonCuts(blobs, textHeight);
+
+        colons = cuts.Count;
+        int gap = Math.Max(4, textHeight / 2);
+        using var dark = new Mat();
+        Cv2.BitwiseNot(bright, dark);
+        var background = Cv2.Mean(crop, dark);
+        var result = new Mat(crop.Rows, crop.Cols + gap * cuts.Count, crop.Type(), background);
+        int from = 0, to = 0;
+        foreach (int cut in cuts.Append(crop.Cols))
+        {
+            int end = Math.Min(crop.Cols, cut);
+            if (end > from)
+            {
+                using var source = new Mat(crop, new Rect(from, 0, end - from, crop.Rows));
+                using var target = new Mat(result, new Rect(to, 0, end - from, crop.Rows));
+                source.CopyTo(target);
+            }
+
+            to += end - from + gap;
+            from = end;
+        }
+
+        return result;
+    }
+
+    /// <summary>
+    /// The colons among the bright blobs of one text line (band coordinates): two dots (at most a quarter of
+    /// <paramref name="textHeight"/> each way) stacked in one column, with a glyph (half to 1.5 text heights tall,
+    /// spanning both dots; the window border is taller) within a text height on either side. Per colon the first
+    /// column right of it, sorted. A full stop, "..", or a colon at the end of a line is none.
+    /// </summary>
+    internal static IReadOnlyList<int> ColonCuts(IReadOnlyList<PixelRect> blobs, int textHeight)
+    {
+        var dots = blobs.Where(b => b.Height <= textHeight / 4.0 && b.Width <= textHeight / 4.0).ToList();
+        var glyphs = blobs.Where(b => b.Height >= textHeight / 2.0 && b.Height <= textHeight * 1.5).ToList();
+        var cuts = new List<int>();
+        foreach (var top in dots)
+        {
+            foreach (var bottom in dots)
+            {
+                bool stacked = bottom.Y >= top.Bottom && bottom.X < top.Right && bottom.Right > top.X;
+                bool inLine = glyphs.Any(g => g.Right <= top.X && top.X - g.Right <= textHeight && g.Y <= top.Y && g.Bottom >= bottom.Bottom)
+                              && glyphs.Any(g => g.X >= top.Right && g.X - top.Right <= textHeight && g.Y <= top.Y && g.Bottom >= bottom.Bottom);
+                int cut = Math.Max(top.Right, bottom.Right);
+                if (stacked && inLine && !cuts.Contains(cut))
+                    cuts.Add(cut);
+            }
+        }
+
+        cuts.Sort();
+        return cuts;
+    }
+
+    /// <summary>
+    /// Auto War: what closes the windows the war timer opened - the TRIBE STATUS window first, else the MENU:
+    /// its title in capitals (<see cref="WarText.FindWindowTitle"/>; the Menu's mixed-case "Tribe Status" tile is
+    /// not one) and the X in the window's top right corner (<see cref="FindCloseButtonRightOf"/>), far further
+    /// from the title than a dialog's. The band ends about at the window's edge, so a missed X never becomes a
+    /// click in the world beyond it (that walks the character); the fallback is on the title bar. Measured on the
+    /// user's screenshots: TRIBE STATUS (16 px title, ends 467) has its X at 753-767 and its edge at 795, i.e.
+    /// 18.6 / 20.4 title heights out; MENU's X sits 10-13 heights out (its title does not read on the
+    /// screenshot, where the grid is scrolled under it - unverified). Null when neither title shows.
+    /// </summary>
+    public (string Title, PixelRect TitleBounds, PixelRect Close)? FindWarWindowClose(Mat frame, IReadOnlyList<(string Text, PixelRect Bounds)> lines, string tribeStatusTitle)
+    {
+        foreach (var (title, reach) in new[] { (tribeStatusTitle, 20), ("MENU", 13) })
+        {
+            if (WarText.FindWindowTitle(lines, title) is { } line)
+                return (line.Text, line.Bounds, FindCloseButtonRightOf(frame, line.Bounds, reach));
+        }
+
+        return null;
     }
 
     /// <summary>Manual "what do the detectors see" pass used by the Test scan button.</summary>

@@ -758,6 +758,12 @@ public sealed partial class AutomationPilot
                 case PilotPhase.RegularWarOn:
                     await TickRegularWarAsync(frame);
                     break;
+                case PilotPhase.WarWait:
+                    await TickWarWaitAsync(frame);
+                    break;
+                case PilotPhase.WarJoin:
+                    await TickWarJoinAsync(frame);
+                    break;
                 case PilotPhase.Done:
                     TickDone();
                     break;

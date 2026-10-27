@@ -55,4 +55,35 @@ public class ScreenAnalyzerTests
         Assert.Same(left, ScreenAnalyzer.BestLeftmost([right, left, far]));
         Assert.Same(left, ScreenAnalyzer.BestLeftmost([far, left, right]));
     }
+
+    // One text line 16 px high: glyphs 10x16, dots 3x3 (a colon's at y 4 and y 11).
+    static PixelRect Glyph(int x) => new(x, 0, 10, 16);
+    static PixelRect Dot(int x, int y) => new(x, y, 3, 3);
+
+    [Fact]
+    public void ColonCuts_TheTwoColonsOfATime()
+    {
+        // "00:04:25", in the order the blob search may hand them over.
+        var blobs = new[]
+        {
+            Dot(56, 11), Glyph(0), Glyph(12), Dot(25, 4), Dot(25, 11), Glyph(31), Glyph(43), Dot(56, 4), Glyph(62), Glyph(74),
+        };
+
+        Assert.Equal(new[] { 28, 59 }, ScreenAnalyzer.ColonCuts(blobs, 16));
+    }
+
+    [Fact]
+    public void ColonCuts_FullStopAndSideBySideDots_AreNone()
+    {
+        Assert.Empty(ScreenAnalyzer.ColonCuts([Glyph(0), Dot(12, 13), Glyph(17)], 16));                // "4.2"
+        Assert.Empty(ScreenAnalyzer.ColonCuts([Glyph(0), Dot(12, 13), Dot(17, 13), Glyph(22)], 16));   // "4..2"
+    }
+
+    [Fact]
+    public void ColonCuts_NeedAGlyphCloseOnBothSides()
+    {
+        Assert.Empty(ScreenAnalyzer.ColonCuts([Glyph(0), Glyph(12), Dot(25, 4), Dot(25, 11)], 16));                // "Time:" at the line's end
+        Assert.Empty(ScreenAnalyzer.ColonCuts([Glyph(0), Dot(25, 4), Dot(25, 11), Glyph(48)], 16));                // a glyph 20 px away (over a text height)
+        Assert.Empty(ScreenAnalyzer.ColonCuts([new PixelRect(0, -10, 10, 40), Dot(12, 4), Dot(12, 11), Glyph(17)], 16));  // the window border is no glyph
+    }
 }
