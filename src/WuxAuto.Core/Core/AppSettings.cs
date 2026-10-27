@@ -438,10 +438,18 @@ public sealed class SequenceSettings
     /// <summary>
     /// Kill alert (user, 2026-10-26: friends run the pilot on a second PC and LOD does not always
     /// pick up every drop - a reminder to check): a chime when a Labyrinth boss dies (every stage)
-    /// and when an LOD kill's loot step ends. <c>KillAlert.CustomChimeName</c> (desktop project) in the
-    /// templates folder replaces the built-in chime. Check box "Kill chime".
+    /// and when an LOD kill's loot step ends. The sound is <see cref="KillSound"/>, else
+    /// <c>KillAlert.CustomChimeName</c> (desktop project) in the templates folder, else the built-in
+    /// chime. Check box "Kill chime".
     /// </summary>
     public bool KillChime { get; set; } = true;
+
+    /// <summary>
+    /// The kill chime's sound file, MP3 or WAV (user, 2026-10-27). Empty = the built-in chime.
+    /// Set with the "Choose..." button next to the check box, which copies the file into
+    /// <c>%LOCALAPPDATA%\WuxAuto\sounds</c> first, so it keeps playing after the original is moved.
+    /// </summary>
+    public string KillSound { get; set; } = string.Empty;
 
     /// <summary>The same moments as <see cref="KillChime"/>, as a Windows notification. Check box "Kill notification".</summary>
     public bool KillNotification { get; set; } = true;

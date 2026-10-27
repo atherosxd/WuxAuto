@@ -67,6 +67,10 @@ internal static class Program
         if (args.Contains("--kill-alert") && window.DataContext is WuxAuto.ViewModels.MainViewModel killModel)
             killModel.LastKillText = "14:32:05 Stage 2: Spectral down - check the loot";
 
+        // --kill-sound: a picked kill chime sound (name + "Default" button); not saved, see below.
+        if (args.Contains("--kill-sound") && window.DataContext is WuxAuto.ViewModels.MainViewModel soundModel)
+            soundModel.KillSound = Path.Combine(AppPaths.SoundsFolder, "boss down - long file name to trim.mp3");
+
         if (args.Contains("--settings"))
         {
             var expander = Descendants<Expander>(window).FirstOrDefault();

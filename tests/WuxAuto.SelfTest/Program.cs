@@ -67,8 +67,12 @@ if (updateInstallIndex >= 0)
     return UpdateProbe.Install(args[updateInstallIndex + 1], args[updateInstallIndex + 2]);
 }
 
-if (args.Contains("--alert"))
-    return await AlertProbe.RunAsync();
+int alertIndex = Array.IndexOf(args, "--alert");
+if (alertIndex >= 0)
+{
+    string? soundFile = alertIndex + 1 < args.Length && !args[alertIndex + 1].StartsWith("--") ? args[alertIndex + 1] : null;
+    return AlertProbe.Run(soundFile);
+}
 
 int runSkillIndex = Array.IndexOf(args, "--runskill");
 if (runSkillIndex >= 0 && runSkillIndex + 1 < args.Length)
