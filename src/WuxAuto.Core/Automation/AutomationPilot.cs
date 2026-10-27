@@ -287,9 +287,13 @@ public sealed partial class AutomationPilot
         _ => "idle",
     };
 
+    /// <summary>Starts the run from the teleport, or - debug aid - from a later phase.</summary>
     /// <param name="startAt">Debug aid: start at a later phase (e.g. FaceNorth after the last boss)
-    /// instead of the teleport. Every stage is treated as done.</param>
-    public void Start(PilotPhase startAt = PilotPhase.Focus)
+    /// instead of the teleport.</param>
+    /// <param name="stageIndex">With a debug start: the stage to be at (0 = the first boss); default
+    /// every stage done, i.e. the final boss. The offline tests use it to drive one stage's boss
+    /// selection.</param>
+    public void Start(PilotPhase startAt = PilotPhase.Focus, int? stageIndex = null)
     {
         _runCount = 0;
         _fontChecked = false;
@@ -309,12 +313,15 @@ public sealed partial class AutomationPilot
         _phase = startAt;
         if (startAt != PilotPhase.Focus)
         {
-            _stageIndex = _settings.Dungeon.Stages.Count;
+            int stages = _settings.Dungeon.Stages.Count;
+            _stageIndex = Math.Clamp(stageIndex ?? stages, 0, stages);
             // The left sweep assumes the heading the labyrinth loads with; mid-run it would only
             // overshoot, so a debug start fine-tunes from wherever the camera is.
             _sweepDone = true;
             _input.TryFocus();
-            Log?.Invoke(LogLevel.Warning, $"Starting at {startAt} (all stages treated as done).");
+            Log?.Invoke(LogLevel.Warning, _stageIndex >= stages
+                ? $"Starting at {startAt} (all stages treated as done)."
+                : $"Starting at {startAt}, stage {_stageIndex + 1}.");
         }
 
         _phaseStart = Environment.TickCount64;
