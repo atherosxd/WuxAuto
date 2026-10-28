@@ -22,6 +22,37 @@ public class AppPathsTests : AppPathsScope
     }
 
     [Fact]
+    public void TrySave_ReportsAFailedWrite_AndSucceedsOtherwise()
+    {
+        string root = TempRoot();
+        AppPaths.Configure(root, Path.Combine(root, "assets"));
+        var settings = new AppSettings();
+
+        Assert.True(SettingsStore.TrySave(settings, out string? none));
+        Assert.Null(none);
+
+        // settings.json taken by a folder: the write fails, and says why instead of being swallowed.
+        File.Delete(AppPaths.SettingsFile);
+        Directory.CreateDirectory(AppPaths.SettingsFile);
+        Assert.False(SettingsStore.TrySave(settings, out string? error));
+        Assert.False(string.IsNullOrEmpty(error));
+    }
+
+    [Fact]
+    public async Task TrySave_FromManyThreads_LeavesAReadableFile()
+    {
+        string root = TempRoot();
+        AppPaths.Configure(root, Path.Combine(root, "assets"));
+        var settings = new AppSettings();
+
+        var saves = Enumerable.Range(0, 16).Select(_ => Task.Run(() => SettingsStore.TrySave(settings, out string? _))).ToArray();
+        bool[] results = await Task.WhenAll(saves);
+
+        Assert.All(results, Assert.True);
+        Assert.Equal(settings.Sequence.Mode, SettingsStore.Load(persistMigration: false).Sequence.Mode);
+    }
+
+    [Fact]
     public void KillSound_IsSavedTrimmed_AndAMissingOrNullValueLoadsEmpty()
     {
         string root = Path.Combine(Path.GetTempPath(), "wux-core-" + Guid.NewGuid());

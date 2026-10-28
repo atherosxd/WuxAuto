@@ -217,6 +217,68 @@ public sealed class TouchControlsTests
         Assert.Equal(["Down:830,630", "Release", "Down:120,215", "Release", "Release"], h.Touch.Calls);
     }
 
+    // --- Halt / Resume (Stop, Panic: nothing goes down until the next Start) ---------------------------------------
+
+    [Fact]
+    public void Halt_LiftsTheHeldPress_AndRefusesEverySendUntilResume()
+    {
+        var h = new Harness();
+        h.Fill();
+        h.Shortcuts.Skills["1"] = SkillButton;
+        h.Controls.SkillDown("1");
+        h.Controls.Halt();
+        Assert.True(h.Controls.IsHalted);
+        Assert.Equal(["Down:830,630", "Release"], h.Touch.Calls);
+
+        h.Touch.Calls.Clear();
+        Assert.False(h.Controls.Tap(10, 20));
+        Assert.False(h.Controls.SkillTap("1"));
+        Assert.False(h.Controls.SkillDown("1"));
+        Assert.False(h.Controls.ActionDown(GameAction.ShuraKey));
+        Assert.False(h.Controls.Press(GameAction.TargetNearest));
+        Assert.False(h.Controls.WalkTo(600, 100, forceWalk: false));
+        Assert.False(h.Controls.Turn(TurnDirection.Left, 180));
+        Assert.False(h.Controls.ZoomOut(500, 400, 15));
+        Assert.False(h.Controls.ScrollList(500, 400, -3));
+        Assert.Empty(h.Touch.Calls);
+
+        h.Controls.Resume();
+        Assert.False(h.Controls.IsHalted);
+        Assert.True(h.Controls.Tap(10, 20));
+        Assert.Equal(["Tap:10,20,60"], h.Touch.Calls);
+    }
+
+    [Fact]
+    public void Halt_RefusesEvenInADryRun()
+    {
+        var h = new Harness();
+        h.Touch.DryRun = true;
+        h.Controls.Halt();
+        h.Touch.Calls.Clear();
+        Assert.False(h.Controls.Tap(10, 20));
+        Assert.Empty(h.Touch.Calls);
+    }
+
+    [Fact]
+    public async Task Halt_DuringAHoldOnTheLoopThread_TheHoldIsRefused()
+    {
+        // The loop thread is inside SkillDown's Send when Stop halts from another thread: Hold re-checks under the lock,
+        // so the finger does not go down after the halt's Release.
+        var h = new Harness();
+        h.Shortcuts.Skills["1"] = SkillButton;
+        Task<bool>? hold = null;
+        h.Touch.OnRelease = () =>
+        {
+            h.Touch.OnRelease = null;
+            hold = Task.Run(() => h.Controls.SkillDown("1"));
+            hold.Wait(150);
+        };
+
+        h.Controls.Halt();
+        Assert.False(await hold!.WaitAsync(TimeSpan.FromSeconds(5)));
+        Assert.Equal(["Release"], h.Touch.Calls);
+    }
+
     // --- taps and skills --------------------------------------------------------------------------------------------
 
     [Fact] public void Tap_TapsThePoint() => Assert.Equal(["Tap:10,20,60"], Run(c => c.Tap(10, 20)));

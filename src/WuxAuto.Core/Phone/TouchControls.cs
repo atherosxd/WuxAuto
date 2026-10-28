@@ -44,6 +44,12 @@ public sealed class TouchControls(AppSettings settings, ITouchInput touch, IShor
     private readonly Lock _heldLock = new();
     private string? _held;
 
+    // Stop / Panic: nothing goes down until Resume (the next Start). Volatile: set from the UI side, read by the loop.
+    private volatile bool _halted;
+
+    /// <summary>True between <see cref="Halt"/> and <see cref="Resume"/>: every sending call refuses (false, nothing sent).</summary>
+    public bool IsHalted => _halted;
+
     private PhoneSettings Phone => settings.Phone;
 
     public bool IsDryRun => touch.IsDryRun;
@@ -159,9 +165,24 @@ public sealed class TouchControls(AppSettings settings, ITouchInput touch, IShor
         }
     }
 
-    /// <summary>The gate every sending call goes through: dry run = nothing sent, true; the game behind = nothing sent, false.</summary>
+    /// <summary>
+    /// Stop / Panic: refuse every touch from now on (a dry run included) and lift whatever is held. A tick still running
+    /// on the loop thread can send nothing new; a held press it starts after this is refused under the hold lock.
+    /// </summary>
+    public void Halt()
+    {
+        _halted = true;
+        ReleaseAll();
+    }
+
+    /// <summary>The next Start: touches go out again.</summary>
+    public void Resume() => _halted = false;
+
+    /// <summary>The gate every sending call goes through: halted = nothing sent, false; dry run = nothing sent, true; the game behind = nothing sent, false.</summary>
     private bool Send(Func<bool> send)
     {
+        if (_halted)
+            return false;
         if (touch.IsDryRun)
             return true;
         if (!touch.IsGameInFront)
@@ -197,6 +218,10 @@ public sealed class TouchControls(AppSettings settings, ITouchInput touch, IShor
                 _held = null;
                 touch.Release();
             }
+
+            // Halted while this call was on its way (Halt's release ran first): the finger must not go down after it.
+            if (_halted)
+                return false;
 
             if (!touch.PressDown(r.CenterX, r.CenterY))
                 return false;

@@ -202,17 +202,32 @@ public static class SettingsStore
         return true;
     }
 
-    public static void Save(AppSettings settings)
+    public static void Save(AppSettings settings) => TrySave(settings, out _);
+
+    // One writer at a time: the phone saves from its pages, the floating control and the pilot's loop thread.
+    private static readonly object SaveLock = new();
+
+    /// <summary>
+    /// Writes the settings file; false (and why in <paramref name="error"/>) when it could not be written. Saves are
+    /// serialised. <see cref="Save"/> ignores the outcome (non critical on the desktop).
+    /// </summary>
+    public static bool TrySave(AppSettings settings, out string? error)
     {
-        try
+        lock (SaveLock)
         {
-            AppPaths.EnsureCreated();
-            Normalize(settings);
-            File.WriteAllText(AppPaths.SettingsFile, JsonSerializer.Serialize(settings, JsonOptions));
-        }
-        catch
-        {
-            // ignored - non critical
+            try
+            {
+                AppPaths.EnsureCreated();
+                Normalize(settings);
+                File.WriteAllText(AppPaths.SettingsFile, JsonSerializer.Serialize(settings, JsonOptions));
+                error = null;
+                return true;
+            }
+            catch (Exception ex)
+            {
+                error = ex.Message;
+                return false;
+            }
         }
     }
 

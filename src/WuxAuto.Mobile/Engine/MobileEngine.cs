@@ -38,7 +38,7 @@ public sealed class MobileEngine : IDisposable
 
     private readonly AppSettings _settings;
     private readonly Func<CaptureService?> _capture;
-    private readonly ITouchInput _touch;
+    private readonly StampedTouch _touch;
     private readonly ScreenAnalyzer _analyzer;
     private readonly ShortcutMap _shortcuts;
     private readonly TouchControls _controls;
@@ -59,9 +59,14 @@ public sealed class MobileEngine : IDisposable
     private int _stops;
     private int _stopsAtStart;
     private volatile string _pause = string.Empty;
+    private LoopDecision _lastDecision = LoopDecision.Go;
     private (int W, int H) _regionsSize;
     private bool _ocrReady;
     private int _disposed;
+
+    // The converted frame of the newest capture stamp, reused while no newer frame came in (loop thread only).
+    private Mat? _frame;
+    private long _frameTicks;
 
     /// <param name="capture">The running capture, or null (it comes and goes with the consent: one per session).</param>
     /// <param name="ocr">Owned: disposed with the engine (through the analyzer).</param>
@@ -69,13 +74,14 @@ public sealed class MobileEngine : IDisposable
     {
         _settings = settings;
         _capture = capture;
-        _touch = touch;
         if (touch is AndroidTouchInput android)
             android.DryRunSource = () => _settings.Sequence.DryRun;
+        // Stamps every gesture, so the loop gate can tell a picture from before the pilot's own touch.
+        _touch = new StampedTouch(touch);
 
         _analyzer = new ScreenAnalyzer(settings, ocr);
         _shortcuts = new ShortcutMap(_analyzer);
-        _controls = new TouchControls(settings, touch, _shortcuts);
+        _controls = new TouchControls(settings, _touch, _shortcuts);
         _pilot = new AutomationPilot(settings, _analyzer, _controls, PlatformProfile.Phone);
 
         Directory.CreateDirectory(AppPaths.LogFolder);
@@ -179,7 +185,7 @@ public sealed class MobileEngine : IDisposable
 
         _error = null;
         _startRequestedAt = Environment.TickCount64;
-        _stopsAtStart = Volatile.Read(ref _stops);
+        Volatile.Write(ref _stopsAtStart, Volatile.Read(ref _stops));
         _startRequested = true;
         EnsureLoop();
         if (_capture() == null)
@@ -194,7 +200,7 @@ public sealed class MobileEngine : IDisposable
     /// <summary>Stops the pilot (off the caller's thread: lifting a held touch can take a few seconds).</summary>
     public void Stop(string reason)
     {
-        Interlocked.Increment(ref _stops);
+        int stopId = Interlocked.Increment(ref _stops);
         bool pending = _startRequested;
         _startRequested = false;
         if (pending && !_pilot.IsRunning)
@@ -203,49 +209,63 @@ public sealed class MobileEngine : IDisposable
             RaiseState();
         }
 
-        _ = Task.Run(() =>
-        {
-            try
-            {
-                _pilot.Stop(reason);
-            }
-            catch (Exception ex)
-            {
-                Emit(LogLevel.Warning, $"Stop: {ex.Message}");
-            }
-
-            RaiseState();
-        });
+        _ = Task.Run(() => HaltAndStop(reason, stopId));
     }
 
     /// <summary>F10 equivalent: stop, then lift every held touch (skill, joystick) - off the caller's thread.</summary>
     public void Panic()
     {
-        Interlocked.Increment(ref _stops);
+        int stopId = Interlocked.Increment(ref _stops);
         _startRequested = false;
         Emit(LogLevel.Warning, "PANIC - stopping and lifting every touch.");
-        _ = Task.Run(() =>
+        _ = Task.Run(() => HaltAndStop("panic", stopId));
+    }
+
+    /// <summary>
+    /// The accessibility service went away (switched off, the app's service killed): no touch can be sent or lifted any
+    /// more, and nothing says which app is in front - stop with an error (red), as when the capture stops.
+    /// </summary>
+    public void OnServiceLost()
+    {
+        if (!_pilot.IsRunning && !_startRequested)
+            return;
+        int stopId = Interlocked.Increment(ref _stops);
+        _startRequested = false;
+        _error = "the accessibility service was turned off";
+        Emit(LogLevel.Error, "The WuxAuto accessibility service was turned off - the pilot stops. Turn it on again (Setup page), then Start.");
+        _ = Task.Run(() => HaltAndStop("accessibility service turned off", stopId));
+    }
+
+    /// <summary>
+    /// Stop / Panic / a lost capture or service: first the touch gate shuts (nothing new goes down, even from a tick
+    /// still running on the loop thread) and whatever is held is lifted, then the pilot stops. Blocking (the lift can
+    /// take ~3.5 s): never on the UI thread. <paramref name="stopId"/> = the stop's number: a Start pressed after it (the
+    /// stop ran late on the thread pool) is left alone.
+    /// </summary>
+    private void HaltAndStop(string reason, int stopId = int.MaxValue)
+    {
+        if (Volatile.Read(ref _stopsAtStart) >= stopId)
+            return;
+
+        try
         {
-            try
-            {
-                _pilot.Stop("panic");
-            }
-            catch (Exception ex)
-            {
-                Emit(LogLevel.Warning, $"Panic stop: {ex.Message}");
-            }
+            _controls.Halt();
+        }
+        catch (Exception ex)
+        {
+            Emit(LogLevel.Warning, $"Release on stop: {ex.Message}");
+        }
 
-            try
-            {
-                _controls.ReleaseAll();
-            }
-            catch (Exception ex)
-            {
-                Emit(LogLevel.Warning, $"Panic release: {ex.Message}");
-            }
+        try
+        {
+            _pilot.Stop(reason);
+        }
+        catch (Exception ex)
+        {
+            Emit(LogLevel.Warning, $"Stop: {ex.Message}");
+        }
 
-            RaiseState();
-        });
+        RaiseState();
     }
 
     /// <summary>Ends the screen capture on purpose (the main page's button): the pilot stops without an error.</summary>
@@ -264,17 +284,14 @@ public sealed class MobileEngine : IDisposable
         }
     }
 
-    /// <summary>Saves the settings (the pages and the floating control change them); a failed write is logged.</summary>
+    /// <summary>
+    /// Saves the settings (the pages, the floating control and the pilot change them). Saves are serialised by
+    /// <see cref="SettingsStore.TrySave"/>'s lock (the pilot's own saves on the loop thread take it too); a failed write is logged.
+    /// </summary>
     public void Save()
     {
-        try
-        {
-            SettingsStore.Save(_settings);
-        }
-        catch (Exception ex)
-        {
-            Emit(LogLevel.Warning, $"Settings not saved: {ex.Message}");
-        }
+        if (!SettingsStore.TrySave(_settings, out string? error))
+            Emit(LogLevel.Warning, $"Settings not saved: {error}");
     }
 
     private void EnsureLoop()
@@ -303,9 +320,8 @@ public sealed class MobileEngine : IDisposable
                 Emit(LogLevel.Error, $"Loop error: {ex.Message}");
                 Android.Util.Log.Error(Tag, ex.ToString());
                 _error = $"loop error: {ex.Message}";
-                _pilot.Stop("loop error");
-                ReleaseQuietly();
-                RaiseState();
+                Interlocked.Increment(ref _stops);
+                HaltAndStop("loop error");
             }
 
             int wait = PassIntervalMs - (int)(Environment.TickCount64 - started);
@@ -330,48 +346,87 @@ public sealed class MobileEngine : IDisposable
         }
 
         if (!_pilot.IsRunning)
-            return;
-
-        long now = FrameGate.NowTicks();
-        bool alive = capture != null;
-        long frameTicks = capture?.LatestTicks ?? 0;
-        bool front = _touch.IsGameInFront;
-
-        Mat? frame = null;
-        try
         {
-            if (alive && frameTicks > 0 && front && capture!.LatestFrame is { } latest)
+            DropFrame();
+            return;
+        }
+
+        bool front = _touch.IsGameInFront;
+        long now = FrameGate.NowTicks();
+        // First without converting a frame: when the gate waits for anything but the zone title, none is needed.
+        var decision = _gate.Decide(now, CaptureStateOf(capture, null), front, PanelOpen, _pilot.Phase, _touch.LastSentTicks);
+        Mat? frame = null;
+        if (capture != null && (decision.Tick || decision.Kind == LoopWait.NoTitle))
+        {
+            frame = FrameOf(capture);
+            if (frame != null)
             {
-                frame = latest.Bgra;
-                frameTicks = latest.Ticks;
                 ApplyRegionsFor(frame);
                 if (_gate.TitleCheckDue(now))
                     _gate.TitleChecked(now, await TitleReadsAsync(frame));
+
+                // Again for the frame the pilot would get. The clock is read after the copy: a frame stamped between an
+                // earlier reading and the copy would look like it came from the future (seen on MuMu as a stray
+                // "no recent frame" pause).
+                now = FrameGate.NowTicks();
+                decision = _gate.Decide(now, CaptureStateOf(capture, _frameTicks), front, PanelOpen, _pilot.Phase, _touch.LastSentTicks);
             }
-
-            // Read the clock after the frame: a frame stamped between an earlier reading and the copy would look like it
-            // came from the future (FrameGate: not fresh) - seen on MuMu as a stray "no recent frame" pause.
-            now = FrameGate.NowTicks();
-            var decision = _gate.Decide(now, alive, frameTicks, front, PanelOpen, _pilot.Phase);
-            SetPause(decision.Tick ? string.Empty : decision.Reason);
-            if (!decision.Tick || frame == null)
-                return;
-
-            // Loop thread only (IShortcutSource): before every tick, so a size change or a missed press is re-found
-            // before the pilot presses anything.
-            _shortcuts.Refresh(frame);
-            await _pilot.TickAsync(frame, token);
         }
-        finally
-        {
-            frame?.Dispose();
-        }
+
+        // Another app in front or the panel over the game: a held finger would press on it - lift it (I-5).
+        if (PhoneLoopGate.MustRelease(_lastDecision, decision))
+            ReleaseQuietly($"waiting: {decision.Reason}");
+        _lastDecision = decision;
+        SetPause(decision.Tick ? string.Empty : decision.Reason);
+        if (!decision.Tick || frame == null)
+            return;
+
+        // Loop thread only (IShortcutSource): before every tick, so a size change or a missed press is re-found
+        // before the pilot presses anything.
+        _shortcuts.Refresh(frame);
+        bool runningBefore = _pilot.IsRunning;
+        await _pilot.TickAsync(frame, token);
+        // Done, a failure without a restart, or a Stop during the tick: nothing may stay pressed (C-1).
+        if (PhoneLoopGate.StoppedDuringTick(runningBefore, _pilot.IsRunning))
+            ReleaseQuietly("the pilot stopped");
 
         if (!_pilot.IsRunning && _pilot.Phase == PilotPhase.Failed && _error == null)
         {
             _error = "the run failed - see the log";
             RaiseState();
         }
+    }
+
+    /// <summary>What the gate needs from the capture; <paramref name="frameTicks"/> overrides the newest stamp (the frame the pilot gets).</summary>
+    private static CaptureState CaptureStateOf(CaptureService? capture, long? frameTicks)
+    {
+        if (capture == null)
+            return new CaptureState(false, 0);
+        var rejected = capture.LastRejected;
+        return new CaptureState(true, frameTicks ?? capture.LatestTicks, rejected.Ticks, rejected.Reason);
+    }
+
+    /// <summary>
+    /// The newest frame, converted once per capture stamp: while no newer frame came in (a still screen), the same Mat
+    /// is handed to the pilot again instead of converting ~8 MB every pass (M-2). The replaced one is disposed.
+    /// </summary>
+    private Mat? FrameOf(CaptureService capture)
+    {
+        if (_frame != null && capture.LatestTicks == _frameTicks)
+            return _frame;
+        if (capture.LatestFrame is not { } latest)
+            return _frame;
+        _frame?.Dispose();
+        _frame = latest.Bgra;
+        _frameTicks = latest.Ticks;
+        return _frame;
+    }
+
+    private void DropFrame()
+    {
+        _frame?.Dispose();
+        _frame = null;
+        _frameTicks = 0;
     }
 
     /// <summary>The pilot starts once the capture has a frame; true when it runs now.</summary>
@@ -397,8 +452,11 @@ public sealed class MobileEngine : IDisposable
 
         _gate.Reset();
         _pause = string.Empty;
+        _lastDecision = LoopDecision.Go;
         _regionsSize = default;
         _shortcuts.Invalidate();
+        _touch.Reset();
+        _controls.Resume();
         // The pilot's Focus phase would bring the game back, but the loop gate holds every tick while another app is
         // in front (a Start from the launcher or this app's page): bring it here, before the first tick.
         if (!_touch.IsGameInFront && !_touch.BringGameToFront())
@@ -407,7 +465,7 @@ public sealed class MobileEngine : IDisposable
         _pilot.Start();
         // A Stop that came in between the check above and this Start found nothing running to stop: undo it here.
         if (Volatile.Read(ref _stops) != _stopsAtStart)
-            _pilot.Stop("stopped while starting");
+            HaltAndStop("stopped while starting");
         RaiseState();
         return _pilot.IsRunning;
     }
@@ -456,16 +514,11 @@ public sealed class MobileEngine : IDisposable
     {
         if (_captureStopExpected || (!_pilot.IsRunning && !_startRequested))
             return;
-        Interlocked.Increment(ref _stops);
+        int stopId = Interlocked.Increment(ref _stops);
         _startRequested = false;
         _error = "the screen capture stopped";
         Emit(LogLevel.Error, "The screen capture stopped - the pilot stops (nothing is tapped without a picture). Press Start to allow it again.");
-        _ = Task.Run(() =>
-        {
-            _pilot.Stop("screen capture stopped");
-            ReleaseQuietly();
-            RaiseState();
-        });
+        _ = Task.Run(() => HaltAndStop("screen capture stopped", stopId));
     }
 
     private void OnBossKilled(string what)
@@ -482,11 +535,13 @@ public sealed class MobileEngine : IDisposable
         RaiseState();
     }
 
-    private void ReleaseQuietly()
+    /// <summary>Lifts every touch on the loop thread (the pilot may tick again afterwards: not a halt); logged with why.</summary>
+    private void ReleaseQuietly(string why)
     {
         try
         {
             _controls.ReleaseAll();
+            Emit(LogLevel.Trace, $"Touches lifted ({why}).");
         }
         catch (Exception ex)
         {

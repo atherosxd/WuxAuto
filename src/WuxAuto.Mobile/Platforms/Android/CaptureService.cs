@@ -190,6 +190,35 @@ public class CaptureService : Service
         get { lock (_frameLock) return _latestTicks; }
     }
 
+    /// <summary>
+    /// The newest turned-down frame (black, an unexpected size or stride, a failed copy): when, why, and how many so far.
+    /// Frames that keep coming but are all turned down mean the capture is not usable (the engine's loop gate).
+    /// </summary>
+    public (long Ticks, string? Reason, long Count) LastRejected
+    {
+        get { lock (_frameLock) return (_rejectedTicks, _rejectReason, _rejectedCount); }
+    }
+
+    long _rejectedTicks;
+    string? _rejectReason;
+    long _rejectedCount;
+
+    /// <summary>Records a turned-down frame; the log gets a line only when the reason changes (not one per frame).</summary>
+    void Reject(string reason)
+    {
+        bool changed;
+        lock (_frameLock)
+        {
+            changed = reason != _rejectReason;
+            _rejectedTicks = FrameGate.NowTicks();
+            _rejectReason = reason;
+            _rejectedCount++;
+        }
+
+        if (changed)
+            Log.Warn(Tag, $"capture: frame turned down: {reason}");
+    }
+
     public override IBinder? OnBind(Intent? intent) => null;
 
     public override StartCommandResult OnStartCommand(Intent? intent, StartCommandFlags flags, int startId)
@@ -285,7 +314,7 @@ public class CaptureService : Service
                 }
                 catch (Exception ex)
                 {
-                    Log.Warn(Tag, $"capture: frame copy failed: {ex.Message}");
+                    Reject($"frame copy failed: {ex.Message}");
                 }
                 finally
                 {
@@ -308,7 +337,7 @@ public class CaptureService : Service
             int rowStride = plane.RowStride;
             if (plane.PixelStride != 4 || image.Width != Width || image.Height != Height || rowStride < Width * 4)
             {
-                Log.Warn(Tag, $"capture: unexpected image {image.Width}x{image.Height} px stride {plane.PixelStride} row {rowStride}");
+                Reject($"unexpected image {image.Width}x{image.Height} (capture {Width}x{Height}) px stride {plane.PixelStride} row {rowStride}");
                 return;
             }
 
@@ -321,7 +350,10 @@ public class CaptureService : Service
             _lastCopyTicks = now;
 
             if (LitFraction(_spare, rowStride) < BlackLit)
+            {
+                Reject("black frame");
                 return; // keep the last good frame
+            }
 
             lock (_frameLock)
             {
@@ -381,6 +413,8 @@ public class CaptureService : Service
         {
             _latest = null;
             _latestTicks = 0;
+            _rejectedTicks = 0;
+            _rejectReason = null;
         }
 
         try

@@ -4,10 +4,19 @@ namespace WuxAuto.Core.Tests;
 
 public class FloatingSpotTests
 {
+    // The clear top strip at 1920x1080: x 640-1110, y 0-55; the button is 54 px.
+    const int W = 1920, H = 1080, Size = 54;
+
+    static void AssertInsideTheStrip(int left, int top, int size = Size)
+    {
+        Assert.InRange(left, 640, 1110 - size);
+        Assert.InRange(top, 0, 55 - size);
+    }
+
     [Fact]
     public void Size_IsAboutFivePercentOfTheShortSide()
     {
-        Assert.Equal(54, FloatingSpot.SizeFor(1920, 1080));   // the note's limit at 1920x1080: 56 px
+        Assert.Equal(54, FloatingSpot.SizeFor(1920, 1080));   // fits the 55 px strip
         Assert.Equal(60, FloatingSpot.SizeFor(2608, 1200));
         Assert.Equal(54, FloatingSpot.SizeFor(1080, 1920));   // portrait: the same short side
         Assert.Equal(FloatingSpot.MinSize, FloatingSpot.SizeFor(320, 200));
@@ -16,60 +25,74 @@ public class FloatingSpotTests
     [Fact]
     public void DefaultSpot_SitsInTheTopStrip()
     {
-        // The note's spot: centre (0.40, 0.03) = 768,32 at 1920x1080, inside x 640-1110, y 0-55.
-        var (left, top) = FloatingSpot.TopLeft(0.40, 0.03, 1920, 1080, 54);
+        // The note's spot: centre (0.40, 0.03) = 768,32 - moved up just enough to keep the whole button above y 55.
+        var (left, top) = FloatingSpot.TopLeft(0.40, 0.03, W, H, Size);
 
         Assert.Equal(768 - 27, left);
-        Assert.Equal(5, top);
-        Assert.InRange(left, 640, 1110 - 54);
-        Assert.InRange(top + 54, 0, 60);
+        AssertInsideTheStrip(left, top);
+    }
+
+    [Theory]
+    [InlineData(900, 300)]    // the world view
+    [InlineData(120, 540)]    // the left edge (too narrow for the button)
+    [InlineData(1800, 1000)]  // the bottom-right skill cluster
+    [InlineData(1700, 80)]    // the minimap
+    [InlineData(1188, 28)]    // ☰
+    [InlineData(300, 20)]     // the level / HP block
+    [InlineData(-50, -50)]    // off screen
+    public void DropOutsideTheStrip_RestsInsideIt(int x, int y)
+    {
+        var (fx, fy) = FloatingSpot.Snap(x, y, W, H, Size);
+        var (left, top) = FloatingSpot.TopLeft(fx, fy, W, H, Size);
+
+        AssertInsideTheStrip(left, top);
     }
 
     [Fact]
-    public void TopLeft_KeepsTheButtonOnScreen()
+    public void Drop_GoesToTheNearestSpot()
     {
-        Assert.Equal((0, 0), FloatingSpot.TopLeft(-1, -1, 1920, 1080, 54));
-        Assert.Equal((1920 - 54, 1080 - 54), FloatingSpot.TopLeft(2, 2, 1920, 1080, 54));
+        // Below the strip at x 900: straight up, x kept.
+        var (fx, _) = FloatingSpot.Snap(900, 300, W, H, Size);
+        Assert.Equal(900.0 / W, fx, 6);
+
+        // Left of the strip: its left end.
+        var (lx, _) = FloatingSpot.Snap(100, 20, W, H, Size);
+        Assert.Equal((640 + 27.0) / W, lx, 6);
+
+        // Right of it (☰): its right end.
+        var (rx, _) = FloatingSpot.Snap(1500, 20, W, H, Size);
+        Assert.Equal((1110 - 27.0) / W, rx, 6);
     }
 
     [Fact]
-    public void Snap_GoesToTheNearestEdge()
+    public void DropInsideTheStrip_StaysPut()
     {
-        const int w = 1920, h = 1080, size = 54, half = 27, m = FloatingSpot.EdgeMargin;
+        var (fx, fy) = FloatingSpot.Snap(800, 27, W, H, Size);
 
-        // Near the top: y snaps to the top, x stays.
-        var top = FloatingSpot.Snap(800, 60, w, h, size);
-        Assert.Equal(800 / (double)w, top.X, 6);
-        Assert.Equal((m + half) / (double)h, top.Y, 6);
-
-        // Near the left: x snaps to the left, y stays.
-        var left = FloatingSpot.Snap(90, 530, w, h, size);
-        Assert.Equal((m + half) / (double)w, left.X, 6);
-        Assert.Equal(530 / (double)h, left.Y, 6);
-
-        // Near the right and the bottom.
-        Assert.Equal((w - m - half) / (double)w, FloatingSpot.Snap(1880, 500, w, h, size).X, 6);
-        Assert.Equal((h - m - half) / (double)h, FloatingSpot.Snap(900, 1070, w, h, size).Y, 6);
+        Assert.Equal(800.0 / W, fx, 6);
+        Assert.Equal(27.0 / H, fy, 6);
     }
 
     [Fact]
-    public void Snap_ClampsTheOtherAxis()
+    public void SavedSpotOutsideEveryBand_IsLaidOutInside()
     {
-        // Dropped half off the top-left corner: both axes end up on screen.
-        var p = FloatingSpot.Snap(-30, 10, 1920, 1080, 54);
-        var (left, top) = FloatingSpot.TopLeft(p.X, p.Y, 1920, 1080, 54);
+        // A spot saved by the first version (bottom-right edge snap).
+        var (left, top) = FloatingSpot.TopLeft(0.938, 0.971, W, H, Size);
 
-        Assert.InRange(left, 0, 1920 - 54);
-        Assert.InRange(top, 0, 1080 - 54);
+        AssertInsideTheStrip(left, top);
     }
 
     [Fact]
-    public void Snap_RoundTripsThroughTopLeft()
+    public void OtherScreen_TheStripScalesWithTheHeight_AroundTheCentre()
     {
-        var p = FloatingSpot.Snap(768, 20, 1920, 1080, 54);
-        var (left, top) = FloatingSpot.TopLeft(p.X, p.Y, 1920, 1080, 54);
+        // 2608x1200 (Xiaomi, not checked live): the strip is 1200/1080 bigger and centred like the HUD's top strip.
+        int size = FloatingSpot.SizeFor(2608, 1200);
+        var band = FloatingSpot.BandsFor(2608, 1200)[0];
+        var (fx, fy) = FloatingSpot.Snap(2000, 600, 2608, 1200, size);
+        var (left, top) = FloatingSpot.TopLeft(fx, fy, 2608, 1200, size);
 
-        Assert.Equal(768 - 27, left);
-        Assert.Equal(FloatingSpot.EdgeMargin, top);
+        Assert.Equal(61, band.Height);
+        Assert.InRange(left, band.X, band.Right - size);
+        Assert.InRange(top, band.Y, band.Bottom - size);
     }
 }

@@ -86,6 +86,10 @@ public class PilotAccessibilityService : AccessibilityService
             return;
 
         FloatingControl.Detach();
+        // Without the service nothing can be touched or lifted, and nothing says which app is in front: a running
+        // pilot stops with an error (red) - only if the engine exists, the service must not create it on the way out.
+        if (Engine.EngineHost.IsCreated)
+            Engine.EngineHost.Engine.OnServiceLost();
         // Lift any held finger while dispatching still works, then stop dispatching.
         Touch.Release();
         _instance = null;

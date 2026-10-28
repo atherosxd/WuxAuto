@@ -173,6 +173,108 @@ public class PhoneLoopGateTests
         Assert.False(gate.Decide(T0 + Ms(1), captureAlive: true, frameTicks: T0, gameInFront: true, panelOpen: false, PilotPhase.LodAttack).Tick);
     }
 
+    // --- I-3: a touch must be followed by a frame; frames all turned down = not alive -------------------------------
+
+    static LoopDecision DecideAt(PhoneLoopGate gate, long now, CaptureState capture, long lastTouch = 0) =>
+        gate.Decide(now, capture, gameInFront: true, panelOpen: false, PilotPhase.LodAttack, lastTouch);
+
+    [Fact]
+    public void TouchWithoutANewFrame_WaitsAfterThreeSeconds()
+    {
+        long touch = T0 + Ms(1_000);
+        var gate = GateWithTitleAt(touch + Ms(2_900));
+        var capture = new CaptureState(true, T0);   // the newest frame is from before the touch
+
+        Assert.True(DecideAt(gate, touch + Ms(PhoneLoopGate.TouchFrameMs - 1), capture, touch).Tick);
+        var d = DecideAt(gate, touch + Ms(PhoneLoopGate.TouchFrameMs), capture, touch);
+        Assert.False(d.Tick);
+        Assert.Equal(LoopWait.NoFrameSinceTouch, d.Kind);
+    }
+
+    [Fact]
+    public void FrameAfterTheTouch_Ticks()
+    {
+        long touch = T0 + Ms(1_000);
+        var gate = GateWithTitleAt(touch + Ms(5_000));
+
+        Assert.True(DecideAt(gate, touch + Ms(6_000), new CaptureState(true, touch + Ms(200)), touch).Tick);
+        Assert.True(DecideAt(gate, touch + Ms(6_000), new CaptureState(true, touch), touch).Tick);   // stamped with the touch itself
+    }
+
+    [Fact]
+    public void StillScreenWithoutTouches_StillTicksAfterMinutes()
+    {
+        var gate = GateWithTitleAt(T0 + Ms(239_000));
+
+        Assert.True(DecideAt(gate, T0 + Ms(240_000), new CaptureState(true, T0), lastTouch: T0 - Ms(1)).Tick);
+    }
+
+    [Fact]
+    public void FramesAllRejectedForTenSeconds_Waits_WithTheReason()
+    {
+        var gate = GateWithTitleAt(T0 + Ms(10_000));
+        long now = T0 + Ms(PhoneLoopGate.RejectedForMs);
+        var capture = new CaptureState(true, T0, LastRejectedTicks: now - Ms(100), RejectReason: "unexpected image 1080x1920");
+
+        var d = DecideAt(gate, now, capture);
+
+        Assert.False(d.Tick);
+        Assert.Equal(LoopWait.FramesRejected, d.Kind);
+        Assert.Contains("1080x1920", d.Reason);
+    }
+
+    [Fact]
+    public void FramesRejectedBriefly_OrLongAgo_StillTick()
+    {
+        var gate = GateWithTitleAt(T0 + Ms(20_000));
+
+        // Rejected for under 10 s since the last good frame.
+        Assert.True(DecideAt(gate, T0 + Ms(9_000), new CaptureState(true, T0, T0 + Ms(8_900), "black frame")).Tick);
+        // The last rejection was long ago and the screen is simply still.
+        Assert.True(DecideAt(gate, T0 + Ms(20_000), new CaptureState(true, T0, T0 + Ms(5_000), "black frame")).Tick);
+        // A good frame came after the rejections.
+        Assert.True(DecideAt(gate, T0 + Ms(20_000), new CaptureState(true, T0 + Ms(19_000), T0 + Ms(18_000), "black frame")).Tick);
+    }
+
+    [Fact]
+    public void OnlyRejectedFramesSinceTheStart_Waits()
+    {
+        var gate = new PhoneLoopGate();
+        long now = T0 + Ms(30_000);
+
+        var d = DecideAt(gate, now, new CaptureState(true, 0, now - Ms(50), "black frame"));
+
+        Assert.Equal(LoopWait.FramesRejected, d.Kind);
+    }
+
+    // --- C-1 / I-5: when the engine lifts every touch -----------------------------------------------------------------
+
+    [Fact]
+    public void MustRelease_OnEnteringNotInFrontOrPanelOpen_Once()
+    {
+        var go = LoopDecision.Go;
+        var behind = LoopDecision.Wait(LoopWait.NotInFront, "x");
+        var panel = LoopDecision.Wait(LoopWait.PanelOpen, "x");
+        var noTitle = LoopDecision.Wait(LoopWait.NoTitle, "x");
+
+        Assert.True(PhoneLoopGate.MustRelease(go, behind));
+        Assert.True(PhoneLoopGate.MustRelease(go, panel));
+        Assert.True(PhoneLoopGate.MustRelease(behind, panel));
+        Assert.True(PhoneLoopGate.MustRelease(noTitle, behind));
+        Assert.False(PhoneLoopGate.MustRelease(behind, behind));   // still behind: once is enough
+        Assert.False(PhoneLoopGate.MustRelease(panel, panel));
+        Assert.False(PhoneLoopGate.MustRelease(go, noTitle));
+        Assert.False(PhoneLoopGate.MustRelease(behind, go));
+    }
+
+    [Theory]
+    [InlineData(true, false, true)]
+    [InlineData(true, true, false)]
+    [InlineData(false, false, false)]
+    [InlineData(false, true, false)]
+    public void StoppedDuringTick_OnlyOnRunningToStopped(bool before, bool after, bool expected) =>
+        Assert.Equal(expected, PhoneLoopGate.StoppedDuringTick(before, after));
+
     [Theory]
     [InlineData("[Piercing City]", true)]
     [InlineData("[Piercing Cityl", true)]
