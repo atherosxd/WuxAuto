@@ -394,8 +394,9 @@ public sealed partial class AutomationPilot
     {
         // Positions are never carried over from an earlier run or a saved file: the game may now
         // run at another resolution. The learned template scales are dropped on the next tick
-        // (the vision loop owns the analyzer), when the client size is known for the log.
-        _settings.ResetPositions();
+        // (the vision loop owns the analyzer), when the client size is known for the log. The phone's
+        // regions depend on the screen size and are set again on that tick.
+        _settings.ResetPositions(Profile);
         _positionsResetPending = true;
 
         _attempts = 0;
@@ -521,6 +522,8 @@ public sealed partial class AutomationPilot
         {
             _positionsResetPending = false;
             _analyzer.ResetScaleCache();
+            if (Profile == PlatformProfile.Phone)
+                _settings.ResetPositions(Profile, frame.Width, frame.Height);
             Log?.Invoke(LogLevel.Info,
                 $"Screen positions reset to the built-in defaults for the {frame.Width}x{frame.Height} client; template scales will be re-learned.");
         }

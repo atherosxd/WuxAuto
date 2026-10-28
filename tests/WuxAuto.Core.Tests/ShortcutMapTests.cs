@@ -1,0 +1,319 @@
+using System.Drawing;
+using System.Text.Json;
+using Emgu.CV;
+using Emgu.CV.CvEnum;
+using Emgu.CV.Structure;
+using WuxAuto.Automation;
+using WuxAuto.Phone;
+using WuxAuto.Vision;
+
+namespace WuxAuto.Core.Tests;
+
+/// <summary>
+/// The phone templates (src\WuxAuto.Mobile\Assets\phone, cropped from the MuMu frames at 1920x1080) pasted onto a
+/// synthetic frame where the game puts them, at 1920x1080 and scaled to the Xiaomi's 2608x1200 (the HUD scales with
+/// the height: left-hand items keep their distance from the left edge, right-hand ones from the right edge).
+/// </summary>
+[Collection("AppPaths")]
+public class ShortcutMapTests : AppPathsScope
+{
+    // Where each crop was cut from (top-left at 1920x1080) and which edge it sits on.
+    static readonly (string Template, int X, int Y, PhoneAnchor Anchor)[] Hud =
+    [
+        ("phone_teleportscroll", 44, 724, PhoneAnchor.Left),
+        ("phone_pickup", 76, 664, PhoneAnchor.Left),
+        ("phone_joystick", 187, 741, PhoneAnchor.Left),
+        ("phone_autobuff", 1804, 630, PhoneAnchor.Right),
+        ("phone_sword", 1595, 755, PhoneAnchor.Right),
+        ("phone_runskill", 1388, 718, PhoneAnchor.Right),
+        ("phone_skill1", 1455, 607, PhoneAnchor.Right),
+        ("phone_menu", 1158, 2, PhoneAnchor.Centre),
+    ];
+
+    static string PhoneAssets => Path.Combine(AppContext.BaseDirectory, "Assets", "phone");
+
+    ScreenAnalyzer NewAnalyzer()
+    {
+        AppPaths.Configure(TempRoot(), PhoneAssets);
+        return new ScreenAnalyzer(new AppSettings(), new FakeOcrEngine());
+    }
+
+    /// <summary>A noisy grey frame with every HUD crop pasted at its place for this size, moved by <paramref name="shiftX"/> px.</summary>
+    static (Mat Frame, Dictionary<string, PixelRect> Placed) HudFrame(int w, int h, int shiftX = 0)
+    {
+        var frame = new Mat(h, w, DepthType.Cv8U, 4);
+        frame.SetTo(new MCvScalar(110, 110, 110, 255));
+        using (var noise = new Mat(h, w, DepthType.Cv8U, 4))
+        {
+            CvInvoke.Randu(noise, new MCvScalar(0, 0, 0, 0), new MCvScalar(40, 40, 40, 0));
+            CvInvoke.Add(frame, noise, frame);
+        }
+
+        double s = h / 1080.0;
+        var placed = new Dictionary<string, PixelRect>();
+        foreach (var (name, x, y, anchor) in Hud)
+        {
+            using var crop = CvInvoke.Imread(Path.Combine(PhoneAssets, name + ".png"), ImreadModes.ColorBgr);
+            var size = new Size((int)Math.Round(crop.Width * s), (int)Math.Round(crop.Height * s));
+            using var scaled = new Mat();
+            CvInvoke.Resize(crop, scaled, size, 0, 0, Inter.Area);
+            using var bgra = new Mat();
+            CvInvoke.CvtColor(scaled, bgra, ColorConversion.Bgr2Bgra);
+
+            var box = PhoneLayout.ToPixels(x, y, crop.Width, crop.Height, anchor, w, h);
+            box = box with { X = box.X + shiftX, Width = size.Width, Height = size.Height };
+            using (var target = new Mat(frame, new Rectangle(box.X, box.Y, box.Width, box.Height)))
+                bgra.CopyTo(target);
+            placed[name] = box;
+        }
+
+        return (frame, placed);
+    }
+
+    static void AssertAt(PixelRect expected, PixelRect? found, string what)
+    {
+        Assert.True(found.HasValue, $"{what} not found");
+        var f = found!.Value;
+        Assert.True(Math.Abs(f.CenterX - expected.CenterX) <= 4 && Math.Abs(f.CenterY - expected.CenterY) <= 4,
+            $"{what}: expected near {expected}, found {f}");
+    }
+
+    [Theory]
+    [InlineData(1920, 1080)]
+    [InlineData(2608, 1200)]
+    public void FindsEachShortcutOnRingFrame(int w, int h)
+    {
+        using var analyzer = NewAnalyzer();
+        var map = new ShortcutMap(analyzer);
+        var (frame, placed) = HudFrame(w, h);
+        using (frame)
+            map.Refresh(frame);
+
+        Assert.Equal((w, h), map.FrameSize);
+        AssertAt(placed["phone_teleportscroll"], map.Find(GameAction.TeleportScroll), "TeleportScroll");
+        AssertAt(placed["phone_pickup"], map.Find(GameAction.Loot), "Loot");
+        AssertAt(placed["phone_autobuff"], map.Find(GameAction.Buff), "Buff");
+        AssertAt(placed["phone_sword"], map.Find(GameAction.TargetNearest), "TargetNearest");
+        AssertAt(placed["phone_runskill"], map.Find(GameAction.RunSkillKey), "RunSkillKey");
+        AssertAt(placed["phone_menu"], map.Menu, "Menu");
+        AssertAt(placed["phone_skill1"], map.Skill("1"), "Skill 1");
+
+        var joy = placed["phone_joystick"];
+        Assert.NotNull(map.Joystick);
+        var (cx, cy, radius) = map.Joystick!.Value;
+        Assert.InRange(cx, joy.CenterX - 4, joy.CenterX + 4);
+        Assert.InRange(cy, joy.CenterY - 4, joy.CenterY + 4);
+        // 106 px at 1080 (Task 1), scaled with the height.
+        Assert.InRange(radius, (int)(106 * h / 1080.0) - 4, (int)(106 * h / 1080.0) + 4);
+
+        // No template for these yet (not on the ring / not on the bar / no skill there in the frames).
+        Assert.Null(map.Find(GameAction.ToggleAutohunt));
+        Assert.Null(map.Find(GameAction.ShuraKey));
+        Assert.Null(map.Find(GameAction.StopAttack));
+        Assert.Null(map.Skill("2"));
+        Assert.Null(map.Skill("3"));
+        Assert.Null(map.Skill("4"));
+    }
+
+    [Fact]
+    public void SameSize_RefreshIsANoOp()
+    {
+        using var analyzer = NewAnalyzer();
+        var map = new ShortcutMap(analyzer);
+        var (first, _) = HudFrame(1920, 1080);
+        using (first)
+            map.Refresh(first);
+        var before = map.Find(GameAction.Buff);
+
+        var (moved, _) = HudFrame(1920, 1080, shiftX: -30);
+        using (moved)
+            map.Refresh(moved);
+
+        Assert.Equal(before, map.Find(GameAction.Buff));
+    }
+
+    [Fact]
+    public void SizeChange_ForgetsPositionsAndSearchesAgain()
+    {
+        using var analyzer = NewAnalyzer();
+        var map = new ShortcutMap(analyzer);
+        var (small, _) = HudFrame(1920, 1080);
+        using (small)
+            map.Refresh(small);
+        Assert.NotNull(map.Find(GameAction.Buff));
+
+        var (big, placed) = HudFrame(2608, 1200);
+        using (big)
+            map.Refresh(big);
+
+        Assert.Equal((2608, 1200), map.FrameSize);
+        AssertAt(placed["phone_autobuff"], map.Find(GameAction.Buff), "Buff after the size change");
+        AssertAt(placed["phone_teleportscroll"], map.Find(GameAction.TeleportScroll), "TeleportScroll after the size change");
+    }
+
+    [Fact]
+    public void SizeChange_WithTheIconsGone_ForgetsTheOldPositions()
+    {
+        using var analyzer = NewAnalyzer();
+        var map = new ShortcutMap(analyzer);
+        var (hud, _) = HudFrame(1920, 1080);
+        using (hud)
+            map.Refresh(hud);
+        Assert.NotNull(map.Find(GameAction.Buff));
+
+        using var blank = new Mat(1200, 2608, DepthType.Cv8U, 4);
+        blank.SetTo(new MCvScalar(110, 110, 110, 255));
+        map.Refresh(blank);
+
+        Assert.Null(map.Find(GameAction.Buff));
+        Assert.Null(map.Joystick);
+        Assert.Null(map.Menu);
+    }
+
+    [Fact]
+    public void Invalidate_SearchesAgainOnNextRefresh()
+    {
+        using var analyzer = NewAnalyzer();
+        var map = new ShortcutMap(analyzer);
+        var (first, _) = HudFrame(1920, 1080);
+        using (first)
+            map.Refresh(first);
+        Assert.NotNull(map.Find(GameAction.Buff));
+
+        map.Invalidate();
+        Assert.Null(map.Find(GameAction.Buff));
+
+        var (moved, placed) = HudFrame(1920, 1080, shiftX: -30);
+        using (moved)
+            map.Refresh(moved);
+
+        AssertAt(placed["phone_autobuff"], map.Find(GameAction.Buff), "Buff after Invalidate");
+    }
+
+    [Fact]
+    public void BeforeTheFirstFrame_NothingIsKnown()
+    {
+        using var analyzer = NewAnalyzer();
+        var map = new ShortcutMap(analyzer);
+
+        Assert.Equal((0, 0), map.FrameSize);
+        Assert.Null(map.Find(GameAction.TeleportScroll));
+        Assert.Null(map.Joystick);
+        Assert.Null(map.Menu);
+    }
+
+    static string RegionsJson(AppSettings s) => JsonSerializer.Serialize(s.Regions);
+
+    [Fact]
+    public void DesktopProfile_RegionsUnchanged()
+    {
+        string defaults = RegionsJson(new AppSettings());
+        var dungeonDefaults = JsonSerializer.Serialize(new DungeonSettings());
+
+        foreach (var reset in new Action<AppSettings>[]
+                 {
+                     s => s.ResetPositions(),
+                     s => s.ResetPositions(PlatformProfile.Desktop),
+                     s => s.ResetPositions(PlatformProfile.Desktop, 2608, 1200),
+                 })
+        {
+            var settings = new AppSettings();
+            settings.Regions.Minimap = new NormRect(0.1, 0.1, 0.1, 0.1);
+            settings.Regions.AttackMessage = new NormRect(0.2, 0.2, 0.2, 0.2);
+            settings.Dungeon.BossSelectX = 0.9;
+
+            reset(settings);
+
+            Assert.Equal(defaults, RegionsJson(settings));
+            Assert.Equal(dungeonDefaults, JsonSerializer.Serialize(settings.Dungeon));
+        }
+    }
+
+    [Fact]
+    public void PhoneProfile_AppliesThePhoneRegions()
+    {
+        var settings = new AppSettings();
+        settings.ResetPositions(PlatformProfile.Phone, 1920, 1080);
+
+        var expected = new AppSettings();
+        PhoneRegions.Apply(expected, 1920, 1080);
+        Assert.Equal(RegionsJson(expected), RegionsJson(settings));
+        Assert.NotEqual(RegionsJson(new AppSettings()), RegionsJson(settings));
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Pilot_FirstTick_SetsTheRegionsForItsProfileAndFrameSize(bool phone)
+    {
+        AppPaths.Configure(TempRoot(), PhoneAssets);
+        var settings = new AppSettings();
+        settings.Input.FocusOnStart = false;
+        using var analyzer = new ScreenAnalyzer(settings, new FakeOcrEngine());
+        var profile = phone ? PlatformProfile.Phone : PlatformProfile.Desktop;
+        var pilot = new AutomationPilot(settings, analyzer, new KeyboardMouseControls(settings, new FakeGameInput()), profile);
+        using var frame = Blank.Bgra(1200, 2608);
+
+        pilot.Start();
+        await pilot.TickAsync(frame, CancellationToken.None);
+        pilot.Stop("test over");
+
+        var expected = new AppSettings();
+        if (phone)
+            PhoneRegions.Apply(expected, 2608, 1200);
+        Assert.Equal(RegionsJson(expected), RegionsJson(settings));
+    }
+
+    [Fact]
+    public void PhoneRegions_At1920x1080_MatchTheMeasuredBoxes()
+    {
+        var s = new AppSettings();
+        PhoneRegions.Apply(s, 1920, 1080);
+
+        // Task 1 (MuMu, 1920x1080): minimap title + coordinates lines 1560-1900 x 55-125 (M0 crop), system / combat lines 20-540 x 225-470,
+        // hotbar slots y 1022 x 680-1236, target / pet panel 1282-1550 x 60-175, teleport list 760-1160 x 155-960.
+        AssertCovers(s.Regions.Minimap, 1920, 1080, 1560, 55, 1900, 125);
+        Assert.True(s.Regions.Minimap.ToPixels(1920, 1080).Bottom < 160, "the minimap band is the title + coordinates lines only");
+        AssertCovers(s.Regions.AttackMessage, 1920, 1080, 20, 225, 540, 470);
+        AssertCovers(s.Regions.Hotbar, 1920, 1080, 646, 988, 1270, 1056);
+        AssertCovers(s.Regions.TargetBox, 1920, 1080, 1282, 60, 1550, 175);
+        AssertCovers(s.Regions.TeleportList, 1920, 1080, 760, 155, 1160, 960);
+        AssertCovers(s.Regions.Ocr, 1920, 1080, 760, 155, 1160, 960);
+        Assert.Equal(JsonSerializer.Serialize(new NormRect(0, 0, 1, 1)), JsonSerializer.Serialize(s.Regions.BossName));
+
+        // The combat log is on the left on the phone (M0), never past the middle.
+        Assert.True(s.Regions.AttackMessage.X + s.Regions.AttackMessage.W < 0.5);
+    }
+
+    [Fact]
+    public void PhoneRegions_WiderScreen_KeepTheRightHandPanelsOnTheRightEdge()
+    {
+        var s = new AppSettings();
+        PhoneRegions.Apply(s, 2608, 1200);
+
+        // The minimap lines keep their distance from the right edge (scaled with the height): 1920 - 1560 = 360 px at 1080.
+        var minimap = s.Regions.Minimap.ToPixels(2608, 1200);
+        Assert.True(minimap.X <= 2608 - 360 * 1200 / 1080, $"minimap {minimap}");
+        Assert.True(minimap.Right >= 2608 - 20 * 1200 / 1080 - 2, $"minimap {minimap}");
+        // The combat log stays at the left edge.
+        Assert.True(s.Regions.AttackMessage.ToPixels(2608, 1200).X <= 20 * 1200 / 1080);
+    }
+
+    [Fact]
+    public void PhoneRegions_NoSizeYet_UsesTheMeasuredScreen()
+    {
+        var unknown = new AppSettings();
+        PhoneRegions.Apply(unknown, 0, 0);
+        var measured = new AppSettings();
+        PhoneRegions.Apply(measured, 1920, 1080);
+
+        Assert.Equal(RegionsJson(measured), RegionsJson(unknown));
+    }
+
+    static void AssertCovers(NormRect region, int w, int h, int left, int top, int right, int bottom)
+    {
+        var px = region.ToPixels(w, h);
+        Assert.True(px.X <= left && px.Y <= top && px.Right >= right && px.Bottom >= bottom,
+            $"{px} does not cover {left},{top}-{right},{bottom}");
+    }
+}

@@ -86,11 +86,18 @@ public sealed class AppSettings
 
     public UiSettings Ui { get; set; } = new();
 
-    /// <summary>Puts every screen position (regions and click fractions) back to the built-in defaults.</summary>
-    public void ResetPositions()
+    /// <summary>
+    /// Puts every screen position (regions and click fractions) back to the built-in defaults. With
+    /// <see cref="PlatformProfile.Phone"/> the phone regions (<see cref="WuxAuto.Phone.PhoneRegions"/>) for a
+    /// <paramref name="width"/> x <paramref name="height"/> screen go over them (0 = size not known yet); any other
+    /// profile, or none, leaves the desktop defaults.
+    /// </summary>
+    public void ResetPositions(PlatformProfile? profile = null, int width = 0, int height = 0)
     {
         Regions = new RegionSettings();
         (Dungeon ??= new DungeonSettings()).ResetPositions();
+        if (profile == PlatformProfile.Phone)
+            WuxAuto.Phone.PhoneRegions.Apply(this, width, height);
     }
 }
 
