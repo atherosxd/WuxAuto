@@ -248,7 +248,7 @@ public static class SettingsStore
         w.DisabledBuffs = Clean(w.DisabledBuffs);
         w.LeadMs = Math.Clamp(w.LeadMs, 0, 120000);
         w.DialogWaitMs = Math.Clamp(w.DialogWaitMs, 10000, 600000);
-        w.BuffClickGapMs = Math.Clamp(w.BuffClickGapMs, 100, 10000);
+        w.BuffClickGapMs = Math.Clamp(w.BuffClickGapMs, 800, 10000);   // the buff animation needs 0.8 s (user)
         w.BuffEveryMs = Math.Clamp(w.BuffEveryMs, 30000, 3600000);
         w.ShuraHoldMs = Math.Clamp(w.ShuraHoldMs, 0, 10000);
         w.TargetGoneMs = Math.Clamp(w.TargetGoneMs, 500, 30000);
