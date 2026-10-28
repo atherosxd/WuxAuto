@@ -100,14 +100,20 @@ public class PilotAccessibilityService : AccessibilityService
             var windows = Windows;
             if (windows != null)
             {
+                string? active = null;
                 foreach (var window in windows)
                 {
-                    if (!window.IsActive)
-                        continue;
-                    using var root = window.Root;
-                    if (root?.PackageName is { } package)
-                        return package;
+                    using (window)
+                    {
+                        if (active != null || !window.IsActive)
+                            continue;
+                        using var root = window.Root;
+                        active = root?.PackageName;
+                    }
                 }
+
+                if (active != null)
+                    return active;
             }
         }
         catch (Exception ex)

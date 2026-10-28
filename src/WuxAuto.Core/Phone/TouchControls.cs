@@ -10,7 +10,7 @@ namespace WuxAuto.Phone;
 // * TiltCamera: vertical Drag at 0.65 w (at 0.74 w vertical drags were ignored); negative pixels = finger up = towards the horizon  - TiltCamera_*
 // * ScrollList(n < 0), the list moves down: the finger swipes UP (Settings list; the map list pages by its arrows, never by swipe)  - ScrollList_Down_FingerSwipesUp
 // * Has(RunSkillKey) = the shortcut icon was found; Has(OpenInventory | ToggleSettings) = the menu was found (both confirmed)
-// * ZoomOut: one pinch per 5 notches, at least one (360 -> 96 px, 400 ms is about x0.5, 3 pinches = full range)  - ZoomOut_OnePinchPerFiveNotches
+// * ZoomOut: one pinch per 5 notches, at least one (fingers 720 -> 192 px apart, 400 ms is about x0.5, 3 pinches = full range)  - ZoomOut_OnePinchPerFiveNotches
 // * TapSettleMs 100 (a tap right after the joystick is lost up to 38 ms)
 // Still unverified (the character had no skill on the wheel; nothing was toggled in town):
 // * skill long-press (SkillDown / SkillUp), Shura = ActionDown(ShuraKey) / StopAttack icon (no stop-attack shortcut exists in the picker),

@@ -29,6 +29,11 @@ public sealed class MlKitOcrEngine : IOcrEngine, IDisposable
     ITextRecognizer? _client;
     bool _failed;
 
+    // A recognizer whose test recognition was still running when EnsureInitialized gave up waiting (a slow first
+    // model load); the next call looks at the test again instead of failing for good.
+    ITextRecognizer? _candidate;
+    Task? _candidateTest;
+
     public string Status { get; private set; } = "not initialised";
 
     public bool IsAvailable => _client != null && !_failed;
@@ -37,8 +42,9 @@ public sealed class MlKitOcrEngine : IOcrEngine, IDisposable
 
     /// <summary>
     /// Creates the recognizer and, off the main thread, recognises a small test picture so a model that cannot load
-    /// shows up here (IsAvailable false) instead of on the first real read. On the main thread the test is skipped:
-    /// ML Kit reports back on the main thread, so waiting there would never end.
+    /// shows up here (IsAvailable false) instead of on the first real read. A test that is only slow is not a failure:
+    /// the call returns false and a later call picks the result up. On the main thread the test is skipped: ML Kit
+    /// reports back on the main thread, so waiting there would never end.
     /// </summary>
     public bool EnsureInitialized()
     {
@@ -53,28 +59,60 @@ public sealed class MlKitOcrEngine : IOcrEngine, IDisposable
                 return true;
             try
             {
-                var client = TextRecognition.GetClient(TextRecognizerOptions.DefaultOptions!)!;
-                if (Looper.MyLooper() != Looper.MainLooper)
+                if (_candidate == null)
                 {
-                    using var probe = Bitmap.CreateBitmap(96, 32, Bitmap.Config.Argb8888!)!;
-                    probe.EraseColor(Android.Graphics.Color.White);
-                    var test = client.Process(InputImage.FromBitmap(probe, 0)!)!.AsAsync<Java.Lang.Object>();
-                    if (!test.Wait(TimeoutMs * 2))
-                        throw new TimeoutException("the test recognition did not finish");
+                    _candidate = TextRecognition.GetClient(TextRecognizerOptions.DefaultOptions!)!;
+                    _candidateTest = Looper.MyLooper() == Looper.MainLooper ? null : StartTest(_candidate);
                 }
 
-                _client = client;
+                if (_candidateTest is { } test && !test.Wait(TimeoutMs * 2))
+                {
+                    Status = "OCR still loading (the test recognition is slow); will retry";
+                    Log.Warn(MainApplication.Tag, Status);
+                    return false;
+                }
+
+                if (_candidateTest is { IsFaulted: true } failed)
+                    throw failed.Exception!.GetBaseException();
+
+                _client = _candidate;
+                _candidate = null;
+                _candidateTest = null;
                 Status = "ML Kit text recognition ready (Latin, bundled)";
                 return true;
             }
             catch (Exception ex)
             {
                 _failed = true;
+                _candidate?.Close();
+                _candidate = null;
+                _candidateTest = null;
                 Status = $"OCR unavailable: {ex.GetBaseException().Message}";
                 Log.Error(MainApplication.Tag, Status);
                 return false;
             }
         }
+    }
+
+    /// <summary>Recognises a small white picture; the bitmap is freed when ML Kit is done with it, not before.</summary>
+    static Task StartTest(ITextRecognizer client)
+    {
+        var probe = Bitmap.CreateBitmap(96, 32, Bitmap.Config.Argb8888!)!;
+        probe.EraseColor(Android.Graphics.Color.White);
+        Task test;
+        try
+        {
+            test = client.Process(InputImage.FromBitmap(probe, 0)!)!.AsAsync<Java.Lang.Object>();
+        }
+        catch
+        {
+            probe.Recycle();
+            probe.Dispose();
+            throw;
+        }
+
+        test.ContinueWith(_ => { probe.Recycle(); probe.Dispose(); }, TaskScheduler.Default);
+        return test;
     }
 
     /// <summary>Runs OCR over a frame region; word and line boxes come back in frame coordinates.</summary>
@@ -99,6 +137,8 @@ public sealed class MlKitOcrEngine : IOcrEngine, IDisposable
             return results;
         }
 
+        // Freed here unless ML Kit may still be reading it (a timeout): then when its task ends.
+        bool freeHere = true;
         try
         {
             var started = Stopwatch.StartNew();
@@ -106,6 +146,9 @@ public sealed class MlKitOcrEngine : IOcrEngine, IDisposable
             var work = _client!.Process(image)!.AsAsync<Java.Lang.Object>();
             if (await Task.WhenAny(work, Task.Delay(TimeoutMs)).ConfigureAwait(false) != work)
             {
+                freeHere = false;
+                var late = bitmap;
+                _ = work.ContinueWith(_ => { late.Recycle(); late.Dispose(); }, TaskScheduler.Default);
                 Log.Warn(MainApplication.Tag, $"OCR timed out after {TimeoutMs} ms");
                 return results;
             }
@@ -141,8 +184,11 @@ public sealed class MlKitOcrEngine : IOcrEngine, IDisposable
         }
         finally
         {
-            bitmap.Recycle();
-            bitmap.Dispose();
+            if (freeHere)
+            {
+                bitmap.Recycle();
+                bitmap.Dispose();
+            }
         }
     }
 
@@ -190,6 +236,8 @@ public sealed class MlKitOcrEngine : IOcrEngine, IDisposable
         {
             _client?.Close();
             _client = null;
+            _candidate?.Close();
+            _candidate = null;
         }
     }
 }

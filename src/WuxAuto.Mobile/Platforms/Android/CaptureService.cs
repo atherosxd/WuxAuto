@@ -16,14 +16,15 @@ using Activity = Android.App.Activity;
 
 namespace WuxAuto.Mobile;
 
-/// <summary>The real display size: <c>WindowManager.CurrentWindowMetrics</c>, system bars included (Resources.DisplayMetrics may leave them out or report portrait, M0).</summary>
+/// <summary>The real display size: <c>WindowManager.MaximumWindowMetrics</c>, system bars included (Resources.DisplayMetrics may leave them out or report portrait, M0).</summary>
 public static class DisplaySize
 {
-    /// <summary>Width and height as the display stands now.</summary>
+    /// <summary>Width and height as the display stands now (the largest window it allows, system bars included).</summary>
     public static (int W, int H) Current(Context context)
     {
         var wm = context.GetSystemService(Context.WindowService).JavaCast<IWindowManager>();
-        var bounds = wm?.CurrentWindowMetrics.Bounds;
+        using var metrics = wm?.MaximumWindowMetrics;
+        using var bounds = metrics?.Bounds;
         if (bounds != null && bounds.Width() > 0 && bounds.Height() > 0)
             return (bounds.Width(), bounds.Height());
 
@@ -131,6 +132,7 @@ public class CaptureService : Service
     public static void StopCapture() => _current?.Teardown("stopped");
 
     readonly object _frameLock = new();
+    readonly object _imageLock = new();
     byte[]? _latest;      // RGBA rows, _rowStride bytes apart; guarded by _frameLock
     byte[]? _spare;       // the buffer the next frame is copied into (only the image thread touches it)
     long _latestTicks;    // FrameGate.NowTicks() of _latest
@@ -254,27 +256,55 @@ public class CaptureService : Service
 
     void OnImage(ImageReader reader)
     {
-        Android.Media.Image? image;
-        try
+        // One lock across acquire, copy and close: Teardown takes it before releasing the display and closing the
+        // reader, so the plane's native buffer is never read after it is freed.
+        lock (_imageLock)
         {
-            image = reader.AcquireLatestImage();
-        }
-        catch (Exception ex)
-        {
-            Log.Warn(Tag, $"capture: acquire failed: {ex.Message}");
-            return;
-        }
-
-        if (image == null)
-            return;
-
-        try
-        {
-            long now = FrameGate.NowTicks();
-            if (now - _lastCopyTicks < MinFrameIntervalMs * TimeSpan.TicksPerMillisecond)
+            if (_torndown != 0 || !ReferenceEquals(reader, _reader))
                 return;
 
-            var plane = image.GetPlanes()![0];
+            Android.Media.Image? image;
+            try
+            {
+                image = reader.AcquireLatestImage();
+            }
+            catch (Exception ex)
+            {
+                Log.Warn(Tag, $"capture: acquire failed: {ex.Message}");
+                return;
+            }
+
+            if (image == null)
+                return;
+
+            using (image)
+            {
+                try
+                {
+                    CopyFrame(image);
+                }
+                catch (Exception ex)
+                {
+                    Log.Warn(Tag, $"capture: frame copy failed: {ex.Message}");
+                }
+                finally
+                {
+                    image.Close(); // an unclosed Image counts against maxImages and stalls the reader
+                }
+            }
+        }
+    }
+
+    void CopyFrame(Android.Media.Image image)
+    {
+        long now = FrameGate.NowTicks();
+        if (now - _lastCopyTicks < MinFrameIntervalMs * TimeSpan.TicksPerMillisecond)
+            return;
+
+        var planes = image.GetPlanes()!;
+        try
+        {
+            var plane = planes[0];
             int rowStride = plane.RowStride;
             if (plane.PixelStride != 4 || image.Width != Width || image.Height != Height || rowStride < Width * 4)
             {
@@ -282,11 +312,11 @@ public class CaptureService : Service
                 return;
             }
 
-            var buffer = plane.Buffer!;
+            using var buffer = plane.Buffer!;
             int length = Math.Min(buffer.Capacity(), rowStride * Height);
             if (_spare == null || _spare.Length != rowStride * Height)
                 _spare = new byte[rowStride * Height];
-            // Out of the direct buffer into managed memory (a read, the Mat is built over this copy later).
+            // Out of the direct buffer into managed memory (a read; the Mat is built over this copy later).
             Marshal.Copy(buffer.GetDirectBufferAddress(), _spare, 0, length);
             _lastCopyTicks = now;
 
@@ -301,13 +331,10 @@ public class CaptureService : Service
                 FrameCount++;
             }
         }
-        catch (Exception ex)
-        {
-            Log.Warn(Tag, $"capture: frame copy failed: {ex.Message}");
-        }
         finally
         {
-            image.Close(); // an unclosed Image counts against maxImages and stalls the reader
+            foreach (var plane in planes)
+                plane.Dispose();
         }
     }
 
@@ -334,10 +361,15 @@ public class CaptureService : Service
         if (Interlocked.Exchange(ref _torndown, 1) != 0)
             return;
 
-        try { _display?.Release(); } catch (Exception) { }
-        _display = null;
-        try { _reader?.Close(); } catch (Exception) { }
-        _reader = null;
+        // Not while a frame is being copied out of the reader (OnImage holds this lock).
+        lock (_imageLock)
+        {
+            try { _display?.Release(); } catch (Exception) { }
+            _display = null;
+            try { _reader?.Close(); } catch (Exception) { }
+            _reader = null;
+        }
+
         try { _projection?.Stop(); } catch (Exception) { }
         _projection = null;
         _imageThread?.QuitSafely();

@@ -29,8 +29,9 @@ public sealed class PhoneSettings
 
     public int TurnDragMinMs { get; set; } = 150;
 
-    public int PinchFromGap { get; set; } = 360;
-    public int PinchToGap { get; set; } = 96;
+    /// <summary>Pinch start / end distance between the two fingers (full gap, px). Measured in MuMu as each finger 360 → 96 px from the centre.</summary>
+    public int PinchFromGap { get; set; } = 720;
+    public int PinchToGap { get; set; } = 192;
     public int PinchMs { get; set; } = 400;
 
     /// <summary>Length of one 3-notch list-scroll swipe (measured on the Settings list: content follows the finger minus ~40 px; 170 px = 3 rows). Not for the map list, which does not scroll by swipe.</summary>

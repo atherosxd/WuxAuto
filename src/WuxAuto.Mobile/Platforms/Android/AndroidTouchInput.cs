@@ -128,7 +128,7 @@ public sealed class AndroidTouchInput : ITouchInput, IDisposable
         });
     }
 
-    /// <summary>Two fingers on a horizontal line through the centre, each <paramref name="fromGap"/> → <paramref name="toGap"/> px from it (the gesture the MuMu pinch measurements used).</summary>
+    /// <summary>Two fingers on a horizontal line through the centre, <paramref name="fromGap"/> → <paramref name="toGap"/> px apart (each finger half of that from the centre).</summary>
     public bool Pinch(int cx, int cy, int fromGap, int toGap, int durationMs)
     {
         int ms = ClampMs(durationMs);
@@ -136,9 +136,9 @@ public sealed class AndroidTouchInput : ITouchInput, IDisposable
         {
             var (w, _) = ScreenSize();
             var (x, y) = Clamp(cx, cy);
-            int reach = Math.Min(x, w - 1 - x); // both fingers stay on the screen
-            int from = Math.Clamp(fromGap, 1, Math.Max(1, reach));
-            int to = Math.Clamp(toGap, 1, Math.Max(1, reach));
+            int reach = Math.Max(1, Math.Min(x, w - 1 - x)); // both fingers stay on the screen
+            int from = Math.Clamp(fromGap / 2, 1, reach);
+            int to = Math.Clamp(toGap / 2, 1, reach);
             return Dispatch(ms,
                 new Stroke(Line(x - from, y, x - to, y), 0, ms),
                 new Stroke(Line(x + from, y, x + to, y), 0, ms));
@@ -187,15 +187,19 @@ public sealed class AndroidTouchInput : ITouchInput, IDisposable
                 return false;
 
             lock (_lock)
+            {
+                _noHold.Reset();
                 _held = new Held(stroke, ox, oy, px, py, segment);
-            _noHold.Reset();
+            }
+
             return true;
         });
     }
 
     /// <summary>
-    /// Lets go: a held press lifts at the end of its current segment (waits up to ~2 s for it), a joystick step in flight
-    /// is cut short at once (a 10 ms touch on the stick's centre cancels it without walking). Safe from any thread except
+    /// Lets go: a held press lifts at the end of its current segment (waits up to ~3.5 s for it), a joystick step in
+    /// flight is cut short at once (a 10 ms touch on the stick's centre cancels it without walking; only with the game in
+    /// front, otherwise the step is just marked cancelled). Safe from any thread except
     /// the touch worker, and with nothing held.
     /// </summary>
     public void Release()
@@ -209,7 +213,8 @@ public sealed class AndroidTouchInput : ITouchInput, IDisposable
             return;
 
         _releaseRequested = true;
-        if (Thread.CurrentThread != _worker && !_noHold.Wait(HoldSegmentMs + CallbackSlackMs))
+        // The worker waits out the segment (HoldSegmentMs + slack), then the lift (its own slack).
+        if (Thread.CurrentThread != _worker && !_noHold.Wait(HoldSegmentMs + 2 * CallbackSlackMs + 100))
             Log.Warn(Tag, "release: the held press did not end in time");
     }
 
@@ -224,9 +229,10 @@ public sealed class AndroidTouchInput : ITouchInput, IDisposable
             step.Cancelled = true;
         }
 
-        // A new gesture cancels the one in flight; this one touches the stick's centre, which walks nowhere.
+        // A new gesture cancels the one in flight; this one touches the stick's centre, which walks nowhere. Never with
+        // another app in front: the step stays marked cancelled and runs out by itself.
         var service = Service;
-        if (service == null)
+        if (service == null || !service.IsGameActive())
             return;
         var (ox, oy) = Wiggle(step.Cx, step.Cy);
         _ = service.DispatchAsync(Build(new Stroke(Line(step.Cx, step.Cy, ox, oy), 0, 10)));
@@ -258,11 +264,11 @@ public sealed class AndroidTouchInput : ITouchInput, IDisposable
 
         var job = new Job(what, work);
         _jobs.Add(job);
-        // Queue wait (a held segment ends first, up to HoldSegmentMs) + the gesture itself.
-        int timeout = HoldSegmentMs + gestureMs + 2 * CallbackSlackMs;
+        // Queue wait (a held segment and its lift end first) + the gesture itself, each with callback slack.
+        int timeout = HoldSegmentMs + gestureMs + 3 * CallbackSlackMs;
         if (!job.Done.Task.Wait(timeout))
         {
-            // Never let it go out late, after the caller has moved on.
+            // The worker skips it if it has not started yet; one already being dispatched still goes out.
             job.Abandoned = true;
             Log.Warn(Tag, $"{what}: no result after {timeout} ms");
             return false;
@@ -283,7 +289,16 @@ public sealed class AndroidTouchInput : ITouchInput, IDisposable
 
                 if (held != null)
                 {
-                    KeepOrEndHold(held);
+                    try
+                    {
+                        KeepOrEndHold(held);
+                    }
+                    catch (Exception ex)
+                    {
+                        Log.Error(Tag, $"held press: {ex}");
+                        ClearHold();
+                    }
+
                     continue;
                 }
 
@@ -309,8 +324,16 @@ public sealed class AndroidTouchInput : ITouchInput, IDisposable
     /// <summary>Waits for the held segment to end, then continues it, or lifts the finger when a job, a release, the game leaving or the service going away says so.</summary>
     void KeepOrEndHold(Held held)
     {
-        bool stillDown = held.Segment.Wait(HoldSegmentMs + CallbackSlackMs) && held.Segment.Result;
-        if (!stillDown)
+        if (!held.Segment.Wait(HoldSegmentMs + CallbackSlackMs))
+        {
+            // No callback: the finger may still be down, so end the stroke.
+            Log.Warn(Tag, "held press: no segment callback, lifting");
+            LiftAfter(held.Stroke, held.EndX, held.EndY);
+            ClearHold();
+            return;
+        }
+
+        if (!held.Segment.Result)
         {
             // Cancelled by the system (another gesture, the screen turned off): the finger is already up.
             Log.Info(Tag, "held press ended by the system");

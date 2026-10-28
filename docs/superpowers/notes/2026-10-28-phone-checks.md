@@ -101,7 +101,7 @@ Drags that *started* on the pet panel (y 150) were ignored.
 
 ### Pinch (spec #3)
 
-Two fingers 360 → 96 px apart (zoom out) or 96 → 360 (zoom in), 400 ms, centre 960,300. Character height
+Two fingers, each 360 → 96 px from the centre, i.e. 720 → 192 px apart (zoom out), or the reverse (zoom in), 400 ms, centre 960,300. Character height
 ≈100 px → ≈170 → ≈400 px (clamped) over two zoom-in pinches, and back ≈170 → ≈110 over two zoom-out
 pinches: **about ×0.5 per pinch, the full range is 2–3 pinches.** 3 pinches (15 notches / 5) reach full
 zoom-out. Frames `zoom_in`, `zoom_out`.
@@ -231,7 +231,7 @@ Popped up by itself in town: box 652–1268 × 447–632, "WAR", `[Bohai Outpost
 | Has(RunSkillKey) = icon found | **Confirmed**: the Run skill is a player-placed orb (here 1430,760) and/or a hotbar slot; match the flame icon. Ring = on (above). |
 | Has(ShuraKey / StopAttack) = icon found | **Kept, unverified**: Shura is on the hotbar on this account (candidate slot 1); no stop-attack shortcut exists in the picker. Task 8 decides how an attack is stopped. |
 | Has(OpenInventory / ToggleSettings / OpenAutohuntSettings) = ☰ found | **Confirmed for Inventory, Settings, Durations** (☰ grid above; Settings and Inventory can also be ring shortcuts). **OpenAutohuntSettings unverified** — which entry opens the autohunt settings is for the user (finding 4). |
-| ZoomOut: one pinch per 5 notches, ≥ 1 | **Confirmed**: 360 → 96 px, 400 ms ≈ ×0.5 zoom; 15 notches → 3 pinches = full zoom-out. |
+| ZoomOut: one pinch per 5 notches, ≥ 1 | **Confirmed**: fingers 720 → 192 px apart (each 360 → 96 from the centre), 400 ms ≈ ×0.5 zoom; 15 notches → 3 pinches = full zoom-out. |
 | TiltCamera keeps the desktop sign (negative = finger up) | **Confirmed sign** (finger up = camera towards the horizon). Do vertical drags at **x ≈ 0.65 w** (at 0.74 w they were ignored at the lowest pitch); same drag + 100 ms hold. Amount: Task 8. |
 
 ## PhoneSettings values
@@ -241,7 +241,7 @@ Popped up by itself in town: box 652–1268 × 447–632, "WAR", `[Bohai Outpost
 | `TapSettleMs` | **100** | tap lost at ≤ 38 ms, delivered from 41 ms (§1) |
 | `SwipePxPerTurnMs` | **0.5** px per ms of desktop turn | desktop 180 ms ≈ 15° → 20 + 4.8 × 15 ≈ 92 px; 92 / 180 ≈ 0.5 (= 4.8 px/° plus the 20 px dead zone folded in at the 180 ms tap). The 40 ms fine-tune gives 20 px, inside the dead zone → floor turn drags at 40 px (≈ 4°). |
 | `ListSwipePx` | **170** | Settings list: content ≈ finger − 40 px, 3 rows = 126 px → ≈ 170 px per 3 notches (not for the map list) |
-| `PinchFromGap` / `PinchToGap` / `PinchMs` | **360 / 96 / 400** (unchanged) | ×0.5 per pinch (§2) |
+| `PinchFromGap` / `PinchToGap` / `PinchMs` | **720 / 192 / 400** (full gap between the fingers; the measured gesture had each finger 360 → 96 px from the centre) | ×0.5 per pinch (§2) |
 | `TapHoldMs` | 60 (unchanged; the tests used 100 ms taps, both fine) | |
 | `JoystickStepMs` | 900 (unchanged; not measured here) | |
 | `FloatingX` / `FloatingY` | **0.40 / 0.03** | §Floating control spot |

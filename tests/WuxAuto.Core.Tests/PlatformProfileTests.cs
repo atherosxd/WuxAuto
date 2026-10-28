@@ -56,8 +56,8 @@ public class PlatformProfileTests
             Assert.Equal(100, p.TapSettleMs);
             Assert.Equal(900, p.JoystickStepMs);
             Assert.Equal(0.5, p.SwipePxPerTurnMs);
-            Assert.Equal(360, p.PinchFromGap);
-            Assert.Equal(96, p.PinchToGap);
+            Assert.Equal(720, p.PinchFromGap);
+            Assert.Equal(192, p.PinchToGap);
             Assert.Equal(400, p.PinchMs);
             Assert.Equal(170, p.ListSwipePx);
             Assert.Equal(0.02, p.FloatingX);

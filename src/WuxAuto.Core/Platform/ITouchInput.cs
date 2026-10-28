@@ -15,6 +15,11 @@ public interface ITouchInput
     /// </summary>
     bool Drag(int x1, int y1, int x2, int y2, int durationMs, int endHoldMs);
 
+    /// <summary>
+    /// Two fingers on a horizontal line through (<paramref name="cx"/>, <paramref name="cy"/>), the distance between them
+    /// going from <paramref name="fromGap"/> to <paramref name="toGap"/> px (the full gap: each finger is half of it from
+    /// the centre) over <paramref name="durationMs"/>. Closing = zoom out.
+    /// </summary>
     bool Pinch(int cx, int cy, int fromGap, int toGap, int durationMs);
 
     /// <summary>One joystick step; blocks until released.</summary>

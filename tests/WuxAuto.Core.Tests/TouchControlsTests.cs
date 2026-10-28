@@ -407,11 +407,11 @@ public sealed class TouchControlsTests
     [Fact]
     public void ZoomOut_OnePinchPerFiveNotches()
     {
-        Assert.Equal(["Pinch:7,8,360,96,400", "Sleep:100", "Pinch:7,8,360,96,400", "Sleep:100", "Pinch:7,8,360,96,400"],
+        Assert.Equal(["Pinch:7,8,720,192,400", "Sleep:100", "Pinch:7,8,720,192,400", "Sleep:100", "Pinch:7,8,720,192,400"],
             Run(c => c.ZoomOut(7, 8, 15)));
     }
 
-    [Fact] public void ZoomOut_FewNotches_PinchesOnce() => Assert.Equal(["Pinch:7,8,360,96,400"], Run(c => c.ZoomOut(7, 8, 3)));
+    [Fact] public void ZoomOut_FewNotches_PinchesOnce() => Assert.Equal(["Pinch:7,8,720,192,400"], Run(c => c.ZoomOut(7, 8, 3)));
 
     [Fact]
     public void ScrollList_Down_FingerSwipesUp()

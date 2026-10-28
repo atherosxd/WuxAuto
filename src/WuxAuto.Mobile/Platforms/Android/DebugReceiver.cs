@@ -14,8 +14,8 @@ namespace WuxAuto.Mobile;
 /// <list type="bullet">
 /// <item>PING, FRONT (active package, game in front?), TEMPLATES (what TemplateLibrary loads)</item>
 /// <item>CAPTURE [--ez bringGame false] (consent dialog), STOPCAPTURE, SHOT (LatestFrame → files/debug/shot_*.png)</item>
-/// <item>OCR --ei x --ei y --ei w --ei h [--ef scale 1.5] (whole frame without w/h)</item>
-/// <item>TAP x y [ms], SWIPE x1 y1 x2 y2 [ms], DRAG x1 y1 x2 y2 [ms] [hold], JOY cx cy dx dy [ms], PINCH cx cy from to [ms], HOLD x y, RELEASE</item>
+/// <item>OCR --ei x --ei y --ei w --ei h [--ef scale 1.5, clamped 0.5-4] (whole frame without w/h)</item>
+/// <item>TAP x y [ms], SWIPE x1 y1 x2 y2 [ms], DRAG x1 y1 x2 y2 [ms] [hold], JOY cx cy dx dy [ms], PINCH cx cy from to [ms] (full gaps, default 720 → 192), HOLD x y, RELEASE</item>
 /// </list>
 /// </summary>
 public sealed class DebugReceiver : BroadcastReceiver
@@ -113,7 +113,7 @@ public sealed class DebugReceiver : BroadcastReceiver
                 Shot();
                 break;
             case "OCR":
-                await OcrAsync(I("x"), I("y"), I("w"), I("h"), i.GetFloatExtra("scale", 1.5f));
+                await OcrAsync(I("x"), I("y"), I("w"), I("h"), Math.Clamp(i.GetFloatExtra("scale", 1.5f), 0.5f, 4f));
                 break;
             case "TAP":
                 Report(name, touch.Tap(I("x"), I("y"), I("ms", 60)));
@@ -128,7 +128,7 @@ public sealed class DebugReceiver : BroadcastReceiver
                 Report(name, touch.Joystick(I("cx"), I("cy"), I("dx"), I("dy"), I("ms", 900)));
                 break;
             case "PINCH":
-                Report(name, touch.Pinch(I("cx"), I("cy"), I("from", 360), I("to", 96), I("ms", 400)));
+                Report(name, touch.Pinch(I("cx"), I("cy"), I("from", 720), I("to", 192), I("ms", 400)));
                 break;
             case "HOLD":
                 Report(name, touch.PressDown(I("x"), I("y")));
