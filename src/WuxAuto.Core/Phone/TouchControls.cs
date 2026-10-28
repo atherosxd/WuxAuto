@@ -57,23 +57,25 @@ public sealed class TouchControls(AppSettings settings, ITouchInput touch, IShor
 
     /// <summary>Taps the action's shortcut icon; the inventory, settings and autohunt settings live behind ☰, so only the menu is tapped (the entry is the pilot's job).</summary>
     public bool Press(GameAction action) =>
-        Send(() => TapCentre(IsMenuAction(action) ? shortcuts.Menu : shortcuts.Find(action)));
+        Send(() => IsMenuAction(action)
+            ? TapCentre(shortcuts.Menu, shortcuts.InvalidateMenu)
+            : TapCentre(shortcuts.Find(action), () => shortcuts.Invalidate(action)));
 
     /// <summary>Holds the action's shortcut icon; actions behind ☰ cannot be held.</summary>
     public bool ActionDown(GameAction action) =>
-        Send(() => !IsMenuAction(action) && Hold(ActionHold(action), shortcuts.Find(action)));
+        Send(() => !IsMenuAction(action) && Hold(ActionHold(action), shortcuts.Find(action), () => shortcuts.Invalidate(action)));
 
     public void ActionUp(GameAction action) => LetGo(ActionHold(action));
 
     public bool Tap(int x, int y) => Send(() => touch.Tap(x, y, Phone.TapHoldMs));
     public bool UseItem(int x, int y) => Send(() => touch.Tap(x, y, Phone.TapHoldMs));
 
-    public bool SkillTap(string skill) => Send(() => TapCentre(shortcuts.Skill(skill)));
+    public bool SkillTap(string skill) => Send(() => TapCentre(shortcuts.Skill(skill), () => shortcuts.InvalidateSkill(skill)));
 
     /// <summary>No Ctrl on the phone: the same tap as <see cref="SkillTap"/>.</summary>
     public bool SkillCtrlTap(string skill) => SkillTap(skill);
 
-    public bool SkillDown(string skill) => Send(() => Hold(SkillHold(skill), shortcuts.Skill(skill)));
+    public bool SkillDown(string skill) => Send(() => Hold(SkillHold(skill), shortcuts.Skill(skill), () => shortcuts.InvalidateSkill(skill)));
     /// <summary>Lets go of the skill if it is held; a dry run reports true like <c>WindowInput.KeyUp</c> (nothing went down).</summary>
     public bool SkillUp(string skill) => LetGo(SkillHold(skill)) || touch.IsDryRun;
 
@@ -86,7 +88,7 @@ public sealed class TouchControls(AppSettings settings, ITouchInput touch, IShor
     {
         if (shortcuts.Joystick is not { } stick)
         {
-            shortcuts.Invalidate();
+            shortcuts.InvalidateJoystick();
             return false;
         }
 
@@ -167,11 +169,12 @@ public sealed class TouchControls(AppSettings settings, ITouchInput touch, IShor
         return send();
     }
 
-    private bool TapCentre(PixelRect? button)
+    /// <summary>Taps the button's centre; no button = nothing sent and <paramref name="missed"/> forgets just that one.</summary>
+    private bool TapCentre(PixelRect? button, Action missed)
     {
         if (button is not { } r)
         {
-            shortcuts.Invalidate();
+            missed();
             return false;
         }
 
@@ -179,11 +182,11 @@ public sealed class TouchControls(AppSettings settings, ITouchInput touch, IShor
     }
 
     /// <summary>Presses the button down and remembers it; one finger only, so a press already held is let go first.</summary>
-    private bool Hold(string what, PixelRect? button)
+    private bool Hold(string what, PixelRect? button, Action missed)
     {
         if (button is not { } r)
         {
-            shortcuts.Invalidate();
+            missed();
             return false;
         }
 

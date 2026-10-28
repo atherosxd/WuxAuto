@@ -6,12 +6,18 @@ namespace WuxAuto.Phone;
 
 /// <summary>
 /// Finds the phone game's on-screen buttons with the <c>phone_*</c> templates (src/WuxAuto.Mobile/Assets/phone,
-/// cropped at 1920x1080) and the analyzer's learned-scale search. The search runs on the first frame, on every frame
-/// of a new size and on the first frame after <see cref="Invalidate"/>; any other <see cref="Refresh"/> is a no-op,
-/// so the positions found stay until the screen changes or a touch misses. Loop thread only.
+/// cropped at 1920x1080) and the analyzer's learned-scale search. <see cref="Refresh"/> searches everything on the first
+/// frame, on a new frame size and after <see cref="Invalidate()"/>; otherwise only the shortcuts invalidated one by one
+/// (a press that missed) and those found absent at least <see cref="AbsentRetryMs"/> ago. A shortcut found keeps its
+/// position until it is invalidated; one without a template file is never searched. Loop thread only.
 /// </summary>
-public sealed class ShortcutMap(ScreenAnalyzer analyzer, double threshold = ShortcutMap.DefaultThreshold) : IShortcutSource
+/// <param name="clock">Milliseconds, for the absent cool-down (default <see cref="Environment.TickCount64"/>; tests pass their own).</param>
+public sealed class ShortcutMap(ScreenAnalyzer analyzer, double threshold = ShortcutMap.DefaultThreshold, Func<long>? clock = null)
+    : IShortcutSource
 {
+    /// <summary>A shortcut not on screen is looked for again this long after the last search (a window may have covered it).</summary>
+    public const int AbsentRetryMs = 10_000;
+
     /// <summary>
     /// Minimum template score. On the 30 MuMu frames (Task 4 probe) a shortcut that shows scores 0.92-1.00 (0.887: the
     /// sword seen through the ☰ panel) and the best look-alike on a frame without it 0.80 at most; 0.845 is the joystick
@@ -56,28 +62,59 @@ public sealed class ShortcutMap(ScreenAnalyzer analyzer, double threshold = Shor
     private static readonly (int X, int Y, int W, int H, PhoneAnchor Anchor) Hotbar = (630, 975, 660, 105, PhoneAnchor.Centre);
     private static readonly (int X, int Y, int W, int H, PhoneAnchor Anchor) TopStrip = (600, 0, 900, 110, PhoneAnchor.Centre);
 
+    private static readonly string[] AllTemplates =
+        ActionTemplates.Values.Concat(SkillTemplates.Values).Append(JoystickTemplate).Append(MenuTemplate).ToArray();
+
+    private readonly Func<long> _clock = clock ?? (() => Environment.TickCount64);
     private readonly Dictionary<string, TemplateMatch> _found = new(StringComparer.OrdinalIgnoreCase);
-    private bool _stale = true;
+
+    // Searched on this frame size and not there: since when (clock ms). Cleared with the positions.
+    private readonly Dictionary<string, long> _absentSince = new(StringComparer.OrdinalIgnoreCase);
+
+    // Invalidated one by one since the last search.
+    private readonly HashSet<string> _stale = new(StringComparer.OrdinalIgnoreCase);
+    private bool _allStale = true;
 
     public (int Width, int Height) FrameSize { get; private set; }
 
-    /// <summary>The best hit of every template found by the last search (for logs and the probe).</summary>
-    public IReadOnlyDictionary<string, TemplateMatch> Matches => _found;
+    /// <summary>A copy of the best hit of every template found so far (for logs and the probe).</summary>
+    public IReadOnlyDictionary<string, TemplateMatch> Matches =>
+        new Dictionary<string, TemplateMatch>(_found, StringComparer.OrdinalIgnoreCase);
 
-    /// <summary>Searches every shortcut again when the frame size changed or <see cref="Invalidate"/> was called; otherwise does nothing.</summary>
+    /// <summary>How many template searches have run (diagnostics; each one is a full scale search).</summary>
+    public int SearchCount { get; private set; }
+
+    /// <summary>
+    /// Searches everything on a new frame size or after <see cref="Invalidate()"/>; otherwise only the shortcuts
+    /// invalidated one by one and those absent for <see cref="AbsentRetryMs"/>. Shortcuts found keep their positions.
+    /// </summary>
     public void Refresh(Mat frame)
     {
         if (frame.Width <= 0 || frame.Height <= 0)
             return;
-        if (!_stale && FrameSize == (frame.Width, frame.Height))
+
+        if (_allStale || FrameSize != (frame.Width, frame.Height))
+        {
+            FrameSize = (frame.Width, frame.Height);
+            _found.Clear();
+            _absentSince.Clear();
+            _stale.Clear();
+            _allStale = false;
+            foreach (string template in AllTemplates)
+                Search(frame, template);
             return;
+        }
 
-        FrameSize = (frame.Width, frame.Height);
-        _found.Clear();
-        _stale = false;
+        long now = _clock();
+        foreach (string template in AllTemplates)
+        {
+            bool due = _stale.Contains(template)
+                       || (_absentSince.TryGetValue(template, out long since) && now - since >= AbsentRetryMs);
+            if (due)
+                Search(frame, template);
+        }
 
-        foreach (string template in ActionTemplates.Values.Concat(SkillTemplates.Values).Append(JoystickTemplate).Append(MenuTemplate))
-            Search(frame, template);
+        _stale.Clear();
     }
 
     /// <summary>
@@ -117,13 +154,41 @@ public sealed class ShortcutMap(ScreenAnalyzer analyzer, double threshold = Shor
     public void Invalidate()
     {
         _found.Clear();
-        _stale = true;
+        _allStale = true;
+    }
+
+    public void Invalidate(GameAction action)
+    {
+        if (ActionTemplates.TryGetValue(action, out string? template))
+            Forget(template);
+    }
+
+    public void InvalidateSkill(string skill)
+    {
+        if (SkillTemplates.TryGetValue(skill, out string? template))
+            Forget(template);
+    }
+
+    public void InvalidateJoystick() => Forget(JoystickTemplate);
+
+    public void InvalidateMenu() => Forget(MenuTemplate);
+
+    private void Forget(string template)
+    {
+        _found.Remove(template);
+        _stale.Add(template);
     }
 
     private PixelRect? Box(string template) => _found.TryGetValue(template, out var m) ? m.Bounds : null;
 
     private void Search(Mat frame, string template)
     {
+        _found.Remove(template);
+        _absentSince.Remove(template);
+        if (analyzer.Library.Get(template) == null)
+            return; // no crop yet: never found, never searched
+
+        SearchCount++;
         TemplateMatch? best = null;
         foreach (var roi in ZonesFor(template, frame.Width, frame.Height))
         {
@@ -134,5 +199,7 @@ public sealed class ShortcutMap(ScreenAnalyzer analyzer, double threshold = Shor
 
         if (best != null)
             _found[template] = best;
+        else
+            _absentSince[template] = _clock();
     }
 }

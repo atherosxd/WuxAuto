@@ -271,6 +271,19 @@ public sealed class TouchControlsTests
         Assert.Equal(5, h.Shortcuts.Invalidations);
     }
 
+    [Fact]
+    public void MissingShortcut_InvalidatesOnlyWhatMissed()
+    {
+        var h = new Harness();
+        h.Controls.Press(GameAction.Buff);
+        h.Controls.Press(GameAction.OpenInventory);
+        h.Controls.SkillTap("1");
+        h.Controls.SkillDown("2");
+        h.Controls.ActionDown(GameAction.ShuraKey);
+        h.Controls.WalkTo(500, 100, forceWalk: false);
+        Assert.Equal(["action:Buff", "menu", "skill:1", "skill:2", "action:ShuraKey", "joystick"], h.Shortcuts.Invalidated);
+    }
+
     // --- walking ----------------------------------------------------------------------------------------------------
 
     [Fact]
@@ -574,10 +587,18 @@ public sealed class TouchControlsTests
         public (int Cx, int Cy, int Radius)? Joystick { get; set; }
         public PixelRect? Menu { get; set; }
         public (int Width, int Height) FrameSize { get; set; } = (1000, 800);
-        public int Invalidations { get; private set; }
+        /// <summary>Every invalidation, of any kind.</summary>
+        public int Invalidations => Invalidated.Count;
+
+        /// <summary>What was invalidated, in order: "all", "action:Buff", "skill:1", "joystick", "menu".</summary>
+        public List<string> Invalidated { get; } = [];
 
         public PixelRect? Find(GameAction action) => Icons.TryGetValue(action, out var r) ? r : null;
         public PixelRect? Skill(string skill) => Skills.TryGetValue(skill, out var r) ? r : null;
-        public void Invalidate() => Invalidations++;
+        public void Invalidate() => Invalidated.Add("all");
+        public void Invalidate(GameAction action) => Invalidated.Add($"action:{action}");
+        public void InvalidateSkill(string skill) => Invalidated.Add($"skill:{skill}");
+        public void InvalidateJoystick() => Invalidated.Add("joystick");
+        public void InvalidateMenu() => Invalidated.Add("menu");
     }
 }

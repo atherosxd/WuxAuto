@@ -2,7 +2,10 @@ using WuxAuto.Core;
 
 namespace WuxAuto.Phone;
 
-/// <summary>Where the phone game's on-screen buttons are on the current frame (found by the phone's vision).</summary>
+/// <summary>
+/// Where the phone game's on-screen buttons are on the current frame (found by the phone's vision). Loop thread only:
+/// the pilot's vision loop refreshes and reads it, nothing else may.
+/// </summary>
 public interface IShortcutSource
 {
     /// <summary>The frame size the positions below belong to (0×0 before the first frame).</summary>
@@ -20,6 +23,18 @@ public interface IShortcutSource
     /// <summary>The ☰ menu button.</summary>
     PixelRect? Menu { get; }
 
-    /// <summary>Forgets the positions (after a miss or a size change); the next lookup searches again.</summary>
+    /// <summary>Forgets every position (a size change, a new screen); the next lookup searches everything again.</summary>
     void Invalidate();
+
+    /// <summary>Forgets only this action's shortcut (its press missed); the next lookup searches for it again.</summary>
+    void Invalidate(GameAction action);
+
+    /// <summary>Forgets only this skill button (its press missed).</summary>
+    void InvalidateSkill(string skill);
+
+    /// <summary>Forgets only the joystick (a walk found none).</summary>
+    void InvalidateJoystick();
+
+    /// <summary>Forgets only the ☰ button (a menu press found none).</summary>
+    void InvalidateMenu();
 }

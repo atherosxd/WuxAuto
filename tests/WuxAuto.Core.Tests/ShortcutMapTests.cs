@@ -191,6 +191,179 @@ public class ShortcutMapTests : AppPathsScope
     }
 
     [Fact]
+    public void MissOfOne_KeepsOtherPositions()
+    {
+        using var analyzer = NewAnalyzer();
+        var map = new ShortcutMap(analyzer);
+        var (hud, _) = HudFrame(1920, 1080);
+        using (hud)
+        {
+            map.Refresh(hud);
+            var joystick = map.Joystick;
+            var loot = map.Find(GameAction.Loot);
+            var menu = map.Menu;
+            int searches = map.SearchCount;
+
+            map.InvalidateSkill("1");
+            Assert.Null(map.Skill("1"));
+            Assert.Equal(joystick, map.Joystick);
+            Assert.Equal(loot, map.Find(GameAction.Loot));
+            Assert.Equal(menu, map.Menu);
+
+            map.Refresh(hud);
+
+            Assert.NotNull(map.Skill("1"));
+            Assert.Equal(searches + 1, map.SearchCount); // only skill 1 was searched again
+            Assert.Equal(joystick, map.Joystick);
+            Assert.Equal(loot, map.Find(GameAction.Loot));
+            Assert.Equal(menu, map.Menu);
+        }
+    }
+
+    [Fact]
+    public void JoystickAndMenuMisses_SearchOnlyThem()
+    {
+        using var analyzer = NewAnalyzer();
+        var map = new ShortcutMap(analyzer);
+        var (hud, _) = HudFrame(1920, 1080);
+        using (hud)
+        {
+            map.Refresh(hud);
+            int searches = map.SearchCount;
+
+            map.InvalidateJoystick();
+            map.InvalidateMenu();
+            Assert.Null(map.Joystick);
+            Assert.Null(map.Menu);
+            Assert.NotNull(map.Find(GameAction.Buff));
+
+            map.Refresh(hud);
+
+            Assert.NotNull(map.Joystick);
+            Assert.NotNull(map.Menu);
+            Assert.Equal(searches + 2, map.SearchCount);
+        }
+    }
+
+    /// <summary>A frame with the HUD minus one crop (painted over with the background grey).</summary>
+    static Mat HudFrameWithout(string template, out PixelRect place)
+    {
+        var (frame, placed) = HudFrame(1920, 1080);
+        place = placed[template];
+        using var hole = new Mat(frame, new Rectangle(place.X, place.Y, place.Width, place.Height));
+        hole.SetTo(new MCvScalar(110, 110, 110, 255));
+        return frame;
+    }
+
+    [Fact]
+    public void AbsentTemplate_NotSearchedAgainWithinCooldown()
+    {
+        long now = 1_000_000;
+        using var analyzer = NewAnalyzer();
+        var map = new ShortcutMap(analyzer, clock: () => now);
+        using (var without = HudFrameWithout("phone_autobuff", out _))
+            map.Refresh(without);
+        Assert.Null(map.Find(GameAction.Buff));
+        int searches = map.SearchCount;
+
+        var (hud, _) = HudFrame(1920, 1080);
+        using (hud)
+        {
+            now += ShortcutMap.AbsentRetryMs - 1;
+            map.Refresh(hud);
+        }
+
+        Assert.Null(map.Find(GameAction.Buff));
+        Assert.Equal(searches, map.SearchCount);
+        Assert.NotNull(map.Find(GameAction.Loot));
+    }
+
+    [Fact]
+    public void AbsentTemplate_SearchedAgainAfterCooldown()
+    {
+        long now = 1_000_000;
+        using var analyzer = NewAnalyzer();
+        var map = new ShortcutMap(analyzer, clock: () => now);
+        using (var without = HudFrameWithout("phone_autobuff", out _))
+            map.Refresh(without);
+        Assert.Null(map.Find(GameAction.Buff));
+        int searches = map.SearchCount;
+        var loot = map.Find(GameAction.Loot);
+
+        var (hud, placed) = HudFrame(1920, 1080);
+        using (hud)
+        {
+            now += ShortcutMap.AbsentRetryMs;
+            map.Refresh(hud);
+        }
+
+        AssertAt(placed["phone_autobuff"], map.Find(GameAction.Buff), "Buff after the cool-down");
+        Assert.Equal(searches + 1, map.SearchCount); // only the absent one
+        Assert.Equal(loot, map.Find(GameAction.Loot));
+    }
+
+    [Fact]
+    public void AbsentTemplate_SearchedAgainAtOnceWhenInvalidated()
+    {
+        long now = 1_000_000;
+        using var analyzer = NewAnalyzer();
+        var map = new ShortcutMap(analyzer, clock: () => now);
+        using (var without = HudFrameWithout("phone_autobuff", out _))
+            map.Refresh(without);
+        Assert.Null(map.Find(GameAction.Buff));
+
+        map.Invalidate(GameAction.Buff);
+        var (hud, placed) = HudFrame(1920, 1080);
+        using (hud)
+            map.Refresh(hud);
+
+        AssertAt(placed["phone_autobuff"], map.Find(GameAction.Buff), "Buff after Invalidate(Buff)");
+    }
+
+    [Fact]
+    public void MissingFile_NeverSearched()
+    {
+        long now = 1_000_000;
+        using var analyzer = NewAnalyzer();
+        Assert.Null(analyzer.Library.Get("phone_autohunt"));
+        var map = new ShortcutMap(analyzer, clock: () => now);
+        var (hud, _) = HudFrame(1920, 1080);
+        using (hud)
+        {
+            map.Refresh(hud);
+            int expected = ShortcutMap.ActionTemplates.Values.Concat(ShortcutMap.SkillTemplates.Values)
+                .Append(ShortcutMap.JoystickTemplate).Append(ShortcutMap.MenuTemplate)
+                .Count(t => analyzer.Library.Get(t) != null);
+            Assert.Equal(expected, map.SearchCount);
+
+            map.Invalidate(GameAction.ToggleAutohunt);
+            map.InvalidateSkill("2");
+            now += ShortcutMap.AbsentRetryMs * 3;
+            map.Refresh(hud);
+            Assert.Equal(expected, map.SearchCount);
+        }
+
+        Assert.Null(map.Find(GameAction.ToggleAutohunt));
+    }
+
+    [Fact]
+    public void Matches_IsASnapshot()
+    {
+        using var analyzer = NewAnalyzer();
+        var map = new ShortcutMap(analyzer);
+        var (hud, _) = HudFrame(1920, 1080);
+        using (hud)
+            map.Refresh(hud);
+
+        var before = map.Matches;
+        int count = before.Count;
+        map.Invalidate();
+
+        Assert.Equal(count, before.Count);
+        Assert.Empty(map.Matches);
+    }
+
+    [Fact]
     public void BeforeTheFirstFrame_NothingIsKnown()
     {
         using var analyzer = NewAnalyzer();
@@ -208,7 +381,7 @@ public class ShortcutMapTests : AppPathsScope
     public void DesktopProfile_RegionsUnchanged()
     {
         string defaults = RegionsJson(new AppSettings());
-        var dungeonDefaults = JsonSerializer.Serialize(new DungeonSettings());
+        var d = new DungeonSettings();
 
         foreach (var reset in new Action<AppSettings>[]
                  {
@@ -220,12 +393,22 @@ public class ShortcutMapTests : AppPathsScope
             var settings = new AppSettings();
             settings.Regions.Minimap = new NormRect(0.1, 0.1, 0.1, 0.1);
             settings.Regions.AttackMessage = new NormRect(0.2, 0.2, 0.2, 0.2);
-            settings.Dungeon.BossSelectX = 0.9;
+            var g = settings.Dungeon;
+            g.BossSelectX = 0.9;
+            g.BossSelectY = 0.9;
+            g.BossSelectStep = 0.5;
+            g.MapWheelX = 0.1;
+            g.MapWheelY = 0.1;
+            g.MapRowChevronX = 0.1;
+            g.CameraTiltPx = 999;
 
             reset(settings);
 
             Assert.Equal(defaults, RegionsJson(settings));
-            Assert.Equal(dungeonDefaults, JsonSerializer.Serialize(settings.Dungeon));
+            // The click fractions are [JsonIgnore]d, so they are compared one by one.
+            Assert.Equal(
+                (d.BossSelectX, d.BossSelectY, d.BossSelectStep, d.MapWheelX, d.MapWheelY, d.MapRowChevronX, d.CameraTiltPx),
+                (g.BossSelectX, g.BossSelectY, g.BossSelectStep, g.MapWheelX, g.MapWheelY, g.MapRowChevronX, g.CameraTiltPx));
         }
     }
 
