@@ -49,11 +49,12 @@ Everything it does is drawn on its preview and written to its log.
   **page 3** of the teleport scroll, the autohunt on). It reads the war timer from Menu > Tribe Status, joins every war,
   buffs and fights, then teleports back to the same cave and monster. Not tested live yet.
   The buff icons and Shura are optional: in Settings > Auto War > **Buffs** untick the buffs this character does not have
-  (Buff 1-6, Weapon 1-2 - usually only one weapon buff - and Item 1-2, items on the skill bar that are clicked even with
-  auto-buff); a ticked one missing from the bar is only a warning. No Shura key = no Shura hold in the fight.
+  (Buff 1-5; Weapon 1 (sword), Weapon 2, Weapon 3 - a character uses one weapon, so usually only one of these; Item 1-2,
+  items on the skill bar that are clicked with every rebuff, auto-buff too); a ticked one missing from the bar is only a
+  warning. No Shura key = no Shura hold in the fight.
   Started inside Bohai Outpost it fights right away; with no cave saved yet it stops after that war.
-  Update every WuxAuto on the PC before choosing it: an older copy cannot read the Auto War setting and resets all settings,
-  and v0.19.0 would ask for both weapon buffs on the skill bar.
+  Update every WuxAuto on the PC before choosing it: an older copy cannot read the Auto War setting and resets all settings
+  (and does not know the Buffs check boxes).
 
 ## Run it
 

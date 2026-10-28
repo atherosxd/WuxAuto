@@ -125,7 +125,7 @@ dotnet run --project .\tests\WuxAuto.SelfTest -- --confirm "$env:LOCALAPPDATA\Wu
 # Auto War probes (tests/WuxAuto.SelfTest/WarProbe.cs), each over a folder of PNGs
 dotnet run --project .\tests\WuxAuto.SelfTest -- --hp "$env:LOCALAPPDATA\WuxAuto\debug"      # top-left "cur / max" HP read (white-text read, plain fallback)
 dotnet run --project .\tests\WuxAuto.SelfTest -- --target "$env:LOCALAPPDATA\WuxAuto\debug"  # target-box name + treasure chest
-dotnet run --project .\tests\WuxAuto.SelfTest -- --warbar "$env:LOCALAPPDATA\WuxAuto\debug"  # BuffIcons + ItemBuffIcons + Shura on the skill bar
+dotnet run --project .\tests\WuxAuto.SelfTest -- --warbar "$env:LOCALAPPDATA\WuxAuto\debug"  # BuffIcons + WeaponBuffIcons + ItemBuffIcons + Shura on the skill bar
 dotnet run --project .\tests\WuxAuto.SelfTest -- --menu "$env:LOCALAPPDATA\WuxAuto\debug"    # the menu button and the MENU window
 dotnet run --project .\tests\WuxAuto.SelfTest -- --tribe "$env:LOCALAPPDATA\WuxAuto\war-inputs"  # TRIBE STATUS: the Bohai row's countdown (the user's screenshot lives there, never in git)
 ```
@@ -739,14 +739,18 @@ do not run); the 5 s Bohai-dialog Cancel is skipped in this mode (the OK is what
 `WarRemember, WarWait, WarJoin, WarEnter, WarBuff, WarFight, WarDead, WarBack, WarArrive, WarHuntOn`.
 
 * **Start (`WarRemember`).** Zone must be a cave (not a home town, Labyrinth, LOD or Bohai) - else warning "Auto War
-  must be started inside a cave on page 3..." and stop. Keys (`WarKeys(settings)` / `WarKeyProblem`): Skill, Target, Autohunt,
+  must be started inside a cave on page 3 of the teleport scroll, or inside Bohai Outpost" (`StartPlaceMessage`; the cave-only
+  `NotACaveMessage` is left for the stop after a war with no cave saved) and stop. Keys (`WarKeys(settings)` / `WarKeyProblem`): Skill, Target, Autohunt,
   Inventory required; Shura, Buff and the autohunt settings key optional; any key that is set must be pressable (`IsKnownKey`) -
   else warning + stop. **Buffs and Shura are optional (user, 2026-10-28: "make the skills optional, not required for pilot to
-  start")**: `CheckWarSkillBar`, once per Start (`_warBarChecked`), looks for `WarBarIcons` - the buffs ticked on (`BuffIcons`
-  then `ItemBuffIcons`, minus `DisabledBuffs`) + Shura's icon only when `Lod.ShuraKey` is set - on `Regions.Hotbar`
+  start")**: `CheckWarSkillBar`, once per Start (`_warBarChecked`), looks for `WarBarIcons` - the buffs ticked on (`BuffIcons`,
+  `WeaponBuffIcons`, `ItemBuffIcons`, minus `DisabledBuffs`) + Shura's icon only when `Lod.ShuraKey` is set - on `Regions.Hotbar`
   (`IconMatchScore` **0.90**, own score: warbuff2, a small grey streak, hit 0.871 on floor texture; Shura 0.951-1.000 on
-  real bars, <= 0.781 elsewhere); the missing ones are **one warning** "Not on the skill bar (score 0.90 needed): warbuff2 (best
-  0.84), ... - carrying on without them" (`DescribeMissingIcons`) + `war_bar_missing`, and the run carries on.
+  real bars, <= 0.781 elsewhere); the missing ones are **one warning** "Not on the skill bar (score 0.90 needed): warbuff3 (best
+  0.84), shura (not seen), warweapon1 (no warweapon1.png in templates/Assets) - carrying on without them ..."
+  (`DescribeMissingIcons(missing, hasTemplate)`: a template `ScreenAnalyzer.Library` never loaded is a PNG to add, not an icon
+  to put on the bar) + `war_bar_missing`, and the run carries on. Shura in the missing list adds "- clear 'Shura key (LOD)' if
+  this character has no Shura, or the fight still holds that key".
   Opens the teleport list on page 3 (`ListPage`), picks the entry that fits the minimap title (`WarText.BestListEntryFolded`:
   case-blind, I/l/1/| and O/0 folded; **two caves that fit = ambiguous = stop, never a guess**; 3 reads then stop), closes
   the list with its X, `Tab`s (<= 3) for the monster, **confirms the name against the map window's monster list** (a
@@ -779,16 +783,21 @@ do not run); the 5 s Bohai-dialog Cancel is skipped in this mode (the OK is what
   as is after the war). Autobuff? "[Auto buff scroll]" in the item list, else `S` + the AUTO BUFF title (closed with its X, then the
   settings window; the "Regular War" label is the sign the settings are open). One round (`TickWarBuffUpAsync` step 3, the icon list
   fixed at the round's start by the pure `WarBuffClicks(war, byBuffKey)`): autobuff -> `O`, then the **item buffs** (user,
-  2026-10-28: "with autobuff the item buffs on the skill bar are still clicked"); no autobuff -> the skill buffs (`BuffIcons`:
-  warbuff1-6, warweapon1-2), then the item buffs (`ItemBuffIcons`: waritem1-2); only the ones ticked on, each once; one icon per tick,
-  found on that tick's frame, `BuffClickGapMs` (1 s) apart; a missing one is skipped with **one warning per Start** (`_warMissingIcons`,
-  cleared in `Start`). Rebuff every `BuffEveryMs` (**345000** = 5 min 45 s), only between fight cycles.
+  2026-10-28: "with autobuff the item buffs on the skill bar are still clicked"; every rebuff); no autobuff -> `BuffIcons`
+  (warbuff1, 3, 4, 5, 6) -> `WeaponBuffIcons` (warbuff2 = sword, warweapon1 = white-gold lightning around armour, warweapon2 =
+  blue swirl; skill buffs, so not with autobuff) -> `ItemBuffIcons` (waritem1-2); only the ones ticked on, each once; one icon per
+  tick, found on that tick's frame, `BuffClickGapMs` (1 s) apart; a missing one is skipped with **one warning per Start**
+  (`_warMissingIcons`, cleared in `Start`; "cannot be looked for (no X.png in templates/Assets)" when its PNG is missing). Rebuff every `BuffEveryMs` (**345000** = 5 min 45 s), only between fight cycles.
 * **Buff switches (user, 2026-10-28).** `War.DisabledBuffs` (default empty = every buff on) holds the template names unticked in
-  Settings > Auto War > **Buffs** (`ViewModels/WarBuffSwitch`: one check box per icon of `BuffIcons` + `ItemBuffIcons`, the PNG from
-  `templates\` then `Assets` loaded with `BitmapCacheOption.OnLoad` (no file lock), label "Buff 1".."Buff 6", "Weapon 1/2",
-  "Item 1/2", tooltip "Clicked when buffing" (+ "(uses an item; also clicked with autobuff)"), no picture -> label only).
-  `WarSettings.IsBuffOn` / `SetBuffOn` (a new list replaces the old one: the loop thread may be reading it); saved like every other
-  setting (close / Save settings). `warweapon1/2` are the two weapons' buffs - a character has one weapon, so usually one is unticked.
+  Settings > Auto War > **Buffs** (`ViewModels/WarBuffSwitch`: one check box per icon of `BuffIcons`, `WeaponBuffIcons`,
+  `ItemBuffIcons`, labelled by list and place: "Buff 1".."Buff 5" (warbuff1, 3, 4, 5, 6), "Weapon 1 (sword)" (warbuff2), "Weapon 2"
+  (warweapon1), "Weapon 3" (warweapon2), "Item 1/2"; the PNG from `templates\` then `Assets` loaded with `BitmapCacheOption.OnLoad`
+  (no file lock; any exception -> next folder, else label only - it runs in the view model's constructor); one-line tooltip
+  "Clicked when buffing" (+ "(uses an item; also clicked with autobuff)"; the X buff warbuff4 = "Buff 3" says it is also the fight
+  cycle's X buff) ending in the template file name, since the logs name templates; WrapPanel `ItemWidth` 168, two per row - "Weapon
+  1 (sword)" with its icon is ~159 DIP). `WarSettings.IsBuffOn` / `SetBuffOn` (a new list replaces the old one: the loop thread may
+  be reading it); saved like every other setting (close / Save settings). A character uses one weapon, so usually two of the three
+  weapon buffs are unticked. SelfTest check "war buff switches" (labels, tooltips, DisabledBuffs written, damaged PNGs).
 * **Fight (`WarFight`, `.WarFight.cs`).** `Tab` ~1/s until a **target** (`WarText.FindTargetName` in the target box only: not the
   version/ping line, a system notice or a lone number) or the "Gate is Open" line; cycle = `Tab` -> X buff (`XBuffIcon` warbuff4;
   skipped when unticked) -> **hold the Shura key `ShuraHoldMs` 1200** (`_heldSkill`, released by `Advance` / Stop / F10; **no Shura key
@@ -812,8 +821,10 @@ do not run); the 5 s Bohai-dialog Cancel is skipped in this mode (the OK is what
 * **Upgrade note (settings across versions).** Once settings.json holds `"Mode": "AutoWar"`, a build from before Auto War throws on the unknown
   enum name in `Load`, falls back to the defaults and saves them on close - the Laby/LOD settings are gone. Release and update every installed copy
   before choosing Auto War on a PC where an older copy shares settings.json (`%LOCALAPPDATA%\WuxAuto`). The loader is not changed: old builds cannot be fixed.
-  Settings v23 (2026-10-28) appends `warweapon1/2` to a saved `BuffIcons`; v0.19.0 requires every `BuffIcons` icon on the bar at Start,
-  so a v0.19.0 copy reading a v23 file stops Auto War until both weapon buffs are there. The SelfTest probes therefore load with
+  Settings v23 (2026-10-28) is **removal only**: it takes `warbuff2` (the sword buff, now in the new `WeaponBuffIcons`) out of a saved
+  `BuffIcons`, keeping the user's order and other entries; nothing is ever added to `BuffIcons`, because v0.19.0 requires every
+  `BuffIcons` icon on the bar at Start (with v23 it simply checks five). `WeaponBuffIcons`, `ItemBuffIcons` and `DisabledBuffs` are
+  new properties v0.19.0 ignores - and drops when it saves (the check boxes come back all ticked). The SelfTest probes load with
   `SettingsStore.Load(persistMigration: false)` (the migration stays in memory) - a probe of a newer build never rewrites the
   settings.json of a running older copy. The app itself and UiShot (which restores the file) still save the migration.
 
@@ -823,7 +834,7 @@ Shura on the bar 0.951-1.000; `warbuff1-6` crops: **no saved frame shows them** 
 screenshot: `00:04:25` (265 s).
 
 **Not seen live (spec §9 + the task reports) - everything inside Bohai:** the Bohai minimap title after the dialog; "Gate is Open"; an enemy player in the target box
-(and whether it has the chest); HP 0 and the revive (does the game send a dead alt to town?); the six buff icons and the weapon and item buffs (warweapon1-2, waritem1-2) on a real alt bar at 0.90; the ☰ menu opened and
+(and whether it has the chest); HP 0 and the revive (does the game send a dead alt to town?); the buff, weapon and item buff icons (warweapon1-2 and waritem1-2 have no PNG yet) on a real alt bar at 0.90; the ☰ menu opened and
 the **MENU close geometry** (from faint glyphs on one screenshot; a window whose X is not read is left open with `war_close_stuck`) and whether ☰ toggles the menu shut;
 TRIBE STATUS X at other resolutions (one 795x829 crop); the AUTO BUFF X as a bright blob; the "Regular War" label in the autohunt settings; page 3 of the teleport list at other
 resolutions; the X of the TELEPORT SCROLL (closing it costs no scroll, and whether the inventory stays open); the wording "Arrived: <monster>"; "Auto hunt started" in a cave;
@@ -885,7 +896,7 @@ Dry run on in the real settings).
 | `AutohuntStallMs` | 15000 | stage 5 `WatchBoss`: autohunt on, boss up, no new attack line this long → `J` off, select and attack by hand again (`stall_s5`; user, 2026-10-27); clamp 3000–120000 |
 | `HoldBeforeAutohunt` | true | stages 1–4: hold the skill key once on the boss in view before `J` (user, 2026-10-27: "on other stages, before going autohunt, try to skill hold first"; UI "Hold skill before autohunt (stages 1-4)"); off = `J` in `WaitBoss` right after the spawn wait. New bool, a saved file without it loads `true` — no migration |
 | `CtrlSkill` | true | every manual skill press (stage 5: the held press and the `ManualAttacks` taps; stages 1–4: the held press before `J`; LOD skill spam) = the skill key, then Ctrl + skill key (user, 2026-10-26); with `Lod.HoldSkill` the held key is let go for a Ctrl tap every `Lod.SkillEveryMs`. New property, so a saved file without it loads `true` — no migration (checked on this PC's settings.json) |
-| `War.*` (`WarSettings`; UI block "Auto War": Shura hold, Rebuff every, Lead time, TAB target, Buffs (one check box per buff icon), read-only "Back to") | see right | `Destination` "Bohai Outpost" (teleport list entry + minimap zone), `TribeRowText` "Bohai Outpost (Adept)", `MenuTileText` "Tribe Status", `LeadMs` 10000 (user: 10 s before zero), `DialogWaitMs` 120000, `TabTargetOption` "Enemy worth CP" (user), `BuffIcons` warbuff1...warbuff6, warweapon1, warweapon2 (v23 appends the two weapons to a saved list missing them, after the user's own order and entries; an empty list is refilled with the defaults), `ItemBuffIcons` waritem1, waritem2 (user, 2026-10-28; clicked after the skill buffs and with autobuff too; new property - a file without it loads the default, an empty list stays empty), `DisabledBuffs` [] (the unticked buffs; empty = every buff on; `NormalizeWar` trims both new lists, drops blanks, keeps each name once), `XBuffIcon` warbuff4, `BuffClickGapMs` 1000, `BuffEveryMs` 345000 (my call: 5 min 45 s; the user's buffs last at least 6 min), `ShuraHoldMs` 1200, `TargetGoneMs` 2000, `GateText` "Gate is Open", `ListPage` 3, `ArrivedText` "Arrived", `ArriveWaitMs` 90000, `IconMatchScore` 0.90, `HomeMap` / `HomeMonster` "" (written by Start's remember step). New block (v0.19.0, no version bump; v23 for the weapon buffs); keys are reused (`Dungeon.SkillKey` / `CtrlSkill` / `AutohuntKey` / `TabKey`, `Lod.ShuraKey` / `BuffKey`, `Sequence.AutohuntSettingsKey`) |
+| `War.*` (`WarSettings`; UI block "Auto War": Shura hold, Rebuff every, Lead time, TAB target, Buffs (one check box per buff icon), read-only "Back to") | see right | `Destination` "Bohai Outpost" (teleport list entry + minimap zone), `TribeRowText` "Bohai Outpost (Adept)", `MenuTileText` "Tribe Status", `LeadMs` 10000 (user: 10 s before zero), `DialogWaitMs` 120000, `TabTargetOption` "Enemy worth CP" (user), `BuffIcons` warbuff1, warbuff3, warbuff4, warbuff5, warbuff6 (the plain buffs; v23 removes warbuff2 from a saved list, removal only; an empty list is refilled with the defaults), `WeaponBuffIcons` warbuff2 (sword), warweapon1, warweapon2 (user, 2026-10-28; skill buffs clicked after `BuffIcons`, not with autobuff; new property), `ItemBuffIcons` waritem1, waritem2 (user, 2026-10-28; clicked after the weapon buffs, with every rebuff and with autobuff too; new property), `DisabledBuffs` [] (the unticked buffs of all three lists; empty = every buff on; a file without the new lists loads their defaults; `NormalizeWar` trims the three new lists, drops blanks, keeps each name once, never refills an empty one), `XBuffIcon` warbuff4, `BuffClickGapMs` 1000, `BuffEveryMs` 345000 (my call: 5 min 45 s; the user's buffs last at least 6 min), `ShuraHoldMs` 1200, `TargetGoneMs` 2000, `GateText` "Gate is Open", `ListPage` 3, `ArrivedText` "Arrived", `ArriveWaitMs` 90000, `IconMatchScore` 0.90, `HomeMap` / `HomeMonster` "" (written by Start's remember step). New block (v0.19.0, no version bump; v23 removes warbuff2 from `BuffIcons`); keys are reused (`Dungeon.SkillKey` / `CtrlSkill` / `AutohuntKey` / `TabKey`, `Lod.ShuraKey` / `BuffKey`, `Sequence.AutohuntSettingsKey`) |
 | `HomeTowns` | Piercing City, Molten City, Wandering City | every clan's home town (user, 2026-10-21): any of them on the minimap = "in town" (zone guard, LOD kill, stage 5 closed, still-in-town, re-login); the one seen (`TownIn`, remembered per Start) is where the return teleport goes |
 | `ReturnDestination` | `Piercing City` | fallback until a home town has been seen; after stage 5: `J` (autohunt off) → teleport scroll there → `Done`; only then may `Loop` start the next run |
 | `RunClickPx` / `RunStepWaitMs` / `RunMaxSteps` | 200 / 1500 / 200 | final run steering |

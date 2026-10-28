@@ -194,9 +194,10 @@ home it teleports back to the **same cave and the same monster**, turns the auto
    them. With no Shura key the fight skips the Shura hold.
 3. It then reads the time to the next war from **Menu (the button at the top centre) > Tribe Status**, closes those
    windows, waits, and 10 s before the war (`Lead time`) turns the autohunt off and clicks OK on the war dialog.
-   Inside it sets the game's TAB target to **Enemy worth CP**, buffs - auto-buff key `O`, or else the skill buff icons one
-   by one; then the **item buffs** on the skill bar either way (they use an item; with `O` they are still clicked) - again
-   every 5 min 45 s, then repeats: Tab to an enemy, the X buff, hold Shura, attack until the target is gone.
+   Inside it sets the game's TAB target to **Enemy worth CP**, buffs - auto-buff key `O`, or else the buff icons and then
+   the weapon buff icons one by one; then the **item buffs** on the skill bar either way (they use an item; with `O` they
+   are still clicked) - again every 5 min 45 s, then repeats: Tab to an enemy, the X buff, hold Shura, attack until the
+   target is gone.
    It watches the HP numbers (top left) and rebuffs after a death. When the war is over it goes back as above - at most
    3 times in 30 min without a war in between (a cave that keeps sending the character to town would otherwise cost a
    teleport every round); then it stops.
@@ -208,17 +209,22 @@ home it teleports back to the **same cave and the same monster**, turns the auto
    inside Bohai.
 5. Settings (Settings panel > Auto War): **Shura hold (ms)**, **Rebuff every (ms)**, **Lead time (ms)**, **TAB target**,
    **Buffs**, and the read-only **Back to** line (the saved cave and monster). The rest is in `settings.json` under `War`.
-   **Buffs** has one check box per buff, with its icon: **Buff 1**-**Buff 6** (`warbuff1`-`warbuff6`), **Weapon 1** /
-   **Weapon 2** (`warweapon1` / `warweapon2`, the buffs of the different weapons - a character usually has only one of
-   them) and **Item 1** / **Item 2** (`waritem1` / `waritem2`, items placed on the skill bar). All are ticked at first;
-   untick the ones this character does not have: an unticked buff is never clicked and not looked for at Start
-   (`War > DisabledBuffs` in `settings.json`; the X buff is `Buff 4`, unticked = not clicked in the fight either).
+   **Buffs** has one check box per buff (10), with its icon and, in its tooltip, its template file:
+   **Buff 1**-**Buff 5** (`warbuff1`, `warbuff3`, `warbuff4`, `warbuff5`, `warbuff6`; `War > BuffIcons`),
+   **Weapon 1 (sword)**, **Weapon 2**, **Weapon 3** (`warbuff2`, `warweapon1` - white-gold lightning around armour,
+   `warweapon2` - blue swirl; `War > WeaponBuffIcons`: a character uses one weapon, so usually only one of them is on its
+   bar) and **Item 1** / **Item 2** (`waritem1` / `waritem2`, items placed on the skill bar; `War > ItemBuffIcons`). All
+   are ticked at first; untick the ones this character does not have: an unticked buff is never clicked and not looked for
+   at Start (`War > DisabledBuffs` in `settings.json`). The X buff is **Buff 3** (`warbuff4`): unticked, it is not
+   clicked in the fight either. A template that has no PNG yet is named as such in the warnings
+   ("no warweapon1.png in templates/Assets").
 
 **Upgrade note:** once Auto War is chosen, `settings.json` holds `"Mode": "AutoWar"`, which a WuxAuto from before Auto War
 cannot read - it starts with the default settings and saves them on close, and your Laby / LOD settings are gone. On a PC
 where an older copy shares `settings.json` (`%LOCALAPPDATA%\WuxAuto`), update every installed copy first, then choose Auto War.
-The same goes for the weapon buffs: from this version on `settings.json` lists `warweapon1` / `warweapon2`, and a v0.19.0
-copy reading that file stops Auto War at Start until both are on the skill bar - update every copy.
+Settings v23 only takes `warbuff2` (the sword's buff, a weapon buff now) out of a saved `War > BuffIcons`; the weapon and
+item lists and the check boxes are new settings a v0.19.0 copy does not know - it checks the five remaining buffs at Start,
+and when it saves `settings.json` the check box choices are lost (all ticked again). Update every copy.
 
 **Not verified yet - no live war has been run.** Everything inside Bohai (the minimap title, "Gate is Open", enemy
 players in the target box, HP 0 and the revive), the buff icons on a real skill bar (the weapon and item buffs included), the Menu close geometry and whether
@@ -251,7 +257,7 @@ but it also only ever talks to the bound window.
 | `Dungeon ▸ CtrlSkill` ("Ctrl + skill key too") | On (default): every manual skill press — Laby stage 5 (the held press and the `Manual attacks` taps), the stages 1-4 held press and the Auto LOD skill spam — sends the skill key and then Ctrl + skill key (`1`, then `Ctrl+1` about 60 ms later). With "Hold skill (LOD)" the held key is let go for a Ctrl + skill tap every `Lod ▸ SkillEveryMs` (0.3 s) and then held again. Off = the plain skill key only. |
 | `Lod ▸ RingCheckEveryMs` / `RingStayMax` | 3000 / 1.0: with "Walk up to the boss (LOD)" on, after the first walk up of a fight the pink ring round the boss's feet is checked every 3 s; the character further out than 1.0 ring radius (= off the ring) → Shura, Ctrl+click the ring again, attack. A walk that did not get there waits 9 s before the next check. A ring out of view counts as "under the boss" and nothing is done. `RingCheckEveryMs` 0 = only the walk after the first hit. |
 | `Lod ▸ WalkToBossSpot` ("Walk to the boss spot (LOD)") | On (default): after the south turn Auto LOD walks forward to `Lod ▸ TargetX/TargetY` (**1199, 1782**; the teleport lands at about 1195, 1578) pressing Tab every `Lod ▸ TabEveryMs` (1.5 s), then waits there tabbing until **Bai Gu Great** shows. Off = stay where the teleport put the character and only press Tab — no walk clicks. The south turn happens either way. Settings v22 turns it on and moves the old 1191, 2413 spot; a spot set by hand stays. |
-| `Lod ▸ ShuraKey` ("Shura key (LOD)") | Auto LOD stops the attack with **Shura** before a mid-fight buff and before the walk up to the boss: the `shura.png` icon is looked for on the skill bar (`Regions ▸ Hotbar`, bottom 15 %) and clicked `ShuraPresses` (3) times, `ShuraEveryMs` (200) apart. Not found → this key, the same way (default `E`, the slot Shura is in); empty → `StopAttackKey` (Space) × 15 (buff) / 3 (walk) as before. The same icon in two slots → the leftmost. |
+| `Lod ▸ ShuraKey` ("Shura key (LOD)") | Auto LOD stops the attack with **Shura** before a mid-fight buff and before the walk up to the boss: the `shura.png` icon is looked for on the skill bar (`Regions ▸ Hotbar`, bottom 15 %) and clicked `ShuraPresses` (3) times, `ShuraEveryMs` (200) apart. Not found → this key, the same way (default `E`, the slot Shura is in); empty → `StopAttackKey` (Space) × 15 (buff) / 3 (walk) as before. The same icon in two slots → the leftmost. Auto War: held each fight cycle; empty = no hold. |
 | `Sequence ▸ AutohuntOffInTown` | On (default): in town, before every teleport, the autohunt key is tapped and the combat log read (`AutohuntStartedText` / `AutohuntEndedText`, "Auto hunt started" / "Auto hunt ended"); "started" = it was off, so it is tapped again. Off = never touch it in town. |
 | `Sequence ▸ AutoConfirmDialogs` ("Auto confirm (Ctrl + right click)") / `AutoConfirmText` / `AutoConfirmButton` | On (default): while the game is bound and the pilot is not running, a Ctrl + right click on the game starts a 3 s watch for a dialog line containing `AutoConfirmText` (`Confirm`); its `AutoConfirmButton` (`OK`: the line reading exactly that under the message, else the lowest gold button under it) is clicked as soon as it shows. Off = never. |
 | `Sequence ▸ KillChime` ("Kill chime") / `KillNotification` ("Kill notification") | On (default): a chime / a Windows notification when a Labyrinth boss dies and when an LOD kill's loot step ends (see *Kill alert* below). |
