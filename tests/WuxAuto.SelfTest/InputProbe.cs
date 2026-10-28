@@ -53,7 +53,7 @@ internal static class InputProbe
             return 1;
         }
 
-        var settings = SettingsStore.Load();
+        var settings = SettingsStore.Load(persistMigration: false);
         Console.WriteLine($"target     : 0x{target.Handle:X} {target.ProcessName} pid {target.ProcessId} client {target.ClientWidth}x{target.ClientHeight} class {ClassName(target.Handle)}");
         Console.WriteLine($"input mode : {settings.Input.Mode}, require foreground {settings.Input.RequireForeground}, focus on start {settings.Input.FocusOnStart}, dry run {settings.Sequence.DryRun}");
         Console.WriteLine($"children   : {DescribeChildren(target.Handle)}");

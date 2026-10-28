@@ -1,3 +1,4 @@
+using System.Globalization;
 using OpenCvSharp;
 using WuxAuto.Core;
 using WuxAuto.Vision;
@@ -7,8 +8,10 @@ namespace WuxAuto.Automation;
 
 /// <summary>
 /// Auto War inside Bohai Outpost (design §4.4-§4.7): the zone after the war dialog's OK, TAB target "Enemy worth CP" (the
-/// Settings visit), the buffs - the buff key with an autobuff scroll, else the six icons one by one - then the fight
-/// cycle: Tab until a target (or "Gate is Open"), the X buff, Shura held, the skill until the target is gone. The HP
+/// Settings visit), the buffs - the buff key with an autobuff scroll, else the buff and weapon buff icons one by one;
+/// then the item buffs on the skill bar either way, every icon only when ticked on (<see cref="WarBuffClicks"/>) - then the fight
+/// cycle: Tab until a target (or "Gate is Open"), the X buff, Shura held (when its key is set), the skill until the
+/// target is gone. The HP
 /// numbers are watched all the while; after a death it waits for the revive, rebuffs and fights on. The game sending the
 /// character to town ends the war: the trip back to the cave. Reads and keys only with the game in front - alts often
 /// run beside a second game client, whose screen would otherwise be read - and the waits stand still meanwhile.
@@ -21,7 +24,8 @@ public sealed partial class AutomationPilot
     private bool _warStarted;              // a target or "Gate is Open" was seen in this war
     private bool? _warHasAutoBuff;         // the character has an autobuff scroll; null = not known
     private bool _warBuffKeyWarned;        // autobuff without a buff key, warned this war
-    private readonly HashSet<string> _warMissingIcons = new(StringComparer.OrdinalIgnoreCase);   // buff icons warned about this war
+    private readonly HashSet<string> _warMissingIcons = new(StringComparer.OrdinalIgnoreCase);   // buff icons warned about this Start (Start clears it)
+    private bool _warShuraSkipTold;        // no Shura key: the skipped hold was said this Start (Start clears it)
     private long _warInsideZoneAt;         // next minimap title read (WarZoneCheckAsync)
     private int _warOtherZoneReads;        // reads of another zone since the last Bohai read
     private bool _warZoneHeld;             // the last title read was another zone: the phase holds
@@ -31,7 +35,9 @@ public sealed partial class AutomationPilot
 
     // WarBuff.
     private int _warBuffStep;              // 0 autobuff known?, 1 ask the autohunt settings, 2 close them, 3 buff
-    private int _warBuffIcon;              // step 3 without autobuff: the next of BuffIcons
+    private IReadOnlyList<string>? _warBuffRound;   // step 3: the icons this round clicks (WarBuffClicks); null = the round has not begun
+    private bool _warBuffByKey;            // step 3: this round pressed the buff key (autobuff)
+    private int _warBuffIcon;              // step 3: the next of _warBuffRound
     private int _warBuffClicks;            // step 3: icons clicked this round
     private int _warHuntSettingsPresses;   // step 1: presses of the autohunt settings key
     private int _warHuntSettingsCloses;    // step 2: presses to close them
@@ -123,6 +129,20 @@ public sealed partial class AutomationPilot
         int shown = lines.Select(TextMatcher.Normalize).Where(l => l.Length >= 3).Distinct().Count();
         return shown >= 3 ? WarItemList.NoAutoBuff : WarItemList.Unread;
     }
+
+    /// <summary>
+    /// The icons one buff round clicks on the skill bar, in order (user, 2026-10-28). With <paramref name="byBuffKey"/> -
+    /// the autobuff key pressed - only the item buffs (<see cref="WarSettings.ItemBuffIcons"/>: the key buffs the skills,
+    /// it uses no items, and the user wants the items clicked with autobuff too); otherwise the buffs
+    /// (<see cref="WarSettings.BuffIcons"/>), the weapon buffs (<see cref="WarSettings.WeaponBuffIcons"/>, skill buffs too),
+    /// then the item buffs. Only the ones ticked on (<see cref="WarSettings.IsBuffOn"/>), blanks left out, each once (an icon
+    /// in two lists is clicked once; with autobuff, as an item).
+    /// </summary>
+    internal static IReadOnlyList<string> WarBuffClicks(WarSettings war, bool byBuffKey)
+        => (byBuffKey ? Enumerable.Empty<string>() : war.BuffIcons.Concat(war.WeaponBuffIcons)).Concat(war.ItemBuffIcons)
+            .Where(i => !string.IsNullOrWhiteSpace(i) && war.IsBuffOn(i))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
 
     /// <summary>
     /// When a rebuff is wanted: <paramref name="buffEveryMs"/> after the last buff, or from the moment the buffs were seen
@@ -383,8 +403,8 @@ public sealed partial class AutomationPilot
         _warStarted = false;
         _warHasAutoBuff = null;
         _warBuffKeyWarned = false;
-        _warMissingIcons.Clear();
         _warBuffStep = 0;
+        _warBuffRound = null;
         _warBuffIcon = 0;
         _warBuffClicks = 0;
         _warHuntSettingsPresses = 0;
@@ -690,50 +710,54 @@ public sealed partial class AutomationPilot
     }
 
     /// <summary>
-    /// Step 3: autobuff - the buff key (<see cref="LodSettings.BuffKey"/>, O); otherwise every icon of
-    /// <see cref="WarSettings.BuffIcons"/> in order, one click per tick <see cref="WarSettings.BuffClickGapMs"/> apart, each
-    /// found on that tick's frame; one not on the bar is skipped with a warning once per war. Then the fight.
+    /// Step 3, one round: autobuff - the buff key (<see cref="LodSettings.BuffKey"/>, O) first; then the icons of
+    /// <see cref="WarBuffClicks"/> - with the key only the item buffs, otherwise the buffs, the weapon buffs, then the item
+    /// buffs, each only when ticked on - one click per tick <see cref="WarSettings.BuffClickGapMs"/> apart, each found on that tick's
+    /// frame; one not on the bar is skipped, with a warning once per Start. Then the fight.
     /// </summary>
     private async Task TickWarBuffUpAsync(Mat frame)
     {
         long now = Environment.TickCount64;
         var war = _settings.War;
         string buffKey = _settings.Lod.BuffKey;
-        if (_warHasAutoBuff == true && !string.IsNullOrWhiteSpace(buffKey))
+        if (_warBuffRound == null)
         {
-            if (!_input.KeyTap(buffKey))
+            bool byKey = _warHasAutoBuff == true && !string.IsNullOrWhiteSpace(buffKey);
+            if (_warHasAutoBuff == true && !byKey && !_warBuffKeyWarned)
+            {
+                _warBuffKeyWarned = true;
+                Log?.Invoke(LogLevel.Warning, "Autobuff, but no buff key is set (the 'Buff key (LOD)' setting) - clicking the buff icons instead.");
+            }
+
+            if (byKey && !_input.KeyTap(buffKey))
             {
                 _detail = "buff key blocked - waiting for the game to be in front";
                 _waitUntil = now + 300;
                 return;
             }
 
-            Log?.Invoke(LogLevel.Success, $"Buffed with '{buffKey}' (autobuff); again in {Clock(war.BuffEveryMs)}.");
-            await FinishWarBuffAsync(frame, now);
-            return;
+            // The round is fixed here: a box ticked in the settings panel meanwhile counts from the next round.
+            _warBuffRound = WarBuffClicks(war, byKey);
+            _warBuffByKey = byKey;
+            if (byKey && _warBuffRound.Count > 0)
+            {
+                _detail = $"buffing - pressed '{buffKey}' (autobuff), then the item buffs";
+                _waitUntil = now + war.BuffClickGapMs;
+                return;
+            }
         }
 
-        if (_warHasAutoBuff == true && !_warBuffKeyWarned)
-        {
-            _warBuffKeyWarned = true;
-            Log?.Invoke(LogLevel.Warning, "Autobuff, but no buff key is set (the 'Buff key (LOD)' setting) - clicking the buff icons instead.");
-        }
-
-        var icons = war.BuffIcons;
+        var icons = _warBuffRound;
         while (_warBuffIcon < icons.Count)
         {
             string icon = icons[_warBuffIcon];
-            if (string.IsNullOrWhiteSpace(icon))
-            {
-                _warBuffIcon++;
-                continue;
-            }
-
             var hit = _analyzer.FindSkillBarIcons(frame, [icon], war.IconMatchScore)[0].Match;
             if (hit == null)
             {
                 if (_warMissingIcons.Add(icon))
-                    Log?.Invoke(LogLevel.Warning, $"The buff icon '{icon}' is not on the skill bar - skipping it this war.");
+                    Log?.Invoke(LogLevel.Warning, _analyzer.Library.Get(icon) == null
+                        ? $"The buff icon '{icon}' cannot be looked for ({NoTemplateText(icon)}) - skipping it (said once per Start)."
+                        : $"The buff icon '{icon}' is not on the skill bar - skipping it (said once per Start; untick it in Settings > Auto War > Buffs when this character does not use it).");
                 _warBuffIcon++;
                 continue;
             }
@@ -749,8 +773,16 @@ public sealed partial class AutomationPilot
             return;
         }
 
-        Log?.Invoke(_warBuffClicks > 0 ? LogLevel.Success : LogLevel.Warning,
-            $"Buffed: {_warBuffClicks} of {icons.Count} icon(s) clicked; again in {Clock(war.BuffEveryMs)}.");
+        string again = $"again in {Clock(war.BuffEveryMs)}";
+        if (_warBuffByKey)
+            Log?.Invoke(LogLevel.Success, icons.Count == 0
+                ? $"Buffed with '{buffKey}' (autobuff); {again}."
+                : $"Buffed with '{buffKey}' (autobuff) and {_warBuffClicks} of {icons.Count} item buff(s) clicked; {again}.");
+        else if (icons.Count == 0)
+            Log?.Invoke(LogLevel.Info, $"No buff is ticked on (Settings > Auto War > Buffs) - nothing to click; {again}.");
+        else
+            Log?.Invoke(_warBuffClicks > 0 ? LogLevel.Success : LogLevel.Warning,
+                $"Buffed: {_warBuffClicks} of {icons.Count} icon(s) clicked; {again}.");
         await FinishWarBuffAsync(frame, now);
     }
 
@@ -760,6 +792,7 @@ public sealed partial class AutomationPilot
         _warBuffedAt = now;
         _warBuffsDroppedAt = null;
         _warBuffStep = 0;
+        _warBuffRound = null;
         _warBuffIcon = 0;
         _warBuffClicks = 0;
         await ReadWarHpAsync(frame);
@@ -770,6 +803,7 @@ public sealed partial class AutomationPilot
     private void BeginWarRebuff(string why, int delayMs)
     {
         _warBuffStep = 3;
+        _warBuffRound = null;
         _warBuffIcon = 0;
         _warBuffClicks = 0;
         Log?.Invoke(LogLevel.Info, $"Rebuffing ({why}).");
@@ -886,9 +920,10 @@ public sealed partial class AutomationPilot
 
     /// <summary>
     /// Step 1: a name or the chest in the target box = a target - the war has started, the X buff
-    /// (<see cref="WarSettings.XBuffIcon"/>, skipped when not on the bar) is clicked on this frame, then Shura. None: Tab
-    /// again 1 s later; before the war has started the whole client is read for <see cref="WarSettings.GateText"/> on every
-    /// 2nd such read.
+    /// (<see cref="WarSettings.XBuffIcon"/>, skipped when unticked; not on the bar - skipped, <see cref="WarnXBuffMissing"/>)
+    /// is clicked on this frame, then Shura.
+    /// None: Tab again 1 s later; before the war has started the whole client is read for <see cref="WarSettings.GateText"/>
+    /// on every 2nd such read.
     /// </summary>
     private async Task TickWarFindTargetAsync(Mat frame, long now)
     {
@@ -907,15 +942,21 @@ public sealed partial class AutomationPilot
             _warTarget = name ?? "?";
             _warTargetSeenAt = _warClock.Now(now);
             _warTabPolls = 0;
+            bool xBuff = !string.IsNullOrWhiteSpace(war.XBuffIcon) && war.IsBuffOn(war.XBuffIcon);
+            string shura = string.IsNullOrWhiteSpace(_settings.Lod.ShuraKey) ? "" : $"Shura {war.ShuraHoldMs} ms, ";
             // Every cycle: Trace, so a war's hundreds of cycles stay out of the Info log.
-            Log?.Invoke(LogLevel.Trace, $"{(name != null ? $"Target '{name}'" : "A target (chest icon, name unread)")} - X buff, Shura {war.ShuraHoldMs} ms, then the skill until it is gone.");
+            Log?.Invoke(LogLevel.Trace, $"{(name != null ? $"Target '{name}'" : "A target (chest icon, name unread)")} - {(xBuff ? "X buff, " : "")}{shura}then the skill until it is gone.");
 
             bool clicked = false;
-            if (!string.IsNullOrWhiteSpace(war.XBuffIcon)
-                && _analyzer.FindSkillBarIcons(frame, [war.XBuffIcon], war.IconMatchScore)[0].Match is { } x)
+            var x = xBuff ? _analyzer.FindSkillBarIcons(frame, [war.XBuffIcon], war.IconMatchScore)[0].Match : null;
+            if (x != null)
             {
                 _overlays.Add(new OverlayItem(x.Bounds, $"{war.XBuffIcon} {x.Score:0.00}", OverlayColor.Green));
                 clicked = WarClick(x.Bounds, $"the X buff '{war.XBuffIcon}' ({x.Score:0.00})", LogLevel.Trace);
+            }
+            else if (xBuff && _warMissingIcons.Add(war.XBuffIcon))
+            {
+                WarnXBuffMissing(frame);
             }
 
             _warFightStep = 2;
@@ -940,13 +981,44 @@ public sealed partial class AutomationPilot
         _waitUntil = now + 1000;
     }
 
-    /// <summary>Step 2: the Shura key goes down and stays down (<c>_heldSkill</c>, so every way out lets go of it).</summary>
+    /// <summary>
+    /// The X buff, ticked on, not found on the skill bar at <see cref="WarSettings.IconMatchScore"/> in a fight cycle: one
+    /// warning per Start (<c>_warMissingIcons</c>, shared with the buff round, so an icon it already warned about is not
+    /// warned again) naming its best score at any scale, or that its PNG is missing (<see cref="DescribeMissingIcons"/>).
+    /// With autobuff - or a Start inside Bohai with autobuff - nothing else ever looks for it. The cycle goes on without it.
+    /// </summary>
+    private void WarnXBuffMissing(Mat frame)
+    {
+        string icon = _settings.War.XBuffIcon;
+        var bar = _settings.Regions.Hotbar.ToPixels(frame.Width, frame.Height);
+        bool hasPng = _analyzer.Library.Get(icon) != null;
+        // How close it came: any scale, so no scale is learned from a look-alike.
+        var best = hasPng ? _analyzer.FindIconAnyScale(frame, icon, bar, 0.0).Match : null;
+        if (best != null)
+            _overlays.Add(new OverlayItem(best.Bounds, $"{icon}? {best.Score:0.00}", OverlayColor.Orange));
+        Log?.Invoke(LogLevel.Warning, $"The X buff '{icon}' was not found on the skill bar (score "
+                                      + $"{_settings.War.IconMatchScore.ToString("0.00", CultureInfo.InvariantCulture)} needed): "
+                                      + $"{DescribeMissingIcons([(icon, best?.Score)], _ => hasPng)} - fighting on without it (a cooldown can hide it too; "
+                                      + "said once per Start; untick it in Settings > Auto War > Buffs when this character does not use it).");
+        WarShot(frame, "war_xbuff_missing");
+    }
+
+    /// <summary>
+    /// Step 2: the Shura key goes down and stays down (<c>_heldSkill</c>, so every way out lets go of it). No Shura key (user,
+    /// 2026-10-28: Shura is optional): no hold - the skill at once, said once per Start.
+    /// </summary>
     private void TickWarShuraDown(long now)
     {
         var war = _settings.War;
         string shura = _settings.Lod.ShuraKey;
         if (string.IsNullOrWhiteSpace(shura))
         {
+            if (!_warShuraSkipTold)
+            {
+                _warShuraSkipTold = true;
+                Log?.Invoke(LogLevel.Info, "No Shura key is set ('Shura key (LOD)') - every fight cycle goes from the target straight to the skill, without the Shura hold.");
+            }
+
             BeginWarAttack(now);
             return;
         }

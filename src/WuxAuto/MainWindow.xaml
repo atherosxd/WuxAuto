@@ -373,7 +373,7 @@
                                        ToolTip="Laby, stage 5: with the boss in view, hold the skill key (see Hold skill), then tap it this many times (300 ms or more apart, see Attack gap); the autohunt only goes on after a new 'Attack succeeded' line. 0 = autohunt straight away." />
                             <TextBox Grid.Row="3" Grid.Column="1" Style="{StaticResource WideField}" Text="{Binding Settings.Dungeon.ManualAttacks}" />
                             <TextBlock Grid.Row="3" Grid.Column="2" Text="Shura key (LOD)" Style="{StaticResource FieldLabel}"
-                                       ToolTip="Auto LOD: Shura stops the attack before a mid-fight buff and before the walk up to the boss. Its icon (shura.png) is clicked on the skill bar; when it is not found this key is tapped instead (the slot you put Shura in, default E). Empty = Space when the icon is not found." />
+                                       ToolTip="Auto LOD: Shura stops the attack before a mid-fight buff and before the walk up to the boss. Its icon (shura.png) is clicked on the skill bar; when it is not found this key is tapped instead (the slot you put Shura in, default E). Empty = Space when the icon is not found. Auto War: held at the start of every fight cycle; empty = no Shura hold." />
                             <TextBox Grid.Row="3" Grid.Column="3" Style="{StaticResource WideField}" Text="{Binding Settings.Lod.ShuraKey, UpdateSourceTrigger=PropertyChanged}" />
 
                             <TextBlock Grid.Row="4" Grid.Column="0" Text="Run key" Style="{StaticResource FieldLabel}"
@@ -432,13 +432,15 @@
                                 <RowDefinition Height="Auto" />
                                 <RowDefinition Height="Auto" />
                                 <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
                             </Grid.RowDefinitions>
 
                             <TextBlock Grid.Row="0" Grid.Column="0" Text="Shura hold (ms)" Style="{StaticResource FieldLabel}"
-                                       ToolTip="How long the Shura key is held at the start of each fight cycle, before the skill taps." />
+                                       ToolTip="How long the Shura key (LOD) is held at the start of each fight cycle, before the skill taps. No Shura key = no hold." />
                             <TextBox Grid.Row="0" Grid.Column="1" Style="{StaticResource WideField}" Text="{Binding Settings.War.ShuraHoldMs}" />
                             <TextBlock Grid.Row="0" Grid.Column="2" Text="Rebuff every (ms)" Style="{StaticResource FieldLabel}"
-                                       ToolTip="How often the six war buffs are clicked again while the war runs (5 min 45 s = 345000)." />
+                                       ToolTip="How often the war buffs are renewed while the war runs (5 min 45 s = 345000): the buff key with autobuff, else the ticked buff icons; the ticked item buffs either way." />
                             <TextBox Grid.Row="0" Grid.Column="3" Style="{StaticResource WideField}" Text="{Binding Settings.War.BuffEveryMs}" />
 
                             <TextBlock Grid.Row="1" Grid.Column="0" Text="Lead time (ms)" Style="{StaticResource FieldLabel}"
@@ -450,12 +452,45 @@
                                       ItemsSource="{x:Static auto:TabTargetOptions.All}"
                                       SelectedItem="{Binding Settings.War.TabTargetOption}" />
 
-                            <TextBlock Grid.Row="3" Grid.Column="0" Grid.ColumnSpan="4" Style="{StaticResource Caption}"
+                            <!-- Buffs (user, 2026-10-28): one check box per buff icon, unticked = never clicked, not looked for at Start. -->
+                            <TextBlock Grid.Row="3" Grid.Column="0" Grid.ColumnSpan="4" Text="Buffs" Style="{StaticResource FieldLabel}" Margin="0,2,6,2"
+                                       ToolTip="Tick the buffs this character has on its skill bar. Unticked ones are never clicked and not looked for at Start; a ticked one that is not on the bar is only warned about." />
+                            <ItemsControl Grid.Row="4" Grid.Column="0" Grid.ColumnSpan="4" Margin="0,0,0,6" ItemsSource="{Binding WarBuffSwitches}">
+                                <ItemsControl.ItemsPanel>
+                                    <ItemsPanelTemplate>
+                                        <!-- Fixed slots so the boxes line up: two per row, each wide enough for "Weapon 1 (sword)" with its icon (~159 DIP). -->
+                                        <WrapPanel ItemWidth="168" />
+                                    </ItemsPanelTemplate>
+                                </ItemsControl.ItemsPanel>
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate DataType="{x:Type vm:WarBuffSwitch}">
+                                        <CheckBox IsChecked="{Binding IsOn}" ToolTip="{Binding ToolTip}" Margin="0,2,4,2">
+                                            <StackPanel Orientation="Horizontal">
+                                                <Image Source="{Binding Icon}" Width="22" Height="22" Margin="0,0,5,0"
+                                                       RenderOptions.BitmapScalingMode="HighQuality">
+                                                    <Image.Style>
+                                                        <Style TargetType="Image">
+                                                            <Style.Triggers>
+                                                                <DataTrigger Binding="{Binding Icon}" Value="{x:Null}">
+                                                                    <Setter Property="Visibility" Value="Collapsed" />
+                                                                </DataTrigger>
+                                                            </Style.Triggers>
+                                                        </Style>
+                                                    </Image.Style>
+                                                </Image>
+                                                <TextBlock Text="{Binding Label}" VerticalAlignment="Center" />
+                                            </StackPanel>
+                                        </CheckBox>
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+
+                            <TextBlock Grid.Row="5" Grid.Column="0" Grid.ColumnSpan="4" Style="{StaticResource Caption}"
                                        Visibility="{Binding Settings.War.HomeMap, Converter={x:Static vm:BoolConverters.NotEmptyToVisibility}}"
                                        ToolTip="Read from the screen at Start, in the cave you wait in. It is where the pilot goes back to after the war.">
                                 <Run Text="Back to: " /><Run Text="{Binding Settings.War.HomeMap, Mode=OneWay}" /><Run Text=" / " /><Run Text="{Binding Settings.War.HomeMonster, Mode=OneWay}" />
                             </TextBlock>
-                            <TextBlock Grid.Row="3" Grid.Column="0" Grid.ColumnSpan="4" Style="{StaticResource Caption}"
+                            <TextBlock Grid.Row="5" Grid.Column="0" Grid.ColumnSpan="4" Style="{StaticResource Caption}"
                                        Text="Back to: (not set yet - press Start in the cave)"
                                        Visibility="{Binding Settings.War.HomeMap, Converter={x:Static vm:BoolConverters.EmptyToVisibility}}"
                                        ToolTip="Read from the screen at Start, in the cave you wait in. It is where the pilot goes back to after the war." />

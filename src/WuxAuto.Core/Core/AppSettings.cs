@@ -457,8 +457,34 @@ public sealed class WarSettings
     /// <summary>The TAB target option the war needs (user: Enemy worth CP).</summary>
     public string TabTargetOption { get; set; } = "Enemy worth CP";
 
-    /// <summary>Buff icons clicked on the skill bar, in order (user's crops).</summary>
+    /// <summary>
+    /// The plain skill buffs clicked on the skill bar, in order, when there is no autobuff (user's crops): warbuff1, 3, 4, 5,
+    /// 6. warbuff2 is the sword's buff, in <see cref="WeaponBuffIcons"/> since settings v23 (user, 2026-10-28).
+    /// </summary>
     public List<string> BuffIcons { get; set; } = DefaultBuffIcons();
+
+    /// <summary>
+    /// The weapon buffs (user, 2026-10-28: "the buff of different weapons"): warbuff2 (sword), warweapon1 (white-gold
+    /// lightning around dark armour), warweapon2 (blue swirl). Skill buffs, clicked after <see cref="BuffIcons"/> when
+    /// there is no autobuff. A character uses one weapon, so usually only one of them is on its bar - untick the others in
+    /// <see cref="DisabledBuffs"/>. Kept apart from BuffIcons, which a v0.19.0 copy sharing settings.json requires in full
+    /// at Start. An empty list stays empty (no refill).
+    /// </summary>
+    public List<string> WeaponBuffIcons { get; set; } = DefaultWeaponBuffIcons();
+
+    /// <summary>
+    /// Item buffs placed on the skill bar (user, 2026-10-28: "optional but item buffs can be placed on the skill bar"):
+    /// waritem1 (light scroll with a glyph), waritem2 (blue scroll); clicking one uses an item. Clicked after the skill and weapon buffs, with every rebuff, and with autobuff too (the
+    /// buff key does not use them). An empty list stays empty (no refill: the user may have taken them out).
+    /// </summary>
+    public List<string> ItemBuffIcons { get; set; } = DefaultItemBuffIcons();
+
+    /// <summary>
+    /// Buff icons (of <see cref="BuffIcons"/>, <see cref="WeaponBuffIcons"/> and <see cref="ItemBuffIcons"/>) the user
+    /// unticked in Settings > Auto War > Buffs (user, 2026-10-28): never clicked, not looked for at Start. Empty = every
+    /// buff on.
+    /// </summary>
+    public List<string> DisabledBuffs { get; set; } = [];
 
     /// <summary>
     /// The "X buff" (user: icon 4, the bluish-white one with an X; it drops when another player hits): clicked again on the
@@ -504,8 +530,27 @@ public sealed class WarSettings
     /// <summary>The monster to hunt on the home map (user; empty = not set).</summary>
     public string HomeMonster { get; set; } = "";
 
-    internal static List<string> DefaultBuffIcons() =>
-        ["warbuff1", "warbuff2", "warbuff3", "warbuff4", "warbuff5", "warbuff6"];
+    /// <summary>The buff is ticked on: not in <see cref="DisabledBuffs"/> (any case).</summary>
+    public bool IsBuffOn(string icon) => DisabledBuffs?.Contains(icon, StringComparer.OrdinalIgnoreCase) != true;
+
+    /// <summary>
+    /// Ticks a buff on or off. A new list replaces <see cref="DisabledBuffs"/> instead of changing it: the settings panel
+    /// calls this on the UI thread while the pilot's loop thread may be going through the old one.
+    /// </summary>
+    public void SetBuffOn(string icon, bool on)
+    {
+        var disabled = DisabledBuffs ?? [];
+        if (on)
+            DisabledBuffs = [.. disabled.Where(d => !string.Equals(d, icon, StringComparison.OrdinalIgnoreCase))];
+        else if (IsBuffOn(icon))
+            DisabledBuffs = [.. disabled, icon];
+    }
+
+    internal static List<string> DefaultBuffIcons() => ["warbuff1", "warbuff3", "warbuff4", "warbuff5", "warbuff6"];
+
+    internal static List<string> DefaultWeaponBuffIcons() => ["warbuff2", "warweapon1", "warweapon2"];
+
+    internal static List<string> DefaultItemBuffIcons() => ["waritem1", "waritem2"];
 }
 
 public sealed class SequenceSettings

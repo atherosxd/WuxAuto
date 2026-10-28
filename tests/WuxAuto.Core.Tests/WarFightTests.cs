@@ -236,6 +236,111 @@ public class WarFightTests
         Assert.Contains("Shura key (LOD)", problem);
     }
 
+    static bool Pressable(string key) => key is "E" or "1" or "Tab" or "J" or "I" or "O" or "S";
+
+    [Fact]
+    public void WarKeys_AnEmptyShuraKey_IsNoProblem()
+    {
+        // The user (2026-10-28): Shura is optional - without it the fight cycle skips the hold.
+        var settings = new AppSettings();
+        settings.Lod.ShuraKey = "";
+        Assert.Null(AutomationPilot.WarKeyProblem(AutomationPilot.WarKeys(settings), Pressable));
+    }
+
+    [Fact]
+    public void WarKeys_ASetShuraKey_MustStillBePressable()
+    {
+        var settings = new AppSettings();
+        settings.Lod.ShuraKey = "Shura";
+        string? problem = AutomationPilot.WarKeyProblem(AutomationPilot.WarKeys(settings), Pressable);
+        Assert.NotNull(problem);
+        Assert.Contains("'Shura'", problem);
+    }
+
+    [Theory]
+    [InlineData("Skill key")]
+    [InlineData("Target key")]
+    [InlineData("Autohunt key")]
+    [InlineData("Inventory key")]
+    public void WarKeys_TheSkillTargetAutohuntAndInventoryKeys_StayRequired(string setting)
+    {
+        var settings = new AppSettings();
+        settings.Lod.ShuraKey = "";
+        switch (setting)
+        {
+            case "Skill key": settings.Dungeon.SkillKey = ""; break;
+            case "Target key": settings.Dungeon.TabKey = ""; break;
+            case "Autohunt key": settings.Dungeon.AutohuntKey = ""; break;
+            default: settings.Input.InventoryKey = ""; break;
+        }
+
+        string? problem = AutomationPilot.WarKeyProblem(AutomationPilot.WarKeys(settings), Pressable);
+        Assert.NotNull(problem);
+        Assert.Contains($"'{setting}'", problem);
+    }
+
+    // ---------------------------------------------------------------- which buff icons a round clicks
+
+    static WarSettings Buffs(params string[] disabled)
+    {
+        var war = new WarSettings();
+        foreach (string icon in disabled)
+            war.SetBuffOn(icon, false);
+        return war;
+    }
+
+    [Fact]
+    public void BuffClicks_NoAutobuff_TheBuffsThenTheWeaponBuffsThenTheItemBuffs()
+        => Assert.Equal(
+            ["warbuff1", "warbuff3", "warbuff4", "warbuff5", "warbuff6", "warbuff2", "warweapon1", "warweapon2", "waritem1", "waritem2"],
+            AutomationPilot.WarBuffClicks(Buffs(), byBuffKey: false));
+
+    [Fact]
+    public void BuffClicks_Autobuff_OnlyTheItemBuffs()
+        // The user (2026-10-28): with autobuff (O) the item buffs on the skill bar are still clicked.
+        => Assert.Equal(["waritem1", "waritem2"], AutomationPilot.WarBuffClicks(Buffs(), byBuffKey: true));
+
+    [Fact]
+    public void BuffClicks_UntickedOnes_AreLeftOut_IgnoringCase()
+    {
+        var war = Buffs("warweapon2", "WARITEM1", "warbuff4");
+        Assert.Equal(["warbuff1", "warbuff3", "warbuff5", "warbuff6", "warbuff2", "warweapon1", "waritem2"],
+            AutomationPilot.WarBuffClicks(war, byBuffKey: false));
+        Assert.Equal(["waritem2"], AutomationPilot.WarBuffClicks(war, byBuffKey: true));
+    }
+
+    [Fact]
+    public void BuffClicks_EverythingUnticked_IsNothing()
+    {
+        var war = new WarSettings();
+        foreach (string icon in war.BuffIcons.Concat(war.WeaponBuffIcons).Concat(war.ItemBuffIcons))
+            war.SetBuffOn(icon, false);
+        Assert.Empty(AutomationPilot.WarBuffClicks(war, byBuffKey: false));
+        Assert.Empty(AutomationPilot.WarBuffClicks(war, byBuffKey: true));
+    }
+
+    [Fact]
+    public void BuffClicks_BlanksSkipped_AnIconInTwoLists_ClickedOnce_AsAnItemWithAutobuff()
+    {
+        var war = new WarSettings
+        {
+            BuffIcons = ["warbuff1", " ", "waritem1"],
+            WeaponBuffIcons = ["", "WARBUFF1", "warweapon1"],
+            ItemBuffIcons = ["", "waritem1", "WARBUFF1"],
+        };
+        Assert.Equal(["warbuff1", "waritem1", "warweapon1"], AutomationPilot.WarBuffClicks(war, byBuffKey: false));
+        // With autobuff an icon listed as an item is still an item: clicked.
+        Assert.Equal(["waritem1", "WARBUFF1"], AutomationPilot.WarBuffClicks(war, byBuffKey: true));
+    }
+
+    [Fact]
+    public void BuffClicks_TheWeaponBuffs_AreSkillBuffs_AfterTheSixBeforeTheItems_NotWithAutobuff()
+    {
+        var war = new WarSettings { BuffIcons = ["warbuff1"], WeaponBuffIcons = ["warweapon2", "warweapon1"], ItemBuffIcons = ["waritem1"] };
+        Assert.Equal(["warbuff1", "warweapon2", "warweapon1", "waritem1"], AutomationPilot.WarBuffClicks(war, byBuffKey: false));
+        Assert.Equal(["waritem1"], AutomationPilot.WarBuffClicks(war, byBuffKey: true));
+    }
+
     // ---------------------------------------------------------------- the war clock
 
     [Fact]

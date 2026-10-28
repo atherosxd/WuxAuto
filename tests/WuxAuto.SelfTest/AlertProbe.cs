@@ -59,7 +59,7 @@ internal static class AlertProbe
         await File.WriteAllBytesAsync(wavFile, KillAlert.GenerateChime());
         Console.WriteLine($"built-in chime written to {wavFile}");
 
-        string soundFile = SettingsStore.Load().Sequence.KillSound;
+        string soundFile = SettingsStore.Load(persistMigration: false).Sequence.KillSound;
         Console.WriteLine(soundFile.Length > 0 ? $"sound picked in the settings: {soundFile}"
             : File.Exists(KillAlert.CustomChimeFile) ? $"custom chime: {KillAlert.CustomChimeFile}"
             : $"no sound picked, no custom chime ({KillAlert.CustomChimeFile}) - the built-in one plays");

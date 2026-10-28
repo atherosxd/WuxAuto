@@ -91,6 +91,7 @@ Anti-goals (failure even if the war part works)
    (`Regions.Hotbar`, matched like Shura / Run). Any missing → warning naming which ones, and **stop**
    **(user: "all must be there"; stop rather than warn is my call)**. The check runs on every Start, even with
    autobuff (the X buff and Shura are used either way) **(my call)**.
+   > **Superseded 2026-10-28:** buff icons and Shura are optional; see CLAUDE.md §4.8.
 3. **Remember the spot** **(user)**:
    - map = the **page-3 entry text** that matches the minimap title best (the title is cut off at the panel
      edge or read with noise: "[Dark Soul Cave X", "[Dark Soul Cave IF" in the logs, and `ZoneMatches`
