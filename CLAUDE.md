@@ -932,7 +932,7 @@ left down sticks for every program.
    ```
 
 4. Overlays use `DebugArtifacts.SaveFrame(frame, overlays, tag, click)`; the click point is drawn
-   as a crosshair. Note the overlay renderer fills some boxes white — that is expected.
+   as a crosshair. Overlays are drawn opaque (alpha 255) since M2; older snapshots show white or see-through boxes where the alpha was 0.
 5. Logs: the log pane, and since 2026-10-20 also `%LOCALAPPDATA%\WuxAuto\logs\wuxauto_<start time>.log`
    (one file per app start). `WuxAuto.exe --autostart` binds the detected game window and presses
    Start, so a run can be launched and followed from a terminal. The most useful lines:
@@ -1069,7 +1069,7 @@ Template scores seen on real 1024×768 frames:
   centre**.
 * Window-input safety: every send is gated on the bound HWND being foreground; a suppressed action
   is not a bug, it logs `Input blocked ...`.
-* Debug snapshots include overlays; a white filled box in a snapshot is the renderer, not game UI.
+* Debug snapshots include overlays; a filled box or label in a snapshot is the renderer, not game UI (snapshots before M2 show them white or see-through: alpha 0).
 * `Assets\*.png` are copied to the output on build; user overrides go to
   `%LOCALAPPDATA%\WuxAuto\templates` and win over `Assets`. That folder is currently empty.
 * Stray PNGs in the repo root are the user's original screenshots — do not delete them.
