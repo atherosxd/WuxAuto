@@ -51,7 +51,7 @@ public sealed class WuxEngine : IAsyncDisposable
 
         _input = new WindowInput(settings);
         _analyzer = new ScreenAnalyzer(settings, new OcrService());
-        _pilot = new AutomationPilot(settings, _analyzer, _input);
+        _pilot = new AutomationPilot(settings, _analyzer, new KeyboardMouseControls(settings, _input));
         _autoConfirm = new AutoConfirm(settings, _analyzer, _input);
         _autoConfirm.Log += (level, message) => EmitLog(level, message);
 

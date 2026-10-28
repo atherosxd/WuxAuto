@@ -120,7 +120,7 @@ static class PilotRun
             }
 
             using var analyzer = new ScreenAnalyzer(settings, ocr);
-            var pilot = new AutomationPilot(settings, analyzer, input);
+            var pilot = new AutomationPilot(settings, analyzer, new KeyboardMouseControls(settings, input));
             var lines = new List<string>();
             pilot.Log += (_, text) => lines.Add(text);
             pilot.Start(startAt);

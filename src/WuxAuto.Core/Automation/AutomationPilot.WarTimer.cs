@@ -111,7 +111,7 @@ public sealed partial class AutomationPilot
         if (now >= _warZoneCheckAt)
         {
             _warZoneCheckAt = now + 10000;
-            if (_input.IsTargetForeground)
+            if (_controls.IsGameInFront)
             {
                 string? title = await ReadMinimapTitleAsync(frame);
                 if (TownIn(title) != null)
@@ -360,7 +360,7 @@ public sealed partial class AutomationPilot
         if (!WarClick(target, what))
             return;
 
-        if (_input.IsDryRun)
+        if (_controls.IsDryRun)
         {
             // Nothing was clicked: looking again would only find the same window.
             _warTimerStep = 0;
@@ -446,7 +446,7 @@ public sealed partial class AutomationPilot
             if (!WarClick(dialog.Button, $"'{seq.AutoConfirmButton}' on the war dialog ({dialog.How})"))
                 return;
 
-            if (!_input.IsDryRun)
+            if (!_controls.IsDryRun)
                 Log?.Invoke(LogLevel.Success, $"Answered '{dialog.Message}' with {seq.AutoConfirmButton}.");
             WarShot(frame, "war_dialog", (dialog.Button.CenterX, dialog.Button.CenterY));
             BeginWarEnter("clicked OK on the war dialog");
@@ -464,7 +464,7 @@ public sealed partial class AutomationPilot
     /// </summary>
     private bool WarClick(PixelRect target, string what, LogLevel level = LogLevel.Info)
     {
-        if (_input.IsDryRun)
+        if (_controls.IsDryRun)
         {
             Log?.Invoke(level, $"Dry run - would click {what} at {target.CenterX},{target.CenterY}.");
             return true;

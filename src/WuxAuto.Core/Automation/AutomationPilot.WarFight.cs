@@ -480,7 +480,7 @@ public sealed partial class AutomationPilot
     /// </summary>
     private bool WarInFront(long now)
     {
-        if (_input.IsTargetForeground)
+        if (_controls.IsGameInFront)
         {
             long stood = _warClock.Show(now);
             if (stood > 0)
@@ -594,7 +594,7 @@ public sealed partial class AutomationPilot
         _warHuntSettingsCloses = 0;
         _warHuntSettingsAt = 0;
         _warEnterStep = 0;
-        if (_input.IsTargetForeground)
+        if (_controls.IsGameInFront)
             _warClock.Show(now);    // a hide left over from an earlier stay (stopped behind another window) is not this one's
         _warEnterSince = _warClock.Now(now);
         _warInsideZoneAt = 0;
@@ -758,9 +758,9 @@ public sealed partial class AutomationPilot
     {
         long now = Environment.TickCount64;
         string key = _settings.Sequence.AutohuntSettingsKey;
-        if (_input.IsDryRun || string.IsNullOrWhiteSpace(key))
+        if (_controls.IsDryRun || !_controls.Has(GameAction.OpenAutohuntSettings))
         {
-            Log?.Invoke(_input.IsDryRun ? LogLevel.Info : LogLevel.Warning, _input.IsDryRun
+            Log?.Invoke(_controls.IsDryRun ? LogLevel.Info : LogLevel.Warning, _controls.IsDryRun
                 ? $"Dry run - not opening the autohunt settings ('{key}'); buffing by the icons."
                 : "No autohunt settings key is set - cannot tell whether the character has autobuff; buffing by the icons.");
             _warHasAutoBuff = false;
@@ -816,7 +816,7 @@ public sealed partial class AutomationPilot
             return;
         }
 
-        if (!_input.KeyTap(key))
+        if (!_controls.Press(GameAction.OpenAutohuntSettings))
         {
             _detail = "autohunt settings key blocked - waiting for the game to be in front";
             _waitUntil = now + 300;
@@ -882,7 +882,7 @@ public sealed partial class AutomationPilot
             return;
         }
 
-        if (!_input.KeyTap(key))
+        if (!_controls.Press(GameAction.OpenAutohuntSettings))
         {
             _detail = "autohunt settings key blocked - waiting for the game to be in front";
             _waitUntil = now + 300;
@@ -908,14 +908,14 @@ public sealed partial class AutomationPilot
         string buffKey = _settings.Lod.BuffKey;
         if (_warBuffRound == null)
         {
-            bool byKey = _warHasAutoBuff == true && !string.IsNullOrWhiteSpace(buffKey);
+            bool byKey = _warHasAutoBuff == true && _controls.Has(GameAction.Buff);
             if (_warHasAutoBuff == true && !byKey && !_warBuffKeyWarned)
             {
                 _warBuffKeyWarned = true;
                 Log?.Invoke(LogLevel.Warning, "Autobuff, but no buff key is set (the 'Buff key (LOD)' setting) - clicking the buff icons instead.");
             }
 
-            if (byKey && !_input.KeyTap(buffKey))
+            if (byKey && !_controls.Press(GameAction.Buff))
             {
                 _detail = "buff key blocked - waiting for the game to be in front";
                 _waitUntil = now + 300;
@@ -1105,8 +1105,7 @@ public sealed partial class AutomationPilot
     /// <summary>Step 0: Tab (<see cref="DungeonSettings.TabKey"/>), then the target box is read 700 ms later.</summary>
     private void TickWarTab(long now)
     {
-        string tab = _settings.Dungeon.TabKey;
-        if (!string.IsNullOrWhiteSpace(tab) && !_input.KeyTap(tab))
+        if (_controls.Has(GameAction.TargetNearest) && !_controls.Press(GameAction.TargetNearest))
         {
             _detail = "Tab blocked - waiting for the game to be in front";
             _waitUntil = now + 300;
@@ -1153,8 +1152,8 @@ public sealed partial class AutomationPilot
             // A tag that "stayed put" may have been a real player while our character was blocked: forget them all on a
             // target (a UI word costs one step again, still under the per-war step cap).
             _warStaticTags.Clear();
-            bool xBuff =!string.IsNullOrWhiteSpace(war.XBuffIcon) && war.IsBuffOn(war.XBuffIcon);
-            string shura = string.IsNullOrWhiteSpace(_settings.Lod.ShuraKey) ? "" : $"Shura {war.ShuraHoldMs} ms, ";
+            bool xBuff = !string.IsNullOrWhiteSpace(war.XBuffIcon) && war.IsBuffOn(war.XBuffIcon);
+            string shura = !_controls.Has(GameAction.ShuraKey) ? "" : $"Shura {war.ShuraHoldMs} ms, ";
             string what = name != null ? $"Target '{name}' ({target.Via})"
                 : target.HpLine is { } hp ? $"A target (HP numbers, name unread: '{hp.Text}')"
                 : "A target (chest icon, name unread)";
@@ -1273,7 +1272,7 @@ public sealed partial class AutomationPilot
         ReleaseHeldSkill();     // never walk with Shura held (nothing is held in steps 0-1; this is the guard)
         var (x, y) = WarWalkClick(tag.Bounds, frame.Width, frame.Height);
         _overlays.Add(new OverlayItem(tag.Bounds, $"walk to {tag.Text}", OverlayColor.Orange));
-        if (!_input.IsDryRun && !_input.CtrlClick(x, y))
+        if (!_controls.IsDryRun && !_controls.WalkTo(x, y, forceWalk: true))
         {
             _detail = "Ctrl+click blocked - waiting for the game to be in front";
             _waitUntil = now + 300;     // step 5 again: decided afresh on the next frame
@@ -1283,12 +1282,12 @@ public sealed partial class AutomationPilot
         _warWalkSteps++;
         _warWalkTotal++;
         _warEmptyLooks = 0;
-        _warLastWalkGoal = _input.IsDryRun ? null : tag;     // a dry run does not move: its goal would look like UI
-        if (!_input.IsDryRun)
+        _warLastWalkGoal = _controls.IsDryRun ? null : tag;     // a dry run does not move: its goal would look like UI
+        if (!_controls.IsDryRun)
             _lastClick = (x, y, now);
         Log?.Invoke(LogLevel.Info, $"No target after {_warNoTargetTabs} Tabs - walking toward '{tag.Text}' (step {_warWalkSteps}/{WarWalkMaxSteps})."
-                                   + (_input.IsDryRun ? $" Dry run - would Ctrl+click {x},{y}." : ""));
-        if (!_input.IsDryRun)
+                                   + (_controls.IsDryRun ? $" Dry run - would Ctrl+click {x},{y}." : ""));
+        if (!_controls.IsDryRun)
             Log?.Invoke(LogLevel.Trace, $"Ctrl+clicked {x},{y} for the tag '{tag.Text}' at {tag.Bounds.CenterX},{tag.Bounds.CenterY}.");
         if (_warWalkSteps == 1)
             WarShot(frame, "war_walk", (x, y));
@@ -1336,7 +1335,7 @@ public sealed partial class AutomationPilot
     {
         var war = _settings.War;
         string shura = _settings.Lod.ShuraKey;
-        if (string.IsNullOrWhiteSpace(shura))
+        if (!_controls.Has(GameAction.ShuraKey))
         {
             if (!_warShuraSkipTold)
             {
@@ -1349,7 +1348,7 @@ public sealed partial class AutomationPilot
         }
 
         ReleaseHeldSkill();
-        if (!_input.KeyDown(shura))
+        if (!_controls.ActionDown(GameAction.ShuraKey))
         {
             _detail = "Shura key blocked - waiting for the game to be in front";
             _waitUntil = now + 300;
@@ -1357,6 +1356,7 @@ public sealed partial class AutomationPilot
         }
 
         _heldSkill = shura;
+        _heldAction = GameAction.ShuraKey;
         _warStepAt = now + war.ShuraHoldMs;
         _warFightStep = 3;
         _detail = WarFightDetail($"holding Shura '{shura}' {war.ShuraHoldMs} ms on '{_warTarget}'", now);
@@ -1393,7 +1393,7 @@ public sealed partial class AutomationPilot
     }
 
     /// <summary>
-    /// Step 4: the skill (<see cref="TapSkill"/>, with Ctrl + skill when that is on) every <see cref="LodSettings.SkillEveryMs"/>;
+    /// Step 4: the skill (<see cref="IGameControls.SkillTap"/>, with Ctrl + skill when that is on) every <see cref="LodSettings.SkillEveryMs"/>;
     /// the target box every 700 ms - a name, the HP numbers or the chest is a sight; none for <see cref="WarSettings.TargetGoneMs"/> on the
     /// war clock - Tab again.
     /// </summary>
@@ -1403,7 +1403,7 @@ public sealed partial class AutomationPilot
         string skill = _settings.Dungeon.SkillKey;
         if (!string.IsNullOrWhiteSpace(skill) && now >= _warStepAt)
         {
-            if (!TapSkill(skill))
+            if (!_controls.SkillTap(skill))
             {
                 _detail = "skill key blocked - waiting for the game to be in front";
                 _waitUntil = now + 300;

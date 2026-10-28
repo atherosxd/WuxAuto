@@ -143,13 +143,13 @@ public sealed partial class AutomationPilot
     {
         long now = Environment.TickCount64;
         var war = _settings.War;
-        if (WarKeyProblem(WarKeys(_settings), _input.IsKnownKey) is { } keyProblem)
+        if (WarKeyProblem(WarKeys(_settings), _controls.IsKnownKey) is { } keyProblem)
         {
             WarStop(frame, keyProblem);
             return;
         }
 
-        if (!_input.IsTargetForeground)
+        if (!_controls.IsGameInFront)
         {
             _detail = "waiting for the game window to be in front";
             _waitUntil = now + 500;
@@ -515,7 +515,7 @@ public sealed partial class AutomationPilot
 
         long now = Environment.TickCount64;
         var war = _settings.War;
-        if (!_input.IsTargetForeground)
+        if (!_controls.IsGameInFront)
         {
             _detail = "waiting for the game window to be in front";
             _waitUntil = now + 500;
@@ -558,7 +558,7 @@ public sealed partial class AutomationPilot
 
         long now = Environment.TickCount64;
         var war = _settings.War;
-        if (!_input.IsTargetForeground)
+        if (!_controls.IsGameInFront)
         {
             _detail = "waiting for the game window to be in front";
             _waitUntil = now + 500;
@@ -633,7 +633,7 @@ public sealed partial class AutomationPilot
     private async Task TickWarListCloseAsync(Mat frame)
     {
         long now = Environment.TickCount64;
-        if (!_input.IsTargetForeground)
+        if (!_controls.IsGameInFront)
         {
             _detail = "waiting for the game window to be in front";
             _waitUntil = now + 500;
@@ -706,7 +706,7 @@ public sealed partial class AutomationPilot
         if (!WarClick(close.Value, "the X of the teleport scroll"))
             return;     // the game is not in front: the close step looks again
 
-        if (_input.IsDryRun)
+        if (_controls.IsDryRun)
         {
             // Nothing was clicked: looking again would only find the same window.
             _warListStep = 2;
@@ -729,7 +729,7 @@ public sealed partial class AutomationPilot
     {
         long now = Environment.TickCount64;
         string key = _settings.Input.InventoryKey;
-        if (_input.IsDryRun)
+        if (_controls.IsDryRun)
         {
             WarListFinish(frame);
             return;
@@ -760,7 +760,7 @@ public sealed partial class AutomationPilot
             return;
         }
 
-        if (!_input.KeyTap(key))
+        if (!_controls.Press(GameAction.OpenInventory))
         {
             _detail = "inventory key blocked - waiting for the game to be in front";
             _waitUntil = now + 300;
@@ -834,7 +834,7 @@ public sealed partial class AutomationPilot
             return;
         }
 
-        if (!_input.IsTargetForeground)
+        if (!_controls.IsGameInFront)
         {
             _detail = "waiting for the game window to be in front";
             _waitUntil = now + 500;
@@ -858,7 +858,7 @@ public sealed partial class AutomationPilot
             return;
         }
 
-        if (!_input.KeyTap(_settings.Dungeon.TabKey))
+        if (!_controls.Press(GameAction.TargetNearest))
         {
             _detail = "Tab blocked - waiting for the game to be in front";
             _waitUntil = now + 300;
@@ -993,7 +993,7 @@ public sealed partial class AutomationPilot
     {
         long now = Environment.TickCount64;
         var war = _settings.War;
-        if (!_input.IsTargetForeground)
+        if (!_controls.IsGameInFront)
         {
             _phaseStart = now;
             _detail = "waiting for the game window to be in front";
@@ -1071,7 +1071,7 @@ public sealed partial class AutomationPilot
     {
         long now = Environment.TickCount64;
         var war = _settings.War;
-        if (!_input.IsTargetForeground)
+        if (!_controls.IsGameInFront)
         {
             _phaseStart = now;
             _detail = "waiting for the game window to be in front";

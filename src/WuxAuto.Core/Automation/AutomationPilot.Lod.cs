@@ -26,6 +26,10 @@ public sealed partial class AutomationPilot
     private int _lodStill;
     private bool _lodWaitLogged;
     private string? _heldSkill;
+
+    // Set when the held key is an action (Auto War's Shura), not a skill; let go with ActionUp then.
+    private GameAction? _heldAction;
+
     private long _lodBuffAt;
     private int _lodBuffs;
     private bool _lodHeadingUnknown;
@@ -83,7 +87,7 @@ public sealed partial class AutomationPilot
     private bool TryLodBuff(Mat? frame, long now, bool force, bool attacking = false)
     {
         var lod = _settings.Lod;
-        if (string.IsNullOrWhiteSpace(lod.BuffKey) || (!force && now - _lodBuffAt < lod.BuffEveryMs))
+        if (!_controls.Has(GameAction.Buff) || (!force && now - _lodBuffAt < lod.BuffEveryMs))
             return false;
 
         ReleaseHeldSkill();
@@ -97,7 +101,7 @@ public sealed partial class AutomationPilot
             Thread.Sleep(400);
         }
 
-        if (!_input.KeyTap(lod.BuffKey))
+        if (!_controls.Press(GameAction.Buff))
             return false;
 
         _lodBuffAt = now;
@@ -126,7 +130,7 @@ public sealed partial class AutomationPilot
         {
             for (int i = 0; i < lod.ShuraPresses; i++)
             {
-                if (!_input.Click(shura.Bounds.CenterX, shura.Bounds.CenterY))
+                if (!_controls.Tap(shura.Bounds.CenterX, shura.Bounds.CenterY))
                 {
                     how = "Shura click blocked";
                     return false;
@@ -139,11 +143,11 @@ public sealed partial class AutomationPilot
             return true;
         }
 
-        if (!string.IsNullOrWhiteSpace(lod.ShuraKey))
+        if (_controls.Has(GameAction.ShuraKey))
         {
             for (int i = 0; i < lod.ShuraPresses; i++)
             {
-                if (!_input.KeyTap(lod.ShuraKey))
+                if (!_controls.Press(GameAction.ShuraKey))
                 {
                     how = "Shura key blocked";
                     return false;
@@ -156,7 +160,7 @@ public sealed partial class AutomationPilot
             return true;
         }
 
-        if (string.IsNullOrWhiteSpace(lod.StopAttackKey) || stopKeyPresses <= 0)
+        if (!_controls.Has(GameAction.StopAttack) || stopKeyPresses <= 0)
         {
             how = "no Shura icon, no Shura key and no stop key - nothing pressed";
             return true;
@@ -164,7 +168,7 @@ public sealed partial class AutomationPilot
 
         for (int i = 0; i < stopKeyPresses; i++)
         {
-            if (!_input.KeyTap(lod.StopAttackKey))
+            if (!_controls.Press(GameAction.StopAttack))
             {
                 how = "stop key blocked";
                 return false;
@@ -389,7 +393,7 @@ public sealed partial class AutomationPilot
     {
         var lod = _settings.Lod;
         long now = Environment.TickCount64;
-        if (now - _phaseStart >= lod.LootMs || string.IsNullOrWhiteSpace(lod.LootKey))
+        if (now - _phaseStart >= lod.LootMs || !_controls.Has(GameAction.Loot))
         {
             // The kill's second screenshot: what is left on the ground after looting.
             TakePendingKillShot(frame);
@@ -400,7 +404,7 @@ public sealed partial class AutomationPilot
             return;
         }
 
-        if (now - _lodLootAt >= 150 && _input.KeyTap(lod.LootKey))
+        if (now - _lodLootAt >= 150 && _controls.Press(GameAction.Loot))
             _lodLootAt = now;
         _detail = $"looting ('{lod.LootKey}') {(now - _phaseStart) / 1000.0:0.0}s";
         _waitUntil = now + 60;
@@ -438,9 +442,9 @@ public sealed partial class AutomationPilot
 
     private bool TapLodTab(long now, int everyMs)
     {
-        if (now - _lodTabAt < everyMs || string.IsNullOrWhiteSpace(_settings.Dungeon.TabKey))
+        if (now - _lodTabAt < everyMs || !_controls.Has(GameAction.TargetNearest))
             return false;
-        if (!_input.KeyTap(_settings.Dungeon.TabKey))
+        if (!_controls.Press(GameAction.TargetNearest))
             return false;
         _lodTabAt = now;
         return true;
@@ -565,7 +569,7 @@ public sealed partial class AutomationPilot
 
         int clickX = (int)Math.Round(centerX + ox * scale);
         int clickY = (int)Math.Round(centerY + oy * scale);
-        if (!_input.Click(clickX, clickY))
+        if (!_controls.WalkTo(clickX, clickY, forceWalk: false))
         {
             _detail = "walk click blocked - waiting for the game to be in front";
             _waitUntil = now + 300;
@@ -608,17 +612,17 @@ public sealed partial class AutomationPilot
                 {
                     ReleaseHeldSkill();
                     Thread.Sleep(CtrlSkillGapMs);
-                    _input.CtrlKeyTap(skill);
+                    _controls.SkillCtrlTap(skill);
                     Thread.Sleep(CtrlSkillGapMs);
                 }
 
-                if (_heldSkill == null && _input.KeyDown(skill))
+                if (_heldSkill == null && _controls.SkillDown(skill))
                 {
                     _heldSkill = skill;
                     _lodSkillAt = now;
                 }
             }
-            else if (now - _lodSkillAt >= lod.SkillEveryMs && TapSkill(skill))
+            else if (now - _lodSkillAt >= lod.SkillEveryMs && _controls.SkillTap(skill))
             {
                 _lodSkillAt = now;
             }
@@ -689,7 +693,7 @@ public sealed partial class AutomationPilot
                 }
             }
         }
-        else if (string.IsNullOrWhiteSpace(lod.LootKey) && now - _lodBossSeenAt > 1500)
+        else if (!_controls.Has(GameAction.Loot) && now - _lodBossSeenAt > 1500)
             TapLodTab(now, 1500);
 
         // Moved by the game: the boss is dead (or we died and respawned) - start the next cycle.
@@ -712,7 +716,7 @@ public sealed partial class AutomationPilot
         }
 
         // Name / treasure icon gone 2 s: the boss is dead (user) - loot, even without the death text.
-        if (now - _lodBossSeenAt > lod.LootAfterMissingMs && !string.IsNullOrWhiteSpace(lod.LootKey))
+        if (now - _lodBossSeenAt > lod.LootAfterMissingMs && _controls.Has(GameAction.Loot))
         {
             ReleaseHeldSkill();
             Log?.Invoke(LogLevel.Info, $"'{lod.BossName}' / treasure icon gone for {lod.LootAfterMissingMs / 1000.0:0.#}s - looting with '{lod.LootKey}' for {lod.LootMs / 1000}s, then looking for it again.");
@@ -863,7 +867,7 @@ public sealed partial class AutomationPilot
         // the click on the chat box, and the skill key would then type into the chat.
         int clickX = Math.Clamp(spot.CenterX, (int)(frame.Width * 0.25), (int)(frame.Width * RunClickRight));
         int clickY = Math.Clamp(spot.CenterY, (int)(frame.Height * RunClickTop), (int)(frame.Height * 0.78));
-        if (!_input.CtrlClick(clickX, clickY))
+        if (!_controls.WalkTo(clickX, clickY, forceWalk: true))
         {
             _detail = "Ctrl+click blocked - waiting for the game to be in front";
             _waitUntil = now + 300;
@@ -916,8 +920,13 @@ public sealed partial class AutomationPilot
         if (_heldSkill == null)
             return;
 
-        _input.KeyUp(_heldSkill);
+        if (_heldAction is { } action)
+            _controls.ActionUp(action);
+        else
+            _controls.SkillUp(_heldSkill);
+
         _heldSkill = null;
+        _heldAction = null;
     }
 
     /// <summary>Back at the start after dying: wait for two equal coordinate readings, then face south.</summary>

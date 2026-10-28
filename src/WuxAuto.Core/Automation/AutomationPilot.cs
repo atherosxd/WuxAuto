@@ -1,7 +1,6 @@
 using System.Diagnostics;
 using Emgu.CV;
 using WuxAuto.Core;
-using WuxAuto.Input;
 using WuxAuto.Vision;
 using LogLevel = WuxAuto.Core.LogLevel;
 
@@ -62,7 +61,7 @@ public sealed partial class AutomationPilot
 {
     private readonly AppSettings _settings;
     private readonly ScreenAnalyzer _analyzer;
-    private readonly IGameInput _input;
+    private readonly IGameControls _controls;
     private readonly List<OverlayItem> _overlays = new();
 
     private PilotPhase _phase = PilotPhase.Idle;
@@ -79,8 +78,6 @@ public sealed partial class AutomationPilot
     private ulong _preLoadHash;
     private ulong _lastHash;
     private int _stableSamples;
-
-    private double _turnRate;
 
     private int _pages;
     private bool _chevronMissing;
@@ -247,11 +244,11 @@ public sealed partial class AutomationPilot
     private int _refineGained;
     private bool _refinePending;
 
-    public AutomationPilot(AppSettings settings, ScreenAnalyzer analyzer, IGameInput input)
+    public AutomationPilot(AppSettings settings, ScreenAnalyzer analyzer, IGameControls controls)
     {
         _settings = settings;
         _analyzer = analyzer;
-        _input = input;
+        _controls = controls;
     }
 
     public event Action<LogLevel, string>? Log;
@@ -360,7 +357,7 @@ public sealed partial class AutomationPilot
             // The left sweep assumes the heading the labyrinth loads with; mid-run it would only
             // overshoot, so a debug start fine-tunes from wherever the camera is.
             _sweepDone = true;
-            _input.TryFocus();
+            _controls.TryBringGameToFront();
             Log?.Invoke(LogLevel.Warning, _stageIndex >= stages
                 ? $"Starting at {startAt} (all stages treated as done)."
                 : $"Starting at {startAt}, stage {_stageIndex + 1}.");
@@ -399,7 +396,6 @@ public sealed partial class AutomationPilot
 
         _attempts = 0;
         _anchor = null;
-        _turnRate = 0;
         _preLoadHash = 0;
         _lastHash = 0;
         _stableSamples = 0;
@@ -516,7 +512,6 @@ public sealed partial class AutomationPilot
             return;
 
         _overlays.Clear();
-        SetFrameSize(frame.Width, frame.Height);
 
         if (_positionsResetPending)
         {
@@ -540,7 +535,7 @@ public sealed partial class AutomationPilot
                              && !string.IsNullOrWhiteSpace(_settings.Sequence.CancelDialogText)
                              && _phase is not (PilotPhase.FindChevron or PilotPhase.FindDestination);
         bool watchWarDialog = IsWar && _phase is (PilotPhase.WarWait or PilotPhase.WarRemember) && !_warMonsterConfirmed;
-        bool warBehind = IsWar && !_input.IsTargetForeground;
+        bool warBehind = IsWar && !_controls.IsGameInFront;
         if ((_settings.Sequence.AutoReconnect || cancelDialogs || watchWarDialog) && !warBehind && _phase != PilotPhase.Reconnect && now >= _nextDisconnectCheckAt)
         {
             _nextDisconnectCheckAt = now + 5000;
@@ -626,7 +621,7 @@ public sealed partial class AutomationPilot
 
                     _zoneHoldSince = null;
                 }
-                else if (zone.Length > 0 && !_input.IsTargetForeground)
+                else if (zone.Length > 0 && !_controls.IsGameInFront)
                 {
                     // Another window over the game: the capture shows that window's minimap, not ours.
                     // 2026-10-27, 1440x900: a second game client (another character, in Piercing City /
@@ -681,7 +676,7 @@ public sealed partial class AutomationPilot
                 // The 2 minutes only count while the game is in front: behind another window the
                 // capture shows that window, not the minimap (this chat once covered it, run 34 LOD),
                 // and no input could be sent anyway - just wait.
-                if (!_input.IsTargetForeground)
+                if (!_controls.IsGameInFront)
                     _zoneHoldSince = now;
                 _zoneHoldSince ??= now;
                 if (now - _zoneHoldSince.Value > 120000)
@@ -697,7 +692,7 @@ public sealed partial class AutomationPilot
                 {
                     _zoneHoldLogged = true;
                     ReleaseSweepKey();
-                    Log?.Invoke(LogLevel.Warning, _input.IsTargetForeground
+                    Log?.Invoke(LogLevel.Warning, _controls.IsGameInFront
                         ? $"The minimap does not show {Destination} - holding {_phase} until it does."
                         : $"The game is behind another window - holding {_phase} until it is back in front.");
                 }
@@ -860,7 +855,7 @@ public sealed partial class AutomationPilot
     {
         if (_settings.Input.Mode == InputMode.ForegroundSendInput && _settings.Input.FocusOnStart)
         {
-            if (_input.TryFocus())
+            if (_controls.TryBringGameToFront())
             {
                 Log?.Invoke(LogLevel.Info, "Game window is in the foreground; input will only go there.");
                 // The game needs a moment after activation before it takes keys reliably.
@@ -952,7 +947,7 @@ public sealed partial class AutomationPilot
             bool townCheck = TownIn(title) != null && !_returning;
             _runSkillDue = townCheck && _settings.Sequence.RunSkillCheck;
             _runSkillClicks = 0;
-            if (townCheck && _settings.Sequence.AutohuntOffInTown && !string.IsNullOrWhiteSpace(dungeon.AutohuntKey))
+            if (townCheck && _settings.Sequence.AutohuntOffInTown && _controls.Has(GameAction.ToggleAutohunt))
             {
                 _huntOffPresses = 0;
                 _huntOffBaseline = [];
@@ -1015,7 +1010,7 @@ public sealed partial class AutomationPilot
             // Tab shows the boss name and marker; give it a few tries.
             if (_attempts < 5)
             {
-                if (_input.KeyTap(dungeon.TabKey))
+                if (_controls.Press(GameAction.TargetNearest))
                     _attempts++;
                 _detail = $"in the Labyrinth - looking for a boss name (Tab {_attempts}/5)";
                 _waitUntil = Environment.TickCount64 + Math.Max(1200, dungeon.TabSettleMs);
@@ -1117,7 +1112,7 @@ public sealed partial class AutomationPilot
         // Every "true" below ends the check; only the two that read the wanted state confirm it (Auto War's
         // "hunting again" is only claimed then). The value is not read by Laby / LOD.
         _huntCheckConfirmed = false;
-        if (_input.IsDryRun)
+        if (_controls.IsDryRun)
         {
             Log?.Invoke(LogLevel.Info, $"Dry run - not checking whether the autohunt is on {where}.");
             return true;
@@ -1128,7 +1123,7 @@ public sealed partial class AutomationPilot
 
         bool Tap()
         {
-            if (!_input.KeyTap(key))
+            if (!_controls.Press(GameAction.ToggleAutohunt))
             {
                 _detail = "autohunt key blocked - waiting for the game to be in front";
                 _waitUntil = now + 300;
@@ -1232,7 +1227,7 @@ public sealed partial class AutomationPilot
             string missing = string.IsNullOrWhiteSpace(seq.RunSkillTemplate)
                 ? "The Run skill has no icon template"
                 : $"The Run skill icon ('{seq.RunSkillTemplate}') is not on the skill bar";
-            if (string.IsNullOrWhiteSpace(seq.RunSkillKey))
+            if (!_controls.Has(GameAction.RunSkillKey))
             {
                 Log?.Invoke(LogLevel.Warning, $"{missing} and no Run key is set - carrying on.");
                 DebugArtifacts.SaveFrame(frame, _overlays, "runskill_unread");
@@ -1240,7 +1235,7 @@ public sealed partial class AutomationPilot
                 return;
             }
 
-            if (_input.IsDryRun)
+            if (_controls.IsDryRun)
             {
                 Log?.Invoke(LogLevel.Info, $"Dry run - {missing.ToLowerInvariant()}; would press '{seq.RunSkillKey}' once.");
                 Done();
@@ -1254,7 +1249,7 @@ public sealed partial class AutomationPilot
                 return;
             }
 
-            if (!_input.KeyTap(seq.RunSkillKey))
+            if (!_controls.Press(GameAction.RunSkillKey))
             {
                 _detail = "Run key blocked - waiting for the game to be in front";
                 _waitUntil = now + 300;
@@ -1280,7 +1275,7 @@ public sealed partial class AutomationPilot
             return;
         }
 
-        if (_input.IsDryRun)
+        if (_controls.IsDryRun)
         {
             Log?.Invoke(LogLevel.Info, $"Dry run - the Run skill is off (ring {ring:0.00}); would click its icon at {x},{y} (score {icon.Score:0.00}).");
             Done();
@@ -1295,7 +1290,7 @@ public sealed partial class AutomationPilot
             return;
         }
 
-        if (!_input.Click(x, y))
+        if (!_controls.Tap(x, y))
         {
             _detail = "Run icon click blocked - waiting for the game to be in front";
             _waitUntil = now + 300;
@@ -1429,7 +1424,7 @@ public sealed partial class AutomationPilot
         {
             int x = _visualTab.CenterX;
             int y = Math.Min(frame.Height - 1, _visualTab.Bottom + _visualTab.Height * 10);
-            if (_input.Wheel(x, y, notches))
+            if (_controls.ScrollList(x, y, notches))
                 return true;
 
             _detail = "scroll blocked - waiting for the game to be in front";
@@ -1447,7 +1442,7 @@ public sealed partial class AutomationPilot
                 _tabScrolls = 0;
                 _tabChanged = false;
                 _settingsChanges.Clear();
-                if (!_input.KeyTap("Escape"))
+                if (!_controls.Press(GameAction.ToggleSettings))
                 {
                     _waitUntil = now + 300;
                     return;
@@ -1643,7 +1638,7 @@ public sealed partial class AutomationPilot
                 if (_attempts < 3 && await Find("SETTINGS") != null)
                 {
                     _attempts++;
-                    _input.KeyTap("Escape");
+                    _controls.Press(GameAction.ToggleSettings);
                     _waitUntil = now + 700;
                     return;
                 }
@@ -1687,7 +1682,7 @@ public sealed partial class AutomationPilot
             return;
         }
 
-        if (!_input.KeyTap(_settings.Input.InventoryKey))
+        if (!_controls.Press(GameAction.OpenInventory))
         {
             _waitUntil = Environment.TickCount64 + 250;
             _detail = "input blocked - waiting for the game to be in front";
@@ -1727,7 +1722,7 @@ public sealed partial class AutomationPilot
 
         // Right click: in Wuxen2 a left click only picks the item up (it sticks to the cursor) and a
         // double click does nothing - the right click is what opens the "TELEPORT SCROLL" panel.
-        if (!RightClick(match.Bounds))
+        if (!UseItem(match.Bounds))
             return;
 
         Log?.Invoke(LogLevel.Success, $"Right-clicked the teleport scroll (score {match.Score:0.00}, match {ms:0.0}ms).");
@@ -2065,7 +2060,7 @@ public sealed partial class AutomationPilot
         // Short tap, then look again; half taps close to the peak for a finer stop.
         bool fine = _bestFlashlightScore >= need - 0.05;
         int tapMs = fine ? Math.Max(20, dungeon.RotateStepMs / 2) : dungeon.RotateStepMs;
-        if (!HoldKey(dungeon.RotateLeftKey, tapMs))
+        if (!HoldKey(TurnDirection.Left, tapMs))
         {
             _waitUntil = Environment.TickCount64 + 300;
             return;
@@ -2086,8 +2081,9 @@ public sealed partial class AutomationPilot
     {
         var dungeon = _settings.Dungeon;
         int tapMs = dungeon.NorthRefineTapMs;
-        string key = _refineDir == 1 ? _settings.Input.RotateKey : dungeon.RotateLeftKey;
-        string back = _refineDir == 1 ? dungeon.RotateLeftKey : _settings.Input.RotateKey;
+        var turn = _refineDir == 1 ? TurnDirection.Right : TurnDirection.Left;
+        var back = _refineDir == 1 ? TurnDirection.Left : TurnDirection.Right;
+        string key = TurnKeyName(turn);
         const double Gain = 0.004;
 
         if (!_refinePending)
@@ -2128,7 +2124,7 @@ public sealed partial class AutomationPilot
             return;
         }
 
-        if (!HoldKey(key, tapMs))
+        if (!HoldKey(turn, tapMs))
         {
             _waitUntil = Environment.TickCount64 + 300;
             return;
@@ -2156,10 +2152,9 @@ public sealed partial class AutomationPilot
     /// </summary>
     private bool TapBack()
     {
-        string reverse = _settings.Input.RotateKey;
         for (int i = _tapsSinceBest.Count - 1; i >= 0; i--)
         {
-            if (!HoldKey(reverse, _tapsSinceBest[i]))
+            if (!HoldKey(TurnDirection.Right, _tapsSinceBest[i]))
             {
                 _waitUntil = Environment.TickCount64 + 300;
                 return false;
@@ -2237,7 +2232,7 @@ public sealed partial class AutomationPilot
                 }
             }
 
-            if (!_input.Drag(cx, cy, cx, cy - dungeon.CameraTiltPx, 300))
+            if (!_controls.TiltCamera(cx, cy, -dungeon.CameraTiltPx, 300))
             {
                 _waitUntil = Environment.TickCount64 + 300;
                 return;
@@ -2286,7 +2281,7 @@ public sealed partial class AutomationPilot
         // front of the gate (user), and stay above the character.
         int x = gate.CenterX;
         int y = Math.Min(gate.Bottom + Math.Max(12, (int)(frame.Height * 0.03)), (int)(frame.Height * 0.50));
-        if (!_input.Click(x, y))
+        if (!_controls.WalkTo(x, y, forceWalk: false))
         {
             _waitUntil = Environment.TickCount64 + 300;
             return;
@@ -2307,21 +2302,23 @@ public sealed partial class AutomationPilot
 
         int cx = frame.Width / 2;
         int cy = frame.Height / 2;
-        if (_input.Drag(cx, cy, cx, cy + _settings.Dungeon.CameraTiltPx, 300))
+        if (_controls.TiltCamera(cx, cy, _settings.Dungeon.CameraTiltPx, 300))
             _gateTilted = false;
     }
 
-    /// <summary>Holds a key for <paramref name="ms"/> (only into the bound window).</summary>
-    private bool HoldKey(string key, int ms)
+    /// <summary>Turns for <paramref name="ms"/> (only into the bound window).</summary>
+    private bool HoldKey(TurnDirection direction, int ms)
     {
-        if (!_input.KeyDown(key))
+        if (!_controls.Turn(direction, ms))
             return false;
 
-        Thread.Sleep(ms);
-        _input.KeyUp(key);
-        Log?.Invoke(LogLevel.Trace, $"Held '{key}' for {ms}ms.");
+        Log?.Invoke(LogLevel.Trace, $"Held '{TurnKeyName(direction)}' for {ms}ms.");
         return true;
     }
+
+    /// <summary>The key a turn holds, for the log: left = <see cref="DungeonSettings.RotateLeftKey"/>, right = <see cref="InputSettings.RotateKey"/>.</summary>
+    private string TurnKeyName(TurnDirection direction) =>
+        direction == TurnDirection.Left ? _settings.Dungeon.RotateLeftKey : _settings.Input.RotateKey;
 
     /// <summary>
     /// Holds the "turn left" key for <see cref="DungeonSettings.RotateLeftSweepMs"/>, a little at a
@@ -2333,7 +2330,7 @@ public sealed partial class AutomationPilot
 
         if (_sweepStartedAt == 0)
         {
-            if (!_input.KeyDown(dungeon.RotateLeftKey))
+            if (!_controls.BeginTurn(TurnDirection.Left))
             {
                 _detail = "waiting for the game window to turn left";
                 _waitUntil = now + 400;
@@ -2356,7 +2353,7 @@ public sealed partial class AutomationPilot
             return true;
         }
 
-        _input.KeyUp(dungeon.RotateLeftKey);
+        _controls.EndTurn(TurnDirection.Left);
         _sweepStartedAt = 0;
         _sweepDone = true;
         Log?.Invoke(LogLevel.Info, $"Finished the left sweep ({elapsed}ms) - checking the searchlight.");
@@ -2372,37 +2369,7 @@ public sealed partial class AutomationPilot
             return;
 
         _sweepStartedAt = 0;
-        _input.KeyUp(_settings.Dungeon.RotateLeftKey);
-    }
-
-    /// <summary>Turns by a signed number of degrees along the forward key / rightward drag axis.</summary>
-    private int ApplyTurn(double signedDegrees)
-    {
-        if (_settings.Sequence.RotationMode == RotationMode.MouseDrag)
-        {
-            int pixels = (int)Math.Clamp(signedDegrees * _turnRate, -600, 600);
-            if (Math.Abs(pixels) < 8)
-                pixels = signedDegrees >= 0 ? 8 : -8;
-
-            var cursor = _analyzer.CompassRegion(_lastFrameWidth, _lastFrameHeight);
-            int duration = Math.Clamp(Math.Abs(pixels) * 3, 120, 700);
-            if (!_input.Drag(cursor.CenterX, cursor.CenterY, cursor.CenterX + pixels, cursor.CenterY, duration))
-                return 0;
-
-            Log?.Invoke(LogLevel.Trace, $"Turn drag {pixels}px over {duration}ms.");
-            return duration;
-        }
-
-        string key = signedDegrees >= 0 ? _settings.Input.RotateKey : _settings.Input.RotateKeyReverse;
-        int holdMs = (int)Math.Clamp(Math.Abs(signedDegrees) / Math.Max(5, _turnRate) * 1000.0, 80, 1800);
-
-        if (!_input.KeyDown(key))
-            return 0;
-
-        Thread.Sleep(holdMs);
-        _input.KeyUp(key);
-        Log?.Invoke(LogLevel.Trace, $"Turn key '{key}' held for {holdMs}ms ({signedDegrees:0}deg).");
-        return holdMs;
+        _controls.EndTurn(TurnDirection.Left);
     }
 
     // ---------------------------------------------------------------- dungeon flow
@@ -2501,7 +2468,7 @@ public sealed partial class AutomationPilot
             // The game zooms with Ctrl + wheel (user); wheel down = out.
             int x = frame.Width / 2;
             int y = (int)(frame.Height * 0.40);
-            if (!_input.CtrlWheel(x, y, -dungeon.ZoomOutNotches))
+            if (!_controls.ZoomOut(x, y, dungeon.ZoomOutNotches))
             {
                 _waitUntil = Environment.TickCount64 + 300;
                 return;
@@ -2980,7 +2947,7 @@ public sealed partial class AutomationPilot
             {
                 int wheelX = (int)Math.Round(frame.Width * dungeon.MapWheelX);
                 int wheelY = (int)Math.Round(frame.Height * dungeon.MapWheelY);
-                if (!_input.Wheel(wheelX, wheelY, back ? dungeon.MapScrollNotches : -dungeon.MapScrollNotches))
+                if (!_controls.ScrollList(wheelX, wheelY, back ? dungeon.MapScrollNotches : -dungeon.MapScrollNotches))
                 {
                     _waitUntil = Environment.TickCount64 + 400;
                     return;
@@ -3119,7 +3086,7 @@ public sealed partial class AutomationPilot
             int y = nameBounds.CenterY;
             SaveRowClickSnapshot(frame, x, y, $"select_{text}");
 
-            if (!_input.Click(x, y))
+            if (!_controls.Tap(x, y))
             {
                 _detail = "row click blocked - waiting for the game to be in front";
                 _waitUntil = Environment.TickCount64 + 300;
@@ -3264,7 +3231,7 @@ public sealed partial class AutomationPilot
 
         SaveRowClickSnapshot(frame, clickX, clickY, text);
 
-        if (!_input.Click(clickX, clickY))
+        if (!_controls.Tap(clickX, clickY))
         {
             _detail = "row click blocked - waiting for the game to be in front";
             _waitUntil = Environment.TickCount64 + 300;
@@ -3483,7 +3450,7 @@ public sealed partial class AutomationPilot
         // off before the Tab / skill selection starts.
         if (IsFinalBoss && !_finalHuntOffChecked)
         {
-            if (dungeon.FinalBossPressAutohunt && !string.IsNullOrWhiteSpace(dungeon.AutohuntKey))
+            if (dungeon.FinalBossPressAutohunt && _controls.Has(GameAction.ToggleAutohunt))
             {
                 if (!await EnsureAutohuntOffAsync(frame, "at the final boss", trustVisibleLine: true))
                     return;
@@ -3502,7 +3469,7 @@ public sealed partial class AutomationPilot
         // engaged there before the character was at the boss (user).
         if (!IsFinalBoss && !_autohuntPressed && !HoldBeforeAutohunt && elapsed >= spawnWait)
         {
-            if (!string.IsNullOrWhiteSpace(dungeon.AutohuntKey) && _input.KeyTap(dungeon.AutohuntKey))
+            if (_controls.Has(GameAction.ToggleAutohunt) && _controls.Press(GameAction.ToggleAutohunt))
             {
                 _autohuntPressed = true;
                 Log?.Invoke(LogLevel.Success, $"Pressed '{dungeon.AutohuntKey}' to turn the autohunt on (stage {_stageIndex + 1}).");
@@ -3520,7 +3487,7 @@ public sealed partial class AutomationPilot
 
         if (!_tabPressed)
         {
-            if (_input.KeyTap(dungeon.TabKey))
+            if (_controls.Press(GameAction.TargetNearest))
             {
                 _tabPressed = true;
                 _lastWaitTabAt = Environment.TickCount64;
@@ -3571,7 +3538,7 @@ public sealed partial class AutomationPilot
         // to the boss coordinates; arriving there starts this wait again.
         if (IsFinalBoss && _fromWaypoint && _runToTargetPending == false && spawnWaitOver && dungeon.WaypointWalkFallback)
         {
-            if (_autohuntPressed && !string.IsNullOrWhiteSpace(dungeon.AutohuntKey) && !_input.KeyTap(dungeon.AutohuntKey))
+            if (_autohuntPressed && _controls.Has(GameAction.ToggleAutohunt) && !_controls.Press(GameAction.ToggleAutohunt))
             {
                 _waitUntil = Environment.TickCount64 + 300;
                 return;
@@ -3607,7 +3574,7 @@ public sealed partial class AutomationPilot
         // walking and the name only showed 25 s later (user, run 23). Keep pressing it.
         long now = Environment.TickCount64;
         // Every second (user; was 2.5 s).
-        if (now - _lastWaitTabAt >= 1000 && _input.KeyTap(dungeon.TabKey))
+        if (now - _lastWaitTabAt >= 1000 && _controls.Press(GameAction.TargetNearest))
         {
             _lastWaitTabAt = now;
             _tabPressed = true;
@@ -3782,7 +3749,7 @@ public sealed partial class AutomationPilot
             }
         }
 
-        if (!_input.Click(x, y))
+        if (!_controls.Tap(x, y))
         {
             _detail = "boss select click blocked - waiting for the game to be in front";
             _waitUntil = Environment.TickCount64 + 300;
@@ -3817,27 +3784,10 @@ public sealed partial class AutomationPilot
     }
 
     /// <summary>
-    /// One manual attack press: the skill key, then Ctrl + skill key with
-    /// <see cref="DungeonSettings.CtrlSkill"/> (user, 2026-10-26: "when manually attacking couple it
-    /// with ctrl + skill key"). False only when the plain key was blocked; a blocked Ctrl tap after it
-    /// still counts as the press.
+    /// A held skill's release waits this long before its Ctrl + skill tap, as <see cref="IGameControls.SkillTap"/> does
+    /// between its plain and Ctrl taps (CtrlSkill, user 2026-10-26: "when manually attacking couple it with ctrl + skill key").
     /// </summary>
-    private bool TapSkill(string key)
-    {
-        if (!_input.KeyTap(key))
-            return false;
-
-        if (_settings.Dungeon.CtrlSkill)
-        {
-            // Let the game see the plain key go up before the same key goes down with Ctrl.
-            Thread.Sleep(CtrlSkillGapMs);
-            _input.CtrlKeyTap(key);
-        }
-
-        return true;
-    }
-
-    private const int CtrlSkillGapMs = 60;
+    private const int CtrlSkillGapMs = KeyboardMouseControls.CtrlSkillGapMs;
 
     /// <summary>A skill press for the log: '1', or '1' + Ctrl+1 with CtrlSkill.</summary>
     private string SkillText(string key) => _settings.Dungeon.CtrlSkill ? $"'{key}' + Ctrl+{key}" : $"'{key}'";
@@ -3851,7 +3801,7 @@ public sealed partial class AutomationPilot
     {
         var dungeon = _settings.Dungeon;
         long now = Environment.TickCount64;
-        if (!_input.KeyDown(dungeon.SkillKey))
+        if (!_controls.SkillDown(dungeon.SkillKey))
         {
             _detail = "skill key blocked - waiting for the game to be in front";
             _waitUntil = now + 300;
@@ -3859,6 +3809,7 @@ public sealed partial class AutomationPilot
         }
 
         _heldSkill = dungeon.SkillKey;
+        _heldAction = null;
         _holdUntil = now + dungeon.HoldSkillMs;
         _detail = $"holding '{dungeon.SkillKey}' (0/{dungeon.HoldSkillMs} ms)";
         _waitUntil = now + 250;
@@ -3888,7 +3839,7 @@ public sealed partial class AutomationPilot
         if (dungeon.CtrlSkill)
         {
             Thread.Sleep(CtrlSkillGapMs);
-            _input.CtrlKeyTap(dungeon.SkillKey);
+            _controls.SkillCtrlTap(dungeon.SkillKey);
         }
 
         return true;
@@ -3975,7 +3926,7 @@ public sealed partial class AutomationPilot
                 return;
             }
 
-            if (!TapSkill(dungeon.SkillKey))
+            if (!_controls.SkillTap(dungeon.SkillKey))
             {
                 _detail = "skill key blocked - waiting for the game to be in front";
                 _waitUntil = now + 300;
@@ -3997,7 +3948,7 @@ public sealed partial class AutomationPilot
         {
             if (++_manualRounds < maxRounds)
             {
-                if (!_input.KeyTap(dungeon.TabKey))
+                if (!_controls.Press(GameAction.TargetNearest))
                 {
                     _manualRounds--;
                     _detail = "tab key blocked - waiting for the game to be in front";
@@ -4118,7 +4069,7 @@ public sealed partial class AutomationPilot
                 }
             }
 
-            if (!_input.Click(x, y))
+            if (!_controls.Tap(x, y))
             {
                 _detail = "boss select click blocked - waiting for the game to be in front";
                 _waitUntil = now + 300;
@@ -4139,7 +4090,7 @@ public sealed partial class AutomationPilot
         }
 
         // Autohunt off again (J is a toggle).
-        if (_autohuntPressed && !string.IsNullOrWhiteSpace(dungeon.AutohuntKey) && !_input.KeyTap(dungeon.AutohuntKey))
+        if (_autohuntPressed && _controls.Has(GameAction.ToggleAutohunt) && !_controls.Press(GameAction.ToggleAutohunt))
         {
             _detail = "autohunt key blocked - waiting for the game to be in front";
             _waitUntil = now + 300;
@@ -4171,9 +4122,9 @@ public sealed partial class AutomationPilot
     private bool EngageAutohunt()
     {
         var dungeon = _settings.Dungeon;
-        if (_autohuntPressed || string.IsNullOrWhiteSpace(dungeon.AutohuntKey))
+        if (_autohuntPressed || !_controls.Has(GameAction.ToggleAutohunt))
             return true;
-        if (!_input.KeyTap(dungeon.AutohuntKey))
+        if (!_controls.Press(GameAction.ToggleAutohunt))
             return false;
 
         _autohuntPressed = true;
@@ -4302,7 +4253,7 @@ public sealed partial class AutomationPilot
                 }
                 else if (now - _watchAttackAt >= dungeon.AutohuntStallMs)
                 {
-                    if (!string.IsNullOrWhiteSpace(dungeon.AutohuntKey) && !_input.KeyTap(dungeon.AutohuntKey))
+                    if (_controls.Has(GameAction.ToggleAutohunt) && !_controls.Press(GameAction.ToggleAutohunt))
                     {
                         _detail = "autohunt key blocked - waiting for the game to be in front";
                         _waitUntil = now + 300;
@@ -4343,7 +4294,7 @@ public sealed partial class AutomationPilot
 
         // A missing name usually means the boss lost focus, not that it died: press Tab again and
         // look once the marker has had time to show.
-        if (now - _lastWatchTabAt >= Math.Max(2000, dungeon.TabSettleMs * 2) && _input.KeyTap(dungeon.TabKey))
+        if (now - _lastWatchTabAt >= Math.Max(2000, dungeon.TabSettleMs * 2) && _controls.Press(GameAction.TargetNearest))
         {
             _lastWatchTabAt = now;
             _watchTabs++;
@@ -4386,9 +4337,9 @@ public sealed partial class AutomationPilot
         {
             // Autohunt (still on from stage 4) keeps buffing and fighting and stopped the gate walk
             // (user): off for the run, on again at the final boss (ArriveAtFinalBoss -> WaitBoss).
-            if (dungeon.FinalBossPressAutohunt && !string.IsNullOrWhiteSpace(dungeon.AutohuntKey))
+            if (dungeon.FinalBossPressAutohunt && _controls.Has(GameAction.ToggleAutohunt))
             {
-                if (!_input.KeyTap(dungeon.AutohuntKey))
+                if (!_controls.Press(GameAction.ToggleAutohunt))
                 {
                     _waitUntil = Environment.TickCount64 + 300;
                     return;
@@ -4965,7 +4916,7 @@ public sealed partial class AutomationPilot
             return;
         }
 
-        if (!_input.Click(x, y))
+        if (!_controls.WalkTo(x, y, forceWalk: false))
         {
             _detail = "run click blocked - waiting for the game to be in front";
             _probe = RunProbe.None;
@@ -4984,7 +4935,7 @@ public sealed partial class AutomationPilot
         var dungeon = _settings.Dungeon;
         if (!_autohuntOff)
         {
-            if (!string.IsNullOrWhiteSpace(dungeon.AutohuntKey) && !_input.KeyTap(dungeon.AutohuntKey))
+            if (_controls.Has(GameAction.ToggleAutohunt) && !_controls.Press(GameAction.ToggleAutohunt))
             {
                 _detail = "autohunt-off key blocked - waiting for the game to be in front";
                 _waitUntil = Environment.TickCount64 + 300;
@@ -5379,7 +5330,7 @@ public sealed partial class AutomationPilot
             var box = target!.Value;
             if (!Click(box))
             {
-                _input.TryFocus();
+                _controls.TryBringGameToFront();
                 return;
             }
 
@@ -5438,7 +5389,7 @@ public sealed partial class AutomationPilot
 
     private bool Click(PixelRect target)
     {
-        if (!_input.Click(target.CenterX, target.CenterY))
+        if (!_controls.Tap(target.CenterX, target.CenterY))
         {
             _detail = "click blocked - waiting for the game to be in front";
             _waitUntil = Environment.TickCount64 + 300;
@@ -5449,9 +5400,9 @@ public sealed partial class AutomationPilot
         return true;
     }
 
-    private bool RightClick(PixelRect target)
+    private bool UseItem(PixelRect target)
     {
-        if (!_input.Click(target.CenterX, target.CenterY, MouseButton.Right))
+        if (!_controls.UseItem(target.CenterX, target.CenterY))
         {
             _detail = "click blocked - waiting for the game to be in front";
             _waitUntil = Environment.TickCount64 + 300;
@@ -5528,14 +5479,4 @@ public sealed partial class AutomationPilot
     }
 
     private void RaiseState() => StateChanged?.Invoke();
-
-    private int _lastFrameWidth = 1920;
-    private int _lastFrameHeight = 1080;
-
-    /// <summary>The vision loop calls this before each tick so helpers know the client size.</summary>
-    public void SetFrameSize(int width, int height)
-    {
-        _lastFrameWidth = Math.Max(1, width);
-        _lastFrameHeight = Math.Max(1, height);
-    }
 }
