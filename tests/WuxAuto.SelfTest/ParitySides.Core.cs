@@ -1,6 +1,7 @@
 using System.Security.Cryptography;
 using Emgu.CV;
 using Emgu.CV.CvEnum;
+using WuxAuto.Automation;
 using WuxAuto.Core;
 using WuxAuto.Vision;
 
@@ -78,6 +79,15 @@ internal sealed class CoreSide : IVisionSide
     public PixelRect FindCloseButtonRightOf(PixelRect title) => _analyzer.FindCloseButtonRightOf(Frame, title);
     public IReadOnlyList<PixelRect> FindBrightBlobs(PixelRect roi) => _analyzer.FindBrightBlobs(Frame, roi);
     public ulong FrameSignature(PixelRect roi) => WuxAuto.Vision.FrameSignature.Compute(Frame, roi);
+
+    public IReadOnlyList<(string Text, PixelRect Bounds)> ToLines(IReadOnlyList<OcrWord> words) => ScreenAnalyzer.ToLines(words);
+    public IReadOnlyList<(string Template, TemplateMatch? Match)> FindSkillBarIcons(IReadOnlyList<string> templates, double minScore) => _analyzer.FindSkillBarIcons(Frame, templates, minScore);
+    public Task<(string? Name, TemplateMatch? Chest)> ReadTargetAsync() => _analyzer.ReadTargetAsync(Frame);
+    public Task<(int Cur, int Max)?> ReadPlayerHpAsync() => _analyzer.ReadPlayerHpAsync(Frame);
+    public Task<WarCountdown?> ReadWarCountdownAsync(IReadOnlyList<(string Text, PixelRect Bounds)> lines, string rowText) => _analyzer.ReadWarCountdownAsync(Frame, lines, rowText);
+    public WarWindow? FindWarWindowClose(IReadOnlyList<(string Text, PixelRect Bounds)> lines) => _analyzer.FindWarWindowClose(Frame, lines);
+    public PixelRect? FindCloseBlobRightOf(PixelRect title) => _analyzer.FindCloseBlobRightOf(Frame, title);
+    public double DistanceFromRing(PixelRect ring) => ScreenAnalyzer.DistanceFromRing(ring, Frame.Width, Frame.Height);
 
     public void Dispose()
     {

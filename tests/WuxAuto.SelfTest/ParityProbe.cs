@@ -82,6 +82,16 @@ internal interface IVisionSide : IDisposable
     PixelRect FindCloseButtonRightOf(PixelRect title);
     IReadOnlyList<PixelRect> FindBrightBlobs(PixelRect roi);
     ulong FrameSignature(PixelRect roi);
+
+    // Auto War / LOD ring distance (main at 28763e1; the legacy side's frozen copy is Legacy/ScreenAnalyzer.War.cs)
+    IReadOnlyList<(string Text, PixelRect Bounds)> ToLines(IReadOnlyList<OcrWord> words);
+    IReadOnlyList<(string Template, TemplateMatch? Match)> FindSkillBarIcons(IReadOnlyList<string> templates, double minScore);
+    Task<(string? Name, TemplateMatch? Chest)> ReadTargetAsync();
+    Task<(int Cur, int Max)?> ReadPlayerHpAsync();
+    Task<WarCountdown?> ReadWarCountdownAsync(IReadOnlyList<(string Text, PixelRect Bounds)> lines, string rowText);
+    WarWindow? FindWarWindowClose(IReadOnlyList<(string Text, PixelRect Bounds)> lines);
+    PixelRect? FindCloseBlobRightOf(PixelRect title);
+    double DistanceFromRing(PixelRect ring);
 }
 
 /// <summary>
@@ -93,6 +103,8 @@ internal interface IVisionSide : IDisposable
 /// Three checks cover detectors the pilot does not call: compass / compass-angle (ScreenAnalyzer's
 /// compass detector, which only the Test scan button runs) and selectionring (main removed the
 /// pilot's calls); they stay in the strict view only.
+/// Auto War's detectors and reads (main at 28763e1) are checked too (CheckAutoWarAsync, CheckAutoWarReadsAsync, the
+/// warmap rows); the legacy side runs main's OpenCvSharp code for them, frozen in Legacy/ScreenAnalyzer.War.cs.
 /// One analyzer pair for the whole run, frames in name order and no cache resets, so the learned
 /// template scale (keyed by client height) and the minimap anchor carry across frames as they do
 /// in the app. Prints every difference, then the coverage, the pilot-view rules and two summary
@@ -138,6 +150,9 @@ internal sealed class ParityProbe
         ("row-focused, row-focused-wide, row-column", "-> rowchevron<N>: FindFocusedChevron's pick on the stage row read on both sides with the map open on both"),
         ("row-fallback", "-> rowfallback<N>: ClickRowChevronFallback's click point (row glyph, else the column's median x, else the name)"),
         ("teleport-rightchevron, teleport-leftchevron", "kept hit by hit in both views: TickFindChevron clicks matches[0] or the hit closest to its anchor, so every hit can be the one"),
+        ("warbar-<icon>-hits", "-> warbar-<icon>: FindSkillBarIcons' pick (BestLeftmost) in WarSkillBarReady, TickWarBuffUpAsync, TickWarFindTargetAsync"),
+        ("warlog-lines", "-> warlog-arrived: TickWarArriveAsync acts only on a new line that IsArrivedLine"),
+        ("itemlist-lines", "-> itemlist-autobuff: TickWarItemListAsync acts on AutoBuffInItemList's verdict"),
     ];
 
     private readonly IVisionSide _legacy;
@@ -261,6 +276,7 @@ internal sealed class ParityProbe
             s.Dungeon.GateTemplate, "monstericon", "finalboss", s.Sequence.RunSkillTemplate, s.Lod.ShuraTemplate,
             "flashlight", s.Dungeon.FlashlightTemplate, s.Dungeon.FlashlightTemplate + "west",
             s.Dungeon.FlashlightTemplate + "south", s.Lod.FlashlightTemplate,
+            "menubutton", .. WarIcons(),
         ];
 
         _frame = "(templates)";
@@ -384,17 +400,17 @@ internal sealed class ParityProbe
         var (stagesA, stagesB) = (await StageNamesAsync(_legacy, bossList), await StageNamesAsync(_core, bossList));
         for (int i = 0; i < s.Dungeon.Stages.Count; i++)
         {
-            Record($"stage{i + 1}", TextOf(stagesA[i]), TextOf(stagesB[i]));
-            if (stagesA[i] == null && stagesB[i] == null)
+            Record($"stage{i + 1}", TextOf(stagesA.Names[i]), TextOf(stagesB.Names[i]));
+            if (stagesA.Names[i] == null && stagesB.Names[i] == null)
                 continue;
 
-            PixelRect? glyphA = stagesA[i] is { } na ? RowGlyph(_legacy, na.Bounds, w, h) : null;
-            PixelRect? glyphB = stagesB[i] is { } nb ? RowGlyph(_core, nb.Bounds, w, h) : null;
+            PixelRect? glyphA = stagesA.Names[i] is { } na ? RowGlyph(_legacy, na.Bounds, w, h) : null;
+            PixelRect? glyphB = stagesB.Names[i] is { } nb ? RowGlyph(_core, nb.Bounds, w, h) : null;
             Record($"rowglyph{i + 1}", Of(glyphA), Of(glyphB));
 
             // How the pilot consumes the row lists: only for a row it read with the map open (a verdict
             // difference in the name or the map test is already its own line).
-            if (openA.Open && openB.Open && stagesA[i] is { } rowA && stagesB[i] is { } rowB)
+            if (openA.Open && openB.Open && stagesA.Names[i] is { } rowA && stagesB.Names[i] is { } rowB)
             {
                 Record($"rowchevron{i + 1}", Of(FocusedChevron(rowsA, rowA.Bounds)), Of(FocusedChevron(rowsB, rowB.Bounds)), View.PilotOnly);
                 Record($"rowfallback{i + 1}", RowFallback(glyphA, rowsA.Fallback, rowA.Bounds), RowFallback(glyphB, rowsB.Fallback, rowB.Bounds), View.PilotOnly);
@@ -413,7 +429,10 @@ internal sealed class ParityProbe
         //      strict view only), TickLodApproachAsync boss ring + belt, TickAimGate gate glow bands,
         //      TickReconnectAsync gold buttons
         Compare("selectionring", side => Of(side.FindSelectionRing()), View.StrictOnly);
-        Compare("bossring", side => Of(side.FindBossRing()));
+        var (ringA, ringB) = (_legacy.FindBossRing(), _core.FindBossRing());
+        Record("bossring", Of(ringA), Of(ringB));
+        // AutomationPilot.Lod.cs FindApproachSpot: how far out the character is, in ring radii (ScreenAnalyzer.DistanceFromRing)
+        Record("bossring-away", AwayOf(_legacy, ringA), AwayOf(_core, ringB));
         Compare("bossbelt", side => Of(side.FindBossBelt()));
         int glowArea = Math.Max(150, w * h / 4000);
         var upper = new NormRect(0.25, 0.07, 0.31, 0.15).ToPixels(w, h);
@@ -431,8 +450,13 @@ internal sealed class ParityProbe
         Record("confirm", ConfirmOf(confirmA), ConfirmOf(confirmB));
         Record("confirm-message", confirmA == null ? DetectorResult.None : Of(confirmA.MessageBounds),
             confirmB == null ? DetectorResult.None : Of(confirmB.MessageBounds));
+        // AutomationPilot.WarTimer.cs TickWarJoinAsync: the same FindConfirmDialogAsync, a war dialog when its message
+        // names War.Destination (WarText.IsWarDialogLine)
+        Record("wardialog-confirm",
+            Verdict(confirmA != null && WarText.IsWarDialogLine(confirmA.Message, s.War.Destination)),
+            Verdict(confirmB != null && WarText.IsWarDialogLine(confirmB.Message, s.War.Destination)));
 
-        // ---- auto war: AutomationPilot.War.cs TickAutoWarAsync (Regular War box, AUTO BUFF dialog X)
+        // ---- regular war (both keys out): AutomationPilot.RegularWar.cs TickRegularWarAsync (Regular War box, AUTO BUFF dialog X)
         var (warA, warB) = (await ReadWarAsync(_legacy, w, h), await ReadWarAsync(_core, w, h));
         Record("autobuff-title", OfLine(warA.Buff), OfLine(warB.Buff));
         Record("regularwar-label", Of(warA.RegularLabel), Of(warB.RegularLabel));
@@ -463,7 +487,81 @@ internal sealed class ParityProbe
             Record(name + "-right", Of(rowA?.Right), Of(rowB?.Right));
         }
 
+        await CheckAutoWarAsync(w, h, warA, warB);
         await CheckOcrReadsAsync(w, h, openA.Open || openB.Open);
+
+        // ---- Auto War's map pick: AutomationPilot.cs TickReadStageAsync / TickAdvanceStageAsync with IsWar ->
+        //      ReadWarMonsterRowsAsync (War.cs): the MapBossList read at Detection.OcrScale (the stage names' read above),
+        //      ScreenAnalyzer.ToLines, WarText.MonsterRows. War.HomeMonster is empty by default (no war map set up), so the
+        //      rows are looked up for the Labyrinth's stage names - the monster names the saved map frames show - and for
+        //      HomeMonster when one is set; only with the map open on a side, as the pilot reads the list.
+        if (openA.Open || openB.Open)
+        {
+            var (linesA, linesB) = (_legacy.ToLines(stagesA.Words), _core.ToLines(stagesB.Words));
+            foreach (string name in s.Dungeon.Stages.Append(s.War.HomeMonster).Where(m => !string.IsNullOrWhiteSpace(m)).Distinct())
+                Record($"warmap-{TextMatcher.Normalize(name)}", RowsOf(WarText.MonsterRows(linesA, name)), RowsOf(WarText.MonsterRows(linesB, name)));
+        }
+    }
+
+    /// <summary>
+    /// Auto War's frame checks (main at 28763e1, the legacy side's frozen copy in Legacy/ScreenAnalyzer.War.cs); its OCR
+    /// reads that share a region and scale with the other checks are judged in <see cref="CheckOcrReadsAsync"/>.
+    /// </summary>
+    private async Task CheckAutoWarAsync(int w, int h, WarRead warA, WarRead warB)
+    {
+        var s = _settings;
+        var war = s.War;
+        var hotbar = s.Regions.Hotbar.ToPixels(w, h);
+
+        // ---- the skill bar: WarSkillBarReady (War.cs: every buff icon and Shura), TickWarBuffUpAsync (WarFight.cs: one
+        //      buff icon at a time), TickWarFindTargetAsync (WarFight.cs: the X buff) - ScreenAnalyzer.FindSkillBarIcons at
+        //      War.IconMatchScore = per template FindIcons(Hotbar, score, 4) and BestLeftmost. One call per side with all
+        //      templates: the pilot's one-template calls give the same per-template answer.
+        var icons = WarIcons();
+        var (barA, barB) = (_legacy.FindSkillBarIcons(icons, war.IconMatchScore), _core.FindSkillBarIcons(icons, war.IconMatchScore));
+        for (int i = 0; i < icons.Count; i++)
+        {
+            string icon = icons[i];
+            RecordHits($"warbar-{icon}-hits", _legacy.FindIcons(icon, hotbar, war.IconMatchScore, 4), _core.FindIcons(icon, hotbar, war.IconMatchScore, 4), View.StrictOnly);
+            Record($"warbar-{icon}", Of(barA[i].Match), Of(barB[i].Match));
+            // WarSkillBarReady's "how close it came" for a missing icon (logged only): FindIconAnyScale(Hotbar, 0.0)
+            if (barA[i].Match == null && barB[i].Match == null)
+                Compare($"warbar-{icon}-anyscale", side => Of(side.FindIconAnyScale(icon, hotbar, 0.0)));
+        }
+
+        // ---- the target box: ReadTargetAsync (War.cs TickWarRememberAsync; WarFight.cs TickWarFindTargetAsync, TickWarAttackAsync)
+        var (targetA, targetB) = (await _legacy.ReadTargetAsync(), await _core.ReadTargetAsync());
+        Record("target-name", ExactOf(targetA.Name), ExactOf(targetB.Name));
+        Record("target-chest", Of(targetA.Chest), Of(targetB.Chest));
+
+        // ---- the player's HP: ReadWarHpAsync (WarFight.cs) -> ReadPlayerHpAsync
+        var (hpA, hpB) = (await _legacy.ReadPlayerHpAsync(), await _core.ReadPlayerHpAsync());
+        Record("player-hp", ExactOf(hpA is { } a ? $"{a.Cur}/{a.Max}" : null), ExactOf(hpB is { } b ? $"{b.Cur}/{b.Max}" : null));
+
+        // ---- the MENU button: TickWarOpenMenu, TickWarCloseAsync (WarTimer.cs) - FindIcon("menubutton", Regions.MenuButton,
+        //      MenuButtonScore 0.70, private there)
+        var menu = s.Regions.MenuButton.ToPixels(w, h);
+        Compare("menubutton", side => Of(side.FindIcon("menubutton", menu, 0.70)));
+
+        // ---- the autohunt settings: ReadHuntSettingsAsync (WarFight.cs TickWarAskAutoBuffAsync, TickWarCloseHuntSettingsAsync)
+        //      - the whole-client x2 read (x1 when it reads under 3 words; the Regular War read above), ScreenAnalyzer.ToLines:
+        //      the first AUTO BUFF title line (WarText.IsAutoBuffTitle) and whether a Regular War line shows; then
+        //      TickWarAskAutoBuffAsync's FindCloseBlobRightOf(title) - a blob or nothing, no guessed point
+        var (huntA, huntB) = (HuntSettings(_legacy, warA.Words), HuntSettings(_core, warB.Words));
+        Record("huntsettings-autobuff", Of(huntA.Title), Of(huntB.Title));
+        Record("huntsettings-regularwar", Verdict(huntA.RegularWar), Verdict(huntB.RegularWar));
+        if (huntA.Title != null || huntB.Title != null)
+        {
+            Record("huntsettings-autobuff-close",
+                huntA.Title is { } ta ? Of(_legacy.FindCloseBlobRightOf(ta)) : DetectorResult.None,
+                huntB.Title is { } tb ? Of(_core.FindCloseBlobRightOf(tb)) : DetectorResult.None);
+        }
+
+        // ---- the item list: TickWarItemListAsync (WarFight.cs) - Regions.ItemList at x1.5, then x2 when no "[Auto buff
+        //      scroll]" line read: AutoBuffInItemList's verdict and the line it names (the raw lines: strict view only)
+        var (itemsA, itemsB) = (await ItemListAsync(_legacy, w, h), await ItemListAsync(_core, w, h));
+        Record("itemlist-lines", KeysOf(itemsA), KeysOf(itemsB), View.StrictOnly);
+        Record("itemlist-autobuff", ItemListOf(itemsA), ItemListOf(itemsB));
     }
 
     /// <summary>
@@ -538,6 +636,8 @@ internal sealed class ParityProbe
         Record("gatetext", TextOf(FullName(gateA, s.Dungeon.GateText)), TextOf(FullName(gateB, s.Dungeon.GateText)));
         Record("gatetext-lines", CountOf(TextLines(gateA, s.Dungeon.GateText).Count), CountOf(TextLines(gateB, s.Dungeon.GateText).Count));
 
+        await CheckAutoWarReadsAsync(w, h, (destA, destB), (windowA, windowB), (logA, logB));
+
         // ---- TickReadStageAsync's wider second look (0.32, 0.08, 0.68, 0.86) when the list region missed the
         //      name: the pilot reads stages only with the map open, so only on frames where a side sees it open.
         if (mapOpen)
@@ -547,6 +647,124 @@ internal sealed class ParityProbe
             for (int i = 0; i < s.Dungeon.Stages.Count; i++)
                 Record($"stagewide{i + 1}", TextOf(FullName(wideA, s.Dungeon.Stages[i])), TextOf(FullName(wideB, s.Dungeon.Stages[i])));
         }
+    }
+
+    /// <summary>
+    /// Auto War's OCR reads (main at 28763e1). A read at the scale and region another check already read is judged on
+    /// those words: the teleport list's x1.5 read is the destinations' (Regions.Ocr at Detection.OcrScale 1.5), the
+    /// whole-client reads at Detection.OcrScale are FindTextAsync's, the combat log's x1.5 is the attack log's.
+    /// </summary>
+    private async Task CheckAutoWarReadsAsync(int w, int h,
+        (IReadOnlyList<OcrWord> A, IReadOnlyList<OcrWord> B) teleportList,
+        (IReadOnlyList<OcrWord> A, IReadOnlyList<OcrWord> B) client,
+        (IReadOnlyList<OcrWord> A, IReadOnlyList<OcrWord> B) combatLog)
+    {
+        var s = _settings;
+        var war = s.War;
+        var full = new PixelRect(0, 0, w, h);
+
+        // ---- the teleport list: ReadTeleportListAsync (War.cs; ReadWarListPickAsync reads at TeleportListScale 1.5, 2, 1
+        //      as the reads go on, TickWarListCloseAsync at the scale that read the list) - Regions.Ocr, ScreenAnalyzer.ToLines,
+        //      WarText.FindWindowTitle("TELEPORT SCROLL") and the entries under it (TeleportListEntries; the picked entry's
+        //      box is clicked); then TryClickListClose's FindCloseBlobRightOf(title) on the first scale that read a title.
+        //      War.cs TickWarInventoryClose's FindIcon("teleportscroll", Regions.Scroll, 0.78) is the teleportscroll check.
+        var listRoi = s.Regions.Ocr.ToPixels(w, h);
+        PixelRect? listTitleA = null, listTitleB = null;
+        foreach (double scale in new[] { 1.5, 2.0, 1.0 })
+        {
+            var (wordsA, wordsB) = scale == s.Detection.OcrScale
+                ? (teleportList.A, teleportList.B)
+                : (await _legacy.RecognizeAsync(listRoi, scale), await _core.RecognizeAsync(listRoi, scale));
+            var (listA, listB) = (TeleportListOf(_legacy, wordsA), TeleportListOf(_core, wordsB));
+            string tag = $"warlist-x{scale.ToString("0.0", CultureInfo.InvariantCulture)}";
+            Record($"{tag}-title", OfLine(listA.Title), OfLine(listB.Title));
+            for (int i = 0; i < Math.Max(listA.Entries.Count, listB.Entries.Count); i++)
+            {
+                Record($"{tag}-entry#{i + 1}",
+                    i < listA.Entries.Count ? OfLine(listA.Entries[i]) : DetectorResult.None,
+                    i < listB.Entries.Count ? OfLine(listB.Entries[i]) : DetectorResult.None);
+            }
+
+            listTitleA ??= listA.Title?.Bounds;
+            listTitleB ??= listB.Title?.Bounds;
+        }
+
+        if (listTitleA != null || listTitleB != null)
+        {
+            Record("warlist-close",
+                listTitleA is { } ta ? Of(_legacy.FindCloseBlobRightOf(ta)) : DetectorResult.None,
+                listTitleB is { } tb ? Of(_core.FindCloseBlobRightOf(tb)) : DetectorResult.None);
+        }
+
+        // ---- the whole client at Detection.OcrScale (FindTextAsync's read):
+        // TickWarFindTargetAsync (WarFight.cs, before the war started): War.GateText, the hit's own text covering most of it
+        Record("wargate", TextOf(Covered(client.A, war.GateText)), TextOf(Covered(client.B, war.GateText)));
+        // TickWarTribeTileAsync (WarTimer.cs): the War.MenuTileText tile, the hit's own text covering most of it
+        Record("menutile", TextOf(Covered(client.A, war.MenuTileText)), TextOf(Covered(client.B, war.MenuTileText)));
+        // TickWarCloseAsync (WarTimer.cs): that read's lines -> FindWarWindowClose (TRIBE STATUS / MENU title and its X);
+        // no title but the tile text -> WarText.IsMenuTileHit (menu up -> the menu button; else left open)
+        var (linesA, linesB) = (_legacy.ToLines(client.A), _core.ToLines(client.B));
+        var (windowA, windowB) = (_legacy.FindWarWindowClose(linesA), _core.FindWarWindowClose(linesB));
+        Record("warwindow", WarWindowOf(windowA), WarWindowOf(windowB));
+        Record("warwindow-close", Of(windowA?.Close), Of(windowB?.Close));
+        Record("warwindow-tile", WindowTileOf(windowA, client.A, linesA), WindowTileOf(windowB, client.B, linesB));
+
+        // ---- the whole client at x1: TickWarReadTimerAsync (WarTimer.cs: ScreenAnalyzer.ToLines -> ReadWarCountdownAsync
+        //      for War.TribeRowText - with the gapped-band x2 re-read when the whole read decides nothing - and
+        //      WarText.TribeStatusShows) and TickAsync's 5 s whole-screen read (AutomationPilot.cs: a line that is the war
+        //      dialog, WarText.IsWarDialogLine(War.Destination), while waiting for the war)
+        var (x1A, x1B) = (await _legacy.RecognizeAsync(full, 1.0), await _core.RecognizeAsync(full, 1.0));
+        var (l1A, l1B) = (_legacy.ToLines(x1A), _core.ToLines(x1B));
+        Record("warcountdown", CountdownOf(await _legacy.ReadWarCountdownAsync(l1A, war.TribeRowText)),
+            CountdownOf(await _core.ReadWarCountdownAsync(l1B, war.TribeRowText)));
+        Record("tribestatus-shows", Verdict(WarText.TribeStatusShows(l1A, war.TribeRowText)), Verdict(WarText.TribeStatusShows(l1B, war.TribeRowText)));
+        Record("wardialog-line",
+            OfLine(l1A.Where(l => WarText.IsWarDialogLine(l.Text, war.Destination)).Select(l => ((string, PixelRect)?)l).FirstOrDefault()),
+            OfLine(l1B.Where(l => WarText.IsWarDialogLine(l.Text, war.Destination)).Select(l => ((string, PixelRect)?)l).FirstOrDefault()));
+
+        // ---- the combat log: ReadCombatLogAsync (War.cs, Regions.AttackMessage x1.5) -> WarBackInCaveAsync's baseline and
+        //      TickWarArriveAsync: the normalised lines (WarText.NewLines against the baseline; strict view only) and the
+        //      "Arrived" lines among them (WarText.IsArrivedLine, War.ArrivedText / HomeMonster)
+        var logRoi = s.Regions.AttackMessage.ToPixels(w, h);
+        var (logA, logB) = s.Detection.OcrScale == 1.5
+            ? (combatLog.A, combatLog.B)
+            : (await _legacy.RecognizeAsync(logRoi, 1.5), await _core.RecognizeAsync(logRoi, 1.5));
+        var (warLogA, warLogB) = (WarLog(_legacy, logA), WarLog(_core, logB));
+        Record("warlog-lines", KeysOf(warLogA), KeysOf(warLogB), View.StrictOnly);
+        Record("warlog-arrived",
+            KeysOf(warLogA.Where(l => WarText.IsArrivedLine(l, war.ArrivedText, war.HomeMonster))),
+            KeysOf(warLogB.Where(l => WarText.IsArrivedLine(l, war.ArrivedText, war.HomeMonster))));
+    }
+
+    /// <summary>War.cs ReadTeleportListAsync on words already read: the TELEPORT SCROLL title and the entries under it.</summary>
+    private static ((string Text, PixelRect Bounds)? Title, IReadOnlyList<(string Text, PixelRect Bounds)> Entries) TeleportListOf(
+        IVisionSide side, IReadOnlyList<OcrWord> words)
+    {
+        var lines = side.ToLines(words);
+        var title = WarText.FindWindowTitle(lines, WarText.TeleportScrollTitle);
+        return (title, title == null ? [] : WarText.TeleportListEntries(lines, title.Value.Bounds));
+    }
+
+    /// <summary>War.cs ReadCombatLogAsync + Normalized: the combat log's lines top to bottom, each TextMatcher.Normalize'd.</summary>
+    private static List<string> WarLog(IVisionSide side, IReadOnlyList<OcrWord> words)
+        => side.ToLines(words).Select(l => TextMatcher.Normalize(l.Text)).ToList();
+
+    /// <summary>A FindTextAsync hit whose own text covers most of <paramref name="text"/> (the war's tile and gate reads).</summary>
+    private TextHit? Covered(IReadOnlyList<OcrWord> words, string text)
+        => Best(words, text) is { } hit && TextMatcher.CoversMost(hit.Text, text) ? hit : null;
+
+    /// <summary>
+    /// WarTimer.cs TickWarCloseAsync without a window title: the tile text seen (the hit's own text covering most of it)
+    /// -> "menu" (WarText.IsMenuTileHit: the menu is up) or "title-like" (left open); none otherwise.
+    /// </summary>
+    private DetectorResult WindowTileOf(WarWindow? open, IReadOnlyList<OcrWord> words, IReadOnlyList<(string Text, PixelRect Bounds)> lines)
+    {
+        string tile = _settings.War.MenuTileText;
+        var hit = Best(words, tile);
+        if (open != null || hit == null || !TextMatcher.CoversMost(hit.Text, tile))
+            return DetectorResult.None;
+
+        return new DetectorResult(true, hit.Bounds, null, WarText.IsMenuTileHit(hit.Text, hit.Bounds, lines, tile) ? "menu" : "title-like") { ExactText = true };
     }
 
     // ------------------------------------------------------------------ pilot compositions (one copy, over the adapter)
@@ -602,9 +820,13 @@ internal sealed class ParityProbe
         return new MapOpen(spawns, chevrons, spawns != null && spawns.Similarity >= 0.90 && chevrons.Count >= 1);
     }
 
-    private sealed record WarRead(IReadOnlyList<(PixelRect Bounds, string Text)> Lines, (PixelRect Bounds, string Text)? Buff, PixelRect? RegularLabel);
+    private sealed record WarRead(IReadOnlyList<OcrWord> Words, IReadOnlyList<(PixelRect Bounds, string Text)> Lines,
+        (PixelRect Bounds, string Text)? Buff, PixelRect? RegularLabel);
 
-    /// <summary>AutomationPilot.War.cs TickAutoWarAsync: the whole-screen read, the Regular War label and the AUTO BUFF title.</summary>
+    /// <summary>
+    /// AutomationPilot.RegularWar.cs TickRegularWarAsync: the whole-screen read (x2, x1 under 3 words), the Regular War
+    /// label and the AUTO BUFF title. The words are also WarFight.cs ReadHuntSettingsAsync's (the same read).
+    /// </summary>
     private static async Task<WarRead> ReadWarAsync(IVisionSide side, int w, int h)
     {
         var full = new PixelRect(0, 0, w, h);
@@ -628,8 +850,44 @@ internal sealed class ParityProbe
         }
 
         var buff = lines.FirstOrDefault(l => l.Text == "autobuff" || TextMatcher.Levenshtein(l.Text, "autobuff") <= 1);
-        return new WarRead(lines, buff.Text == null ? null : buff, label);
+        return new WarRead(words, lines, buff.Text == null ? null : buff, label);
     }
+
+    /// <summary>
+    /// AutomationPilot.WarFight.cs ReadHuntSettingsAsync on its whole-client read: ScreenAnalyzer.ToLines, the first
+    /// line that is the AUTO BUFF title (WarText.IsAutoBuffTitle) and whether any line is the Regular War box's label.
+    /// </summary>
+    private static (PixelRect? Title, bool RegularWar) HuntSettings(IVisionSide side, IReadOnlyList<OcrWord> words)
+    {
+        var lines = side.ToLines(words);
+        var title = lines.Where(l => WarText.IsAutoBuffTitle(l.Text)).Select(l => (PixelRect?)l.Bounds).FirstOrDefault();
+        return (title, lines.Any(l => WarText.IsRegularWarLine(l.Text)));
+    }
+
+    /// <summary>AutomationPilot.WarFight.cs TickWarItemListAsync's read: Regions.ItemList at x1.5, then x2 unless an autobuff scroll line read.</summary>
+    private async Task<List<string>> ItemListAsync(IVisionSide side, int w, int h)
+    {
+        var roi = _settings.Regions.ItemList.ToPixels(w, h);
+        var lines = new List<string>();
+        foreach (double scale in new[] { 1.5, 2.0 })
+        {
+            lines.AddRange(side.ToLines(await side.RecognizeAsync(roi, scale)).Select(l => l.Text));
+            if (lines.Any(WarText.IsAutoBuffScrollLine))
+                break;
+        }
+
+        return lines;
+    }
+
+    /// <summary>
+    /// The war's skill bar templates: War.BuffIcons, Shura (WarSkillBarReady checks them all) and War.XBuffIcon
+    /// (TickWarFindTargetAsync), blank ones dropped.
+    /// </summary>
+    private List<string> WarIcons()
+        => _settings.War.BuffIcons.Append(_settings.Lod.ShuraTemplate).Append(_settings.War.XBuffIcon)
+            .Where(t => !string.IsNullOrWhiteSpace(t))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
 
     /// <summary>
     /// The labels whose checkbox is looked at: the pilot's Regular War label wherever it reads (that
@@ -680,10 +938,10 @@ internal sealed class ParityProbe
     /// only (IsFullName). One OCR of the region per side - FindTextAsync is that read plus
     /// TextMatcher.FindBest, so this is the pilot's FindTextAsync per stage without re-reading.
     /// </summary>
-    private async Task<TextHit?[]> StageNamesAsync(IVisionSide side, PixelRect bossList)
+    private async Task<(TextHit?[] Names, IReadOnlyList<OcrWord> Words)> StageNamesAsync(IVisionSide side, PixelRect bossList)
     {
         var words = await ReadAtOcrScaleAsync(side, bossList);
-        return _settings.Dungeon.Stages.Select(stage => FullName(words, stage)).ToArray();
+        return (_settings.Dungeon.Stages.Select(stage => FullName(words, stage)).ToArray(), words);
     }
 
     /// <summary>The read of ScreenAnalyzer.FindTextAsync: the region OCR'd at Detection.OcrScale.</summary>
@@ -956,6 +1214,41 @@ internal sealed class ParityProbe
     private static DetectorResult TextOf(string? text) => text == null ? DetectorResult.None : new(true, null, null, text);
 
     private static DetectorResult OfLine((PixelRect Bounds, string Text)? line) => line is { } l ? new(true, l.Bounds, null, l.Text) : DetectorResult.None;
+
+    private static DetectorResult OfLine((string Text, PixelRect Bounds)? line) => line is { } l ? new(true, l.Bounds, null, l.Text) : DetectorResult.None;
+
+    /// <summary>A string compared exactly (ordinal): none = not found.</summary>
+    private static DetectorResult ExactOf(string? text) => text == null ? DetectorResult.None : new(true, null, null, text) { ExactText = true };
+
+    /// <summary>ScreenAnalyzer.DistanceFromRing of a side's own ring, compared like a score (0.02 ring radii).</summary>
+    private static DetectorResult AwayOf(IVisionSide side, PixelRect? ring) => ring is { } r ? new(true, null, side.DistanceFromRing(r), null) : DetectorResult.None;
+
+    /// <summary>WarText.MonsterRows: none = not on the list; else the first row's box and similarity, the count and the names.</summary>
+    private static DetectorResult RowsOf(IReadOnlyList<WarText.MonsterRow> rows) => rows.Count == 0 ? DetectorResult.None
+        : new(true, rows[0].Bounds, rows[0].Similarity, $"n{rows.Count} {string.Join("|", rows.Select(r => r.Name))}") { ExactText = true };
+
+    /// <summary>AutomationPilot.AutoBuffInItemList's verdict (Unread = none) and the autobuff scroll line it names.</summary>
+    private static DetectorResult ItemListOf(IReadOnlyList<string> lines)
+    {
+        var verdict = AutomationPilot.AutoBuffInItemList(lines);
+        if (verdict == AutomationPilot.WarItemList.Unread)
+            return DetectorResult.None;
+
+        string? line = lines.FirstOrDefault(WarText.IsAutoBuffScrollLine);
+        return new(true, null, null, line == null ? $"{verdict}" : $"{verdict}: {line}") { ExactText = true };
+    }
+
+    /// <summary>ReadWarCountdownAsync: "in progress" or the time left, exact; none = cannot tell.</summary>
+    private static DetectorResult CountdownOf(WarCountdown? countdown) => countdown switch
+    {
+        { InProgress: true } => ExactOf("in progress"),
+        { Remaining: { } left } => ExactOf(left.ToString(@"hh\:mm\:ss", CultureInfo.InvariantCulture)),
+        _ => DetectorResult.None,
+    };
+
+    /// <summary>FindWarWindowClose: the window's title box and "window: title as read" (its X is the -close check).</summary>
+    private static DetectorResult WarWindowOf(WarWindow? window) => window == null ? DetectorResult.None
+        : new(true, window.TitleBounds, null, $"{window.Window}: {window.Title}");
 
     private static DetectorResult Verdict(bool found) => found ? new(true, null, null, null) : DetectorResult.None;
 
