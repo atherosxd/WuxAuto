@@ -1129,6 +1129,82 @@ public sealed class ScreenAnalyzer : IDisposable
         return (name, chest);
     }
 
+    /// <summary>R - max(G, B) above this = red text (<see cref="RedTextMask"/>): a red name reads 120-180, orange about 60.</summary>
+    internal const int RedTextMinExcess = 80;
+
+    /// <summary>
+    /// A BGR(A) image as one channel with only red kept bright: 255 where red exceeds both green and blue by more than
+    /// <see cref="RedTextMinExcess"/>, else 0. White, grey, black, orange and pale pink all turn dark.
+    /// </summary>
+    internal static Mat RedTextMask(Mat bgra)
+    {
+        var channels = bgra.Split();
+        try
+        {
+            using var greenBlue = new Mat();
+            CvInvoke.Max(channels[0], channels[1], greenBlue);
+            using var excess = new Mat();
+            CvInvoke.Subtract(channels[2], greenBlue, excess);    // 8-bit: saturates at 0
+            var mask = new Mat();
+            CvInvoke.Threshold(excess, mask, RedTextMinExcess, 255, ThresholdType.Binary);
+            return mask;
+        }
+        finally
+        {
+            foreach (var channel in channels)
+                channel.Dispose();
+        }
+    }
+
+    /// <summary>
+    /// OCR of <paramref name="roi"/> with only red text kept bright (<see cref="RedTextMask"/>): a player's red name, which
+    /// the white read blacks out. Lines in frame coordinates, top to bottom.
+    /// </summary>
+    internal async Task<IReadOnlyList<(string Text, PixelRect Bounds)>> OcrRedTextAsync(Mat frame, PixelRect roi, double scale)
+    {
+        using var crop = new Mat(frame, new Rectangle(roi.X, roi.Y, roi.Width, roi.Height));
+        using var mask = RedTextMask(crop);
+        using var bgra = new Mat();
+        CvInvoke.CvtColor(mask, bgra, ColorConversion.Gray2Bgra);
+        var words = await Ocr.RecognizeAsync(bgra, new PixelRect(0, 0, bgra.Width, bgra.Height), scale);
+        return ToLines(words)
+            .Select(l => (l.Text, new PixelRect(roi.X + l.Bounds.X, roi.Y + l.Bounds.Y, l.Bounds.Width, l.Bounds.Height)))
+            .ToList();
+    }
+
+    /// <summary>
+    /// Auto War's fight: what the target box holds (user, 2026-10-28: a player's name is red and the white read blacks it
+    /// out). The name as <see cref="ReadTargetAsync"/> finds it - OCR x1.5, then the white text at x2 - and, when neither
+    /// names one, the red text at x2 (the name from the red read, its "N / M" line from the red or the white read). The HP
+    /// bar's numbers line (<see cref="WarText.TargetHpLine"/>: in the box's centre band, so the pet panel's "100/100" never
+    /// counts) of any of these reads is a target on its own, named or not;
+    /// the chest as in <see cref="ReadTargetAsync"/>. <see cref="ReadTargetAsync"/> itself is left as it was (the
+    /// remember step needs a real name).
+    /// </summary>
+    public async Task<WarTargetRead> ReadWarTargetAsync(Mat frame)
+    {
+        var roi = _settings.Regions.TargetBox.ToPixels(frame.Width, frame.Height);
+        var chest = FindIcon(frame, "monstericon", new NormRect(0.25, 0, 0.50, 0.16).ToPixels(frame.Width, frame.Height), 0.80);
+
+        var plain = ToLines(await Ocr.RecognizeAsync(frame, roi, 1.5));
+        var hpLine = WarText.TargetHpLine(plain, roi);
+        if (WarText.FindTargetName(plain) is { } name)
+            return new WarTargetRead(name, hpLine, chest, "x1.5");
+
+        var white = await OcrWhiteTextAsync(frame, roi, 2.0);
+        hpLine ??= WarText.TargetHpLine(white, roi);
+        if (WarText.FindTargetName(white) is { } whiteName)
+            return new WarTargetRead(whiteName, hpLine, chest, "white x2");
+
+        var red = await OcrRedTextAsync(frame, roi, 2.0);
+        hpLine ??= WarText.TargetHpLine(red, roi);
+        if (WarText.FindTargetName([.. red, .. white]) is { } redName)
+            return new WarTargetRead(redName, hpLine, chest, "red x2");
+
+        string via = hpLine != null ? "numbers" : chest != null ? "chest" : "none";
+        return new WarTargetRead(null, hpLine, chest, via);
+    }
+
     /// <summary>
     /// Skill bar icons in <see cref="RegionSettings.Hotbar"/>: per template its <see cref="BestLeftmost"/>
     /// hit at <paramref name="minScore"/> or more, null when it is not on the bar. In the order given.

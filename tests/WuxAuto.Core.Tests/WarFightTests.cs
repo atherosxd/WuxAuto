@@ -431,4 +431,128 @@ public class WarFightTests
     [Fact]
     public void ItemList_TheAutoBuffDialogTitle_IsNotTheScroll()
         => Assert.Equal(ItemList.Unread, AutomationPilot.AutoBuffInItemList(["AUTO BUFF"]));
+
+    // ---------------------------------------------------------------- the walk out of the respawn point
+
+    const int W = 1920, H = 1080;
+    // The character's spot: (0.5 w, 0.54 h).
+    const int SpotX = 960, SpotY = 583;
+
+    static (string, PixelRect) Tag(string text, int centreX, int centreY, int w = 100, int h = 16)
+        => (text, new PixelRect(centreX - w / 2, centreY - h / 2, w, h));
+
+    static IReadOnlyList<PixelRect> Bands => AutomationPilot.WarWorldBands(new RegionSettings(), W, H);
+
+    [Fact]
+    public void WorldBands_TheTopStrip_TheMinimap_TheCombatLog_TheSkillBar_TheItemList()
+    {
+        var regions = new RegionSettings();
+        var bands = AutomationPilot.WarWorldBands(regions, W, H);
+        Assert.Contains(new PixelRect(0, 0, W, (int)(0.13 * H)), bands);
+        Assert.Contains(regions.Minimap.ToPixels(W, H), bands);
+        Assert.Contains(regions.AttackMessage.ToPixels(W, H), bands);
+        Assert.Contains(regions.Hotbar.ToPixels(W, H), bands);
+        Assert.Contains(regions.ItemList.ToPixels(W, H), bands);
+    }
+
+    [Fact]
+    public void WalkGoal_TheEventNoticesBetweenTheMinimapAndTheItemList_DoNotCount()
+    {
+        // A saved 1024x768 Labyrinth frame: "EXP x 2 Event" ... "Mount Exp x 0.050" right-aligned under the minimap panel,
+        // the last two below Regions.Minimap (0.42 h) and above Regions.ItemList (0.50 h).
+        var bands = AutomationPilot.WarWorldBands(new RegionSettings(), 1024, 768);
+        var lines = new[] { Tag("Pet Exp x 2%", 960, 335, 98, 12), Tag("Mount Exp x 0.050", 950, 350, 118, 12) };
+        Assert.Null(AutomationPilot.WarWalkGoal(lines, 1024, 768, bands));
+    }
+
+    [Fact]
+    public void WalkGoal_TheNearestTag_NotOurOwnName()
+    {
+        var lines = new[]
+        {
+            Tag("OurOwnName", SpotX, SpotY - 100),          // 100 px above the spot: within 0.22 h (238 px) - our own name tag
+            Tag("FarAway", SpotX + 150, SpotY - 400),
+            Tag("zMADARAz", SpotX + 120, SpotY + 260),
+        };
+        Assert.Equal("zMADARAz", AutomationPilot.WarWalkGoal(lines, W, H, Bands)?.Text);
+    }
+
+    [Fact]
+    public void WalkGoal_OurOwnTagsUpToAFifthOfTheHeightAway_DoNotCount()
+    {
+        // Saved frames (--warwalk): our own "[Premium]" / name tags sit up to 0.176 h from the spot (1024x768: "Premium)"
+        // centred at 512,280, 135 px above 512,415; 2048x1152: 191 px) - 0.12 h took them for other players.
+        var lines = new[] { Tag("Premium)", 512, 280, 49, 11), Tag("SHCorp", 492, 294, 40, 12) };
+        Assert.Null(AutomationPilot.WarWalkGoal(lines, 1024, 768, AutomationPilot.WarWorldBands(new RegionSettings(), 1024, 768)));
+        Assert.Null(AutomationPilot.WarWalkGoal([Tag("Premium", 1018, 431, 80, 14)], 2048, 1152,
+            AutomationPilot.WarWorldBands(new RegionSettings(), 2048, 1152)));
+    }
+
+    [Fact]
+    public void WalkGoal_TagsInTheUiBands_SentencesAndShortLines_DoNotCount()
+    {
+        var lines = new[]
+        {
+            Tag("TargetBoxName", SpotX, 60),                // top 13 %
+            Tag("[Bohai Outpost (Adept)]", 1700, 30),       // minimap
+            Tag("Attack succeeded!Normal damage(+50)", 300, 500, 300),   // combat log
+            Tag("Skillbar", SpotX, 1000),                   // skill bar
+            Tag("[Auto buff scroll] 02.11.2026", 1500, 800, 300),        // item list
+            Tag("Gate is Open.", SpotX, 300),
+            Tag("Ab", SpotX + 200, 400),
+            Tag("Ver: 0.2", SpotX - 200, 400),
+        };
+        Assert.Null(AutomationPilot.WarWalkGoal(lines, W, H, Bands));
+    }
+
+    [Fact]
+    public void WalkDue_AfterFiveTabsWithoutATarget_AtMostSixSteps_NotWhileResting()
+    {
+        Assert.Equal(5, AutomationPilot.WarWalkAfterTabs);
+        Assert.Equal(6, AutomationPilot.WarWalkMaxSteps);
+        Assert.False(AutomationPilot.WarWalkDue(noTargetTabs: 4, walkSteps: 0, clockNow: Now, restUntil: 0));
+        Assert.True(AutomationPilot.WarWalkDue(noTargetTabs: 5, walkSteps: 0, clockNow: Now, restUntil: 0));
+        Assert.True(AutomationPilot.WarWalkDue(noTargetTabs: 10, walkSteps: 5, clockNow: Now, restUntil: 0));
+        Assert.False(AutomationPilot.WarWalkDue(noTargetTabs: 11, walkSteps: 6, clockNow: Now, restUntil: 0));
+        Assert.False(AutomationPilot.WarWalkDue(noTargetTabs: 20, walkSteps: 0, clockNow: Now, restUntil: Now + 1));
+        Assert.True(AutomationPilot.WarWalkDue(noTargetTabs: 20, walkSteps: 0, clockNow: Now + 1, restUntil: Now + 1));
+    }
+
+    [Fact]
+    public void WalkGoal_NoLines_NoGoal() => Assert.Null(AutomationPilot.WarWalkGoal([], W, H, Bands));
+
+    [Fact]
+    public void WalkClick_ANearTag_JustBelowIt()
+    {
+        var (x, y) = AutomationPilot.WarWalkClick(new PixelRect(1050, 400, 100, 16), W, H);
+        Assert.Equal(1100, x);
+        Assert.Equal(408 + (int)Math.Round(0.04 * H), y);
+    }
+
+    [Fact]
+    public void WalkClick_AFarTag_PulledInToAQuarterOfTheHeight()
+    {
+        // Straight up from the spot, 450 px: pulled in to 0.25 h (270 px), the floor point first (+4 % h).
+        var (x, y) = AutomationPilot.WarWalkClick(new PixelRect(SpotX - 50, 100, 100, 16), W, H);
+        Assert.Equal(SpotX, x);
+        Assert.Equal(SpotY - 270, y);
+        double away = Math.Sqrt(Math.Pow(x - SpotX, 2) + Math.Pow(y - SpotY, 2));
+        Assert.True(away <= 0.25 * H + 1, $"{away} px from the spot");
+    }
+
+    [Fact]
+    public void WalkClick_ClampedToTheWalkClickArea()
+    {
+        // Straight down: pulled in to 270 px (y 853), still past 0.78 h (842) - the chat box and the skill bar.
+        var (x, y) = AutomationPilot.WarWalkClick(new PixelRect(SpotX - 50, 892, 100, 16), W, H);
+        Assert.Equal(SpotX, x);
+        Assert.Equal((int)(0.78 * H), y);
+        // Low on the left: never left of 0.25 w, above 0.25 h or below 0.78 h.
+        foreach (var tag in new[] { new PixelRect(0, 1000, 100, 16), new PixelRect(0, 0, 100, 16), new PixelRect(1800, 200, 100, 16) })
+        {
+            (x, y) = AutomationPilot.WarWalkClick(tag, W, H);
+            Assert.True(x >= (int)(0.25 * W) && x <= (int)(0.74 * W), $"x {x}");
+            Assert.True(y >= (int)(0.25 * H) && y <= (int)(0.78 * H), $"y {y}");
+        }
+    }
 }

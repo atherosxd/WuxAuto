@@ -330,6 +330,116 @@ public class WarTickTests
         Assert.DoesNotContain(run.Lines, l => l.StartsWith("No Shura key is set", StringComparison.Ordinal));
     }
 
+    // ---------------------------------------------------------------- a player target, the walk out of the respawn point
+
+    [Fact]
+    public async Task APlayerTarget_ItsNameUnread_TheHpNumbersAlone_TheSkillGoesOut()
+    {
+        // The user's sample (2026-10-28): the red name "zMADARAz" does not read; "49293/49293" on its bar does.
+        var settings = Fight();
+        var (input, run) = await RunFightAsync(settings, input =>
+        {
+            int lastTab = input.Calls.LastIndexOf("KeyTap Tab");
+            return lastTab >= 0 && input.Calls.Skip(lastTab).Count(c => c == "KeyTap 1") < 3
+                ? [FakeOcrEngine.Line("49293/49293", 900, 80, 140, 16)]
+                : [];
+        }, done: (input, _) => input.Calls.Contains("KeyTap 1"));
+
+        string log = Log(input, run.Lines);
+        int tab = input.Calls.IndexOf("KeyTap Tab");
+        int skill = input.Calls.IndexOf("KeyTap 1");
+        Assert.True(tab >= 0 && skill > tab, "expected Tab, then the skill" + log);
+        Assert.Contains(run.Lines, l => l.StartsWith("A target (HP numbers, name unread: '49293/49293')", StringComparison.Ordinal));
+        Assert.DoesNotContain(input.Calls, c => c.StartsWith("CtrlClick", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task NoTargetAfterFiveTabs_CtrlClicksTowardTheNearestPlayer_NotOurOwnName()
+    {
+        var settings = Fight();
+        var (input, run) = await RunFightAsync(settings, _ =>
+            [
+                FakeOcrEngine.Line("OurOwnName", 910, 475, 100, 16),     // right above the character (0.5 w, 0.54 h)
+                FakeOcrEngine.Line("zMADARAz", 1030, 835, 100, 16),
+            ],
+            done: (input, _) => input.Calls.Count(c => c.StartsWith("CtrlClick", StringComparison.Ordinal)) >= 2,
+            timeoutMs: 30000);
+
+        string log = Log(input, run.Lines);
+        int first = input.Calls.FindIndex(c => c.StartsWith("CtrlClick", StringComparison.Ordinal));
+        Assert.True(first >= 0, "expected a Ctrl+click" + log);
+        Assert.Equal(5, input.Calls.Take(first).Count(c => c == "KeyTap Tab"));
+        var (x, y) = AutomationPilot.WarWalkClick(new PixelRect(1030, 835, 100, 16), Width, Height);
+        Assert.Equal($"CtrlClick {x},{y}", input.Calls[first]);
+        Assert.Contains("No target after 5 Tabs - walking toward 'zMADARAz' (step 1/6).", run.Lines);
+        Assert.Contains("No target after 6 Tabs - walking toward 'zMADARAz' (step 2/6).", run.Lines);
+        Assert.DoesNotContain(input.Calls, c => c.StartsWith("Click", StringComparison.Ordinal) && !c.StartsWith("CtrlClick", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task NoTarget_NoPlayerInView_NoClick_SaidOncePerSpell()
+    {
+        var settings = Fight();
+        var (input, run) = await RunFightAsync(settings, _ => [FakeOcrEngine.Line("OurOwnName", 910, 475, 100, 16)],
+            done: (input, _) => input.Calls.Count(c => c == "KeyTap Tab") >= 8,
+            timeoutMs: 30000);
+
+        string log = Log(input, run.Lines);
+        Assert.True(input.Calls.Count(c => c == "KeyTap Tab") >= 8, "expected 8 Tabs" + log);
+        Assert.DoesNotContain(input.Calls, c => c.StartsWith("CtrlClick", StringComparison.Ordinal));
+        Assert.Single(run.Lines, l => l.Contains("no players in view", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task NoTarget_TheMinimapTitleUnread_NoWalk()
+    {
+        // A login screen, a loading screen, a window over the minimap: no "Bohai Outpost" on the last read - no Ctrl+click
+        // (a saved server-list frame offers "• Online" as the nearest "name tag").
+        var settings = Fight();
+        var (input, run) = await RunFightAsync(settings, _ => [FakeOcrEngine.Line("zMADARAz", 1030, 835, 100, 16)],
+            done: (input, _) => input.Calls.Count(c => c == "KeyTap Tab") >= 8,
+            timeoutMs: 30000, titleGoneAtTheFirstTab: true);
+
+        string log = Log(input, run.Lines);
+        Assert.True(input.Calls.Count(c => c == "KeyTap Tab") >= 8, "expected 8 Tabs" + log);
+        Assert.DoesNotContain(input.Calls, c => c.StartsWith("CtrlClick", StringComparison.Ordinal));
+        Assert.Single(run.Lines, l => l.Contains("the minimap does not read", StringComparison.Ordinal));
+    }
+
+    /// <summary>Auto War with autobuff and nothing to click: no buff icons, no Shura key - straight to the fight cycle.</summary>
+    private static AppSettings Fight()
+    {
+        var settings = War();
+        settings.Lod.ShuraKey = "";
+        foreach (string icon in new[] { "warbuff4", "waritem1", "waritem2" })
+            settings.War.SetBuffOn(icon, false);
+        return settings;
+    }
+
+    /// <summary>
+    /// From WarBuff in Bohai with an autobuff scroll (the buff key, no icons), on a blank frame; <paramref name="scene"/> adds
+    /// the OCR lines of the moment (given the inputs so far) to the minimap title and the item list.
+    /// </summary>
+    private static async Task<(FakeGameInput Input, (PilotPhase Phase, List<string> Lines) Run)> RunFightAsync(AppSettings settings,
+        Func<FakeGameInput, IEnumerable<OcrWord>> scene, Func<FakeGameInput, IReadOnlyList<string>, bool> done, int timeoutMs = 20000,
+        bool titleGoneAtTheFirstTab = false)
+    {
+        var input = new FakeGameInput();
+        var ocr = new FakeOcrEngine
+        {
+            Scene = () =>
+            [
+                .. titleGoneAtTheFirstTab && input.Calls.Contains("KeyTap Tab") ? [] : new[] { FakeOcrEngine.Line(Bohai, 1500, 10, 300, 16) },
+                FakeOcrEngine.Line("[Auto buff scroll] 02.11.2026", 1300, 700, 400, 16),
+                .. scene(input),
+            ],
+        };
+
+        using var frame = Blank.Bgra(Height, Width);
+        var run = await PilotRun.RunAsync(settings, input, ocr, frame, PilotPhase.WarBuff, (_, lines) => done(input, lines), timeoutMs);
+        return (input, run);
+    }
+
     private static string Log(FakeGameInput input, IEnumerable<string> lines)
         => "\ninputs:\n" + string.Join("\n", input.Calls) + "\nlog:\n" + string.Join("\n", lines);
 

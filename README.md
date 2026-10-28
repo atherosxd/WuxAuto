@@ -197,7 +197,13 @@ home it teleports back to the **same cave and the same monster**, turns the auto
    Inside it sets the game's TAB target to **Enemy worth CP**, buffs - auto-buff key `O`, or else the buff icons and then
    the weapon buff icons one by one; then the **item buffs** on the skill bar either way (they use an item; with `O` they
    are still clicked) - again every 5 min 45 s, then repeats: Tab to an enemy, the X buff, hold Shura, attack until the
-   target is gone.
+   target is gone. An enemy counts as targeted when its name reads in the target box at the top centre (a player's
+   **red** name has its own read) or, name unread, when its HP bar's numbers ("49293/49293") show there.
+   **Out of the respawn point:** after 5 Tabs in a row without a target it Ctrl+clicks (a walk) toward the nearest
+   name tag on screen - never its own, never one in the minimap, the event notices under it, the combat log on the
+   left, the skill bar or the item list - a quarter of the screen height at most per step, then Tabs again; at most
+   6 steps, then Tab only for 20 s. No name tag in view: no click (the log says "no players in view" once). Players on
+   the left 40 % of the screen (the combat log's band) are not walked to. Not seen in a live war yet.
    It watches the HP numbers (top left) and rebuffs after a death. When the war is over it goes back as above - at most
    3 times in 30 min without a war in between (a cave that keeps sending the character to town would otherwise cost a
    teleport every round); then it stops.

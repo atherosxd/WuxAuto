@@ -100,15 +100,19 @@ internal static class WarProbe
     }
 
     /// <summary>
-    /// --target &lt;dir&gt;: the target name and the target bar's chest as ScreenAnalyzer.ReadTargetAsync reads them,
-    /// and which read named it (plain x1.5, or the white text at x2). A chest without a name also prints the
-    /// lines of the white-text read.
+    /// --target &lt;dir&gt;: the Auto War fight's read of the target box (ScreenAnalyzer.ReadWarTargetAsync) and which read
+    /// decided - x1.5, white x2, red x2 (a name), numbers (the HP bar's "N / M" line alone), chest, none - next to the
+    /// remember step's ScreenAnalyzer.ReadTargetAsync (name, unchanged). A frame without a name or the chest also prints
+    /// every "N / M" line the three reads see in the target box, those outside its centre band (WarText.TargetHpLine)
+    /// marked: one inside the band on a frame without a target would be a target that is not one. A named target is
+    /// checked the other way: would its numbers line alone (any read) have seen it - if not, every '/' line of the reads.
     /// </summary>
     public static async Task<int> TargetAsync(string dir)
     {
         var settings = SettingsStore.Load(persistMigration: false);
         using var analyzer = new ScreenAnalyzer(settings, new OcrService());
-        int named = 0, namedPlain = 0, chests = 0, total = 0;
+        int named = 0, namedWithNumbers = 0, namedNumbersAlone = 0, numbersOnly = 0, chests = 0, chestOnly = 0, outsideBand = 0, oldNamed = 0, total = 0;
+        var byVia = new SortedDictionary<string, int>(StringComparer.Ordinal);
         foreach (string path in Frames(dir))
         {
             using var frame = Load(path);
@@ -117,33 +121,117 @@ internal static class WarProbe
 
             total++;
             var watch = Stopwatch.StartNew();
-            var (name, chest) = await analyzer.ReadTargetAsync(frame);
+            var target = await analyzer.ReadWarTargetAsync(frame);
             long ms = watch.ElapsedMilliseconds;
-            if (chest != null)
+            var (oldName, _) = await analyzer.ReadTargetAsync(frame);
+            if (oldName != null)
+                oldNamed++;
+            if (target.Chest != null)
                 chests++;
-
-            var roi = settings.Regions.TargetBox.ToPixels(frame.Width, frame.Height);
-            string via = "";
-            if (name != null)
-            {
+            if (target.Name != null)
                 named++;
-                bool plain = WarText.FindTargetName(ScreenAnalyzer.ToLines(await analyzer.Ocr.RecognizeAsync(frame, roi, 1.5))) == name;
-                if (plain)
-                    namedPlain++;
-                via = plain ? " (x1.5)" : " (white x2)";
-            }
+            else if (target.HpLine != null)
+                numbersOnly++;
+            else if (target.Chest != null)
+                chestOnly++;
+            if (target.Name != null && target.HpLine != null)
+                namedWithNumbers++;
+            byVia[target.Via] = byVia.GetValueOrDefault(target.Via) + 1;
 
-            string seen = "";
-            if (name == null && chest != null)
+            string numbers = "";
+            var roi = settings.Regions.TargetBox.ToPixels(frame.Width, frame.Height);
+            var reads = new (string Read, IReadOnlyList<(string Text, PixelRect Bounds)> Lines)[]
             {
-                var lines = await analyzer.OcrWhiteTextAsync(frame, roi, 2.0);
-                seen = $" | white x2 lines: {string.Join(" ; ", lines.Select(l => $"'{l.Text}' {Box(l.Bounds)}"))}";
+                ("x1.5", ScreenAnalyzer.ToLines(await analyzer.Ocr.RecognizeAsync(frame, roi, 1.5))),
+                ("white x2", await analyzer.OcrWhiteTextAsync(frame, roi, 2.0)),
+                ("red x2", await analyzer.OcrRedTextAsync(frame, roi, 2.0)),
+            };
+            if (target.Name != null)
+            {
+                // A named target: would its numbers line alone (any of the three reads) have done? If not, its '/' lines.
+                if (reads.Any(r => WarText.TargetHpLine(r.Lines, roi) != null))
+                {
+                    namedNumbersAlone++;
+                }
+                else
+                {
+                    var slash = reads.SelectMany(r => r.Lines.Where(l => l.Text.Contains('/')).Select(l => $"{r.Read} '{l.Text}' {Box(l.Bounds)}")).ToList();
+                    numbers = $" | numbers alone would miss it; '/' lines: {(slash.Count == 0 ? "none" : string.Join(" ; ", slash))}";
+                }
             }
 
-            Console.WriteLine($"{Path.GetFileName(path)} {frame.Width}x{frame.Height} | name {(name == null ? "not found" : $"'{name}'{via}")} | chest {(chest == null ? "-" : $"{chest.Score:0.000} at {Box(chest.Bounds)}")} ({ms} ms){seen}");
+            if (target.Name == null && target.Chest == null)
+            {
+                var whole = new PixelRect(0, 0, frame.Width, frame.Height);
+                var found = reads
+                    .SelectMany(r => r.Lines.Where(l => WarText.TargetHpLine([l], whole) != null)
+                        .Select(l => $"{r.Read} '{l.Text}' {Box(l.Bounds)}{(WarText.TargetHpLine([l], roi) == null ? " (outside the band)" : "")}"))
+                    .ToList();
+                if (found.Count > 0)
+                    numbers = $" | numbers lines: {string.Join(" ; ", found)}";
+                if (target.HpLine == null && found.Count > 0)
+                    outsideBand++;
+            }
+
+            string name = target.Name == null ? "not found" : $"'{target.Name}'";
+            string hp = target.HpLine is { } line ? $"'{line.Text}' {Box(line.Bounds)}" : "-";
+            string chest = target.Chest == null ? "-" : $"{target.Chest.Score:0.000} at {Box(target.Chest.Bounds)}";
+            Console.WriteLine($"{Path.GetFileName(path)} {frame.Width}x{frame.Height} | {(target.Seen ? "TARGET" : "none")} by {target.Via} | name {name} | hp {hp} | chest {chest} | old name {(oldName == null ? "-" : $"'{oldName}'")} ({ms} ms){numbers}");
         }
 
-        Console.WriteLine($"{named}/{total} frames with a target name ({namedPlain} by the x1.5 read), {chests} with the chest");
+        Console.WriteLine($"{total} frames: {named} named ({namedWithNumbers} with the numbers line in the band in the deciding reads, {namedNumbersAlone} in any of the three reads), {numbersOnly} by the numbers alone, "
+                          + $"{chestOnly} by the chest alone, {chests} with the chest; {outsideBand} without a target but with a numbers line outside the band; "
+                          + $"old ReadTargetAsync named {oldNamed}; decided by: {string.Join(", ", byVia.Select(kv => $"{kv.Key} {kv.Value}"))}");
+        return 0;
+    }
+
+    /// <summary>
+    /// --warwalk &lt;dir&gt;: the Auto War walk out of the respawn point on each frame, as the pilot decides it (whole-frame
+    /// OCR x1 -> AutomationPilot.WarWalkGoal outside WarWorldBands, our own name tag dropped -> WarWalkClick): the goal tag,
+    /// its centre and the Ctrl+click point, or "no players in view"; plus every line that passed the text rule but was
+    /// dropped and why (band / own name).
+    /// </summary>
+    public static async Task<int> WalkAsync(string dir)
+    {
+        var settings = SettingsStore.Load(persistMigration: false);
+        using var analyzer = new ScreenAnalyzer(settings, new OcrService());
+        int total = 0, goals = 0;
+        foreach (string path in Frames(dir))
+        {
+            using var frame = Load(path);
+            if (frame == null)
+                continue;
+
+            total++;
+            int w = frame.Width, h = frame.Height;
+            var lines = ScreenAnalyzer.ToLines(await analyzer.Ocr.RecognizeAsync(frame, new PixelRect(0, 0, w, h), 1.0));
+            var bands = AutomationPilot.WarWorldBands(settings.Regions, w, h);
+            var goal = AutomationPilot.WarWalkGoal(lines, w, h, bands);
+            var dropped = lines
+                .Where(l => WarText.IsPlayerTagText(l.Text) && (goal == null || l.Bounds != goal.Value.Bounds))
+                .Select(l =>
+                {
+                    bool inBand = bands.Any(b => l.Bounds.CenterX >= b.X && l.Bounds.CenterX < b.Right && l.Bounds.CenterY >= b.Y && l.Bounds.CenterY < b.Bottom);
+                    return inBand ? null : AutomationPilot.WarWalkGoal([l], w, h, bands) == null ? $"'{l.Text}' {Box(l.Bounds)} (own name)" : $"'{l.Text}' {Box(l.Bounds)} (farther)";
+                })
+                .Where(t => t != null)
+                .ToList();
+            string what;
+            if (goal is { } tag)
+            {
+                goals++;
+                var (x, y) = AutomationPilot.WarWalkClick(tag.Bounds, w, h);
+                what = $"goal '{tag.Text}' at {tag.Bounds.CenterX},{tag.Bounds.CenterY} -> Ctrl+click {x},{y}";
+            }
+            else
+            {
+                what = "no players in view";
+            }
+
+            Console.WriteLine($"{Path.GetFileName(path)} {w}x{h} | {what}{(dropped.Count > 0 ? $" | also in the world: {string.Join(" ; ", dropped)}" : "")}");
+        }
+
+        Console.WriteLine($"{total} frames, a walk goal on {goals}");
         return 0;
     }
 

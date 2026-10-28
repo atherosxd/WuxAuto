@@ -47,7 +47,9 @@ Everything it does is drawn on its preview and written to its log.
 
 * **AutoWar** - Bohai Outpost tribe wars for an alt. Start it **inside the cave** you want to hunt in (the cave must be on
   **page 3** of the teleport scroll, the autohunt on). It reads the war timer from Menu > Tribe Status, joins every war,
-  buffs and fights, then teleports back to the same cave and monster. Not tested live yet.
+  buffs and fights (a player is a target when its name or its HP numbers show in the target box; with no one to Tab
+  for 5 s it walks toward the nearest player name on screen, 6 steps at most), then teleports back to the same cave and
+  monster. Not tested live yet.
   The buff icons and Shura are optional: in Settings > Auto War > **Buffs** untick the buffs this character does not have
   (Buff 1-5; Weapon 1 (sword), Weapon 2, Weapon 3 - a character uses one weapon, so usually only one of these; Item 1-2,
   items on the skill bar that are clicked with every rebuff, auto-buff too); a ticked one missing from the bar is only a

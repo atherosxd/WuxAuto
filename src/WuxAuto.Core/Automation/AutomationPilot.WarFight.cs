@@ -46,12 +46,20 @@ public sealed partial class AutomationPilot
     private long? _warBuffsDroppedAt;      // the HP maximum fell (buffs gone) since the last buff: rebuff wanted from then
 
     // WarFight.
-    private int _warFightStep;             // 0 Tab, 1 a target?, 2 Shura down, 3 Shura up, 4 attack
+    private int _warFightStep;             // 0 Tab, 1 a target?, 2 Shura down, 3 Shura up, 4 attack, 5 walk toward a player
     private long _warStepAt;               // step 3: the Shura key goes up; step 4: the next skill press
     private long _warTargetReadAt;         // step 4: the next target read
     private long _warTargetSeenAt;         // war clock: the target was last seen
     private string _warTarget = string.Empty;   // the target, for the log
     private int _warTabPolls;              // step 1 reads without a target (the gate text is read every 2nd)
+
+    // WarFight: the walk out of the respawn point (step 5), one "no target" spell at a time.
+    private int _warNoTargetTabs;          // Tabs in a row without a target
+    private int _warWalkSteps;             // walk steps in this spell
+    private long _warWalkRestUntil;        // war clock: Tab only until then (after WarWalkMaxSteps steps)
+    private bool _warNoPlayersTold;        // "no players in view" said this spell
+    private bool _warTitleUnreadTold;      // "the minimap does not read" said this spell
+    private bool _warTitleIsWarMap;        // the last minimap title read was the war map (WarZoneCheckAsync): a walk may click
 
     // The HP watch (WarFight, WarDead).
     private long _warHpReadAt;             // next HP read (TickCount64)
@@ -286,6 +294,113 @@ public sealed partial class AutomationPilot
         return null;
     }
 
+    // ---------------------------------------------------------------- the walk out of the respawn point (pure parts)
+
+    /// <summary>Tabs in a row without a target before the fight walks toward a player (user, 2026-10-28; about 5 s).</summary>
+    internal const int WarWalkAfterTabs = 5;
+
+    /// <summary>Walk steps in one "no target" spell; then Tab only for <see cref="WarWalkRestMs"/>.</summary>
+    internal const int WarWalkMaxSteps = 6;
+
+    /// <summary>Tab only this long (war clock) after <see cref="WarWalkMaxSteps"/> walk steps, then a new spell.</summary>
+    internal const int WarWalkRestMs = 20000;
+
+    /// <summary>The wait after a walk click before the next Tab.</summary>
+    internal const int WarWalkWaitMs = 1500;
+
+    /// <summary>
+    /// A name tag this close to the character's spot (x height) is our own: on the saved frames our "[Premium]" / name tags
+    /// sit up to 0.176 h away (1024x768 and 2048x1152; the brief's 0.12 h let them through as other players).
+    /// </summary>
+    internal const double WarOwnTagRadius = 0.22;
+
+    /// <summary>
+    /// Walk now: <see cref="WarWalkAfterTabs"/> or more Tabs in a row found no target, fewer than
+    /// <see cref="WarWalkMaxSteps"/> steps in this spell, and not resting (<paramref name="restUntil"/>, war clock).
+    /// </summary>
+    internal static bool WarWalkDue(int noTargetTabs, int walkSteps, long clockNow, long restUntil)
+        => noTargetTabs >= WarWalkAfterTabs && walkSteps < WarWalkMaxSteps && clockNow >= restUntil;
+
+    /// <summary>
+    /// The UI bands no name tag is looked for in: the top 13 % (the target box and the top bar), the minimap, the combat
+    /// log, the skill bar, the item list - and the column between the minimap and the item list, where the server's event
+    /// notices sit right-aligned ("Pet Exp x 2%", "Mount Exp x 0.050": below Regions.Minimap on a saved 1024x768 frame).
+    /// </summary>
+    internal static IReadOnlyList<PixelRect> WarWorldBands(RegionSettings regions, int width, int height)
+    {
+        var minimap = regions.Minimap.ToPixels(width, height);
+        var items = regions.ItemList.ToPixels(width, height);
+        var bands = new List<PixelRect>
+        {
+            new(0, 0, width, (int)(0.13 * height)),
+            minimap,
+            regions.AttackMessage.ToPixels(width, height),
+            regions.Hotbar.ToPixels(width, height),
+            items,
+        };
+        if (items.Y > minimap.Bottom)
+            bands.Add(new PixelRect(minimap.X, minimap.Bottom, width - minimap.X, items.Y - minimap.Bottom));
+        return bands;
+    }
+
+    /// <summary>The character's spot on the screen (0.5 w, 0.54 h): the LOD ring check's spot.</summary>
+    private static (double X, double Y) WarCharacterSpot(int width, int height) => (0.5 * width, 0.54 * height);
+
+    /// <summary>
+    /// The name tag to walk toward, from whole-screen OCR lines: a tag (<see cref="WarText.IsPlayerTagText"/>) whose centre
+    /// lies in none of <paramref name="bands"/> and more than <see cref="WarOwnTagRadius"/> x height from the character's spot
+    /// (closer is our own name tag); the nearest to the spot. Null when none.
+    /// </summary>
+    internal static (string Text, PixelRect Bounds)? WarWalkGoal(IReadOnlyList<(string Text, PixelRect Bounds)> lines, int width, int height,
+        IReadOnlyList<PixelRect> bands)
+    {
+        var (spotX, spotY) = WarCharacterSpot(width, height);
+        double own = WarOwnTagRadius * height;
+        (string Text, PixelRect Bounds)? best = null;
+        double bestAway = double.MaxValue;
+        foreach (var (text, bounds) in lines)
+        {
+            if (!WarText.IsPlayerTagText(text))
+                continue;
+
+            int cx = bounds.CenterX, cy = bounds.CenterY;
+            if (bands.Any(b => cx >= b.X && cx < b.Right && cy >= b.Y && cy < b.Bottom))
+                continue;
+
+            double away = Math.Sqrt(Math.Pow(cx - spotX, 2) + Math.Pow(cy - spotY, 2));
+            if (away <= own || away >= bestAway)
+                continue;
+
+            best = (text.Trim(), bounds);
+            bestAway = away;
+        }
+
+        return best;
+    }
+
+    /// <summary>
+    /// Where a walk step Ctrl+clicks for a name tag: the floor 4 % of the height below the tag's centre, pulled toward the
+    /// character's spot to at most 0.25 x height from it, then kept inside the walk-click area the LOD walk uses
+    /// (0.25-0.74 w, 0.25-0.78 h: clear of the chat box, the panels and the skill bar).
+    /// </summary>
+    internal static (int X, int Y) WarWalkClick(PixelRect tag, int width, int height)
+    {
+        var (spotX, spotY) = WarCharacterSpot(width, height);
+        double dx = tag.CenterX - spotX;
+        double dy = tag.CenterY + Math.Round(0.04 * height) - spotY;
+        double length = Math.Sqrt(dx * dx + dy * dy);
+        double reach = 0.25 * height;
+        if (length > reach)
+        {
+            dx *= reach / length;
+            dy *= reach / length;
+        }
+
+        int x = (int)Math.Round(Math.Clamp(spotX + dx, width * 0.25, width * RunClickRight));
+        int y = (int)Math.Round(Math.Clamp(spotY + dy, height * RunClickTop, height * 0.78));
+        return (x, y);
+    }
+
     /// <summary>The target counts as gone after <paramref name="targetGoneMs"/> without a sight, on the war clock.</summary>
     internal static bool WarTargetGone(long clockNow, long seenAt, int targetGoneMs) => clockNow - seenAt >= targetGoneMs;
 
@@ -350,6 +465,9 @@ public sealed partial class AutomationPilot
             _warInsideZoneAt = now + 2000;
             title = await ReadMinimapTitleAsync(frame);
         }
+
+        if (read)
+            _warTitleIsWarMap = title != null && ZoneMatches(title, war.Destination);
 
         if (title == null)
         {
@@ -426,6 +544,7 @@ public sealed partial class AutomationPilot
         _warInsideZoneAt = 0;
         _warOtherZoneReads = 0;
         _warZoneHeld = false;
+        _warTitleIsWarMap = false;
         Log?.Invoke(LogLevel.Info, $"Entering {war.Destination} ({why}): TAB target '{war.TabTargetOption}', buffs, then the fight.");
         Advance(PilotPhase.WarEnter, 500);
     }
@@ -832,6 +951,11 @@ public sealed partial class AutomationPilot
     {
         _warFightStep = 0;
         _warTabPolls = 0;
+        _warNoTargetTabs = 0;
+        _warWalkSteps = 0;
+        _warWalkRestUntil = 0;
+        _warNoPlayersTold = false;
+        _warTitleUnreadTold = false;
         _warHpReadAt = 0;
         _warHp = _warHp with { DeadReads = 0, ReviveReads = 0, LowReads = 0, DropArmed = false };
         _warHpUnreadSince = 0;
@@ -843,10 +967,11 @@ public sealed partial class AutomationPilot
     /// The fight (design §4.5), sub-steps of <c>_warFightStep</c>; first on every tick (after a Shura release, which keeps its
     /// time) the zone check, the HP watch (<see cref="WarHpNext"/>: dead, or the buffs gone) and the rebuff
     /// (<see cref="WarRebuffDue"/>: at the Tab point, or 30 s overdue mid-attack).
-    /// 0 Tab; 1 a target in the target box (a name or the chest)
+    /// 0 Tab; 1 a target in the target box (a name, the HP numbers or the chest)
     /// - the X buff, else Tab again 1 s later (before the war has started, "Gate is Open" is looked for on every 2nd read);
     /// 2 the Shura key goes down; 3 it goes up after <see cref="WarSettings.ShuraHoldMs"/>; 4 the skill until the target is
-    /// gone for <see cref="WarSettings.TargetGoneMs"/> - then Tab again.
+    /// gone for <see cref="WarSettings.TargetGoneMs"/> - then Tab again; 5 after <see cref="WarWalkAfterTabs"/> Tabs without
+    /// a target, a walk step toward the nearest player on screen, then Tab again.
     /// </summary>
     private async Task TickWarFightAsync(Mat frame)
     {
@@ -908,6 +1033,9 @@ public sealed partial class AutomationPilot
             case 2:
                 TickWarShuraDown(now);
                 return;
+            case 5:
+                await TickWarWalkAsync(frame, now);
+                return;
             default:
                 await TickWarAttackAsync(frame, now);
                 return;
@@ -931,19 +1059,20 @@ public sealed partial class AutomationPilot
     }
 
     /// <summary>
-    /// Step 1: a name or the chest in the target box = a target - the war has started, the X buff
-    /// (<see cref="WarSettings.XBuffIcon"/>, skipped when unticked; not on the bar - skipped, <see cref="WarnXBuffMissing"/>)
-    /// is clicked on this frame, then Shura.
-    /// None: Tab again 1 s later; before the war has started the whole client is read for <see cref="WarSettings.GateText"/>
-    /// on every 2nd such read.
+    /// Step 1: a name, the HP numbers or the chest in the target box (<see cref="ScreenAnalyzer.ReadWarTargetAsync"/>) = a
+    /// target - the war has started, the "no target" spell ends, the X buff (<see cref="WarSettings.XBuffIcon"/>, skipped
+    /// when unticked; not on the bar - skipped, <see cref="WarnXBuffMissing"/>) is clicked on this frame, then Shura.
+    /// None: Tab again 1 s later - or, <see cref="WarWalkDue"/>, a walk step on the next tick's frame (step 5); before the
+    /// war has started the whole client is read for <see cref="WarSettings.GateText"/> on every 2nd such read.
     /// </summary>
     private async Task TickWarFindTargetAsync(Mat frame, long now)
     {
         var war = _settings.War;
-        var (name, chest) = await _analyzer.ReadTargetAsync(frame);
-        if (name != null || chest != null)
+        var target = await _analyzer.ReadWarTargetAsync(frame);
+        string? name = target.Name;
+        if (target.Seen)
         {
-            if (chest != null)
+            if (target.Chest is { } chest)
                 _overlays.Add(new OverlayItem(chest.Bounds, $"target {chest.Score:0.00}", OverlayColor.Green));
             if (!_warStarted)
             {
@@ -954,10 +1083,17 @@ public sealed partial class AutomationPilot
             _warTarget = name ?? "?";
             _warTargetSeenAt = _warClock.Now(now);
             _warTabPolls = 0;
+            _warNoTargetTabs = 0;
+            _warWalkSteps = 0;
+            _warNoPlayersTold = false;
+            _warTitleUnreadTold = false;
             bool xBuff = !string.IsNullOrWhiteSpace(war.XBuffIcon) && war.IsBuffOn(war.XBuffIcon);
             string shura = string.IsNullOrWhiteSpace(_settings.Lod.ShuraKey) ? "" : $"Shura {war.ShuraHoldMs} ms, ";
+            string what = name != null ? $"Target '{name}' ({target.Via})"
+                : target.HpLine is { } hp ? $"A target (HP numbers, name unread: '{hp.Text}')"
+                : "A target (chest icon, name unread)";
             // Every cycle: Trace, so a war's hundreds of cycles stay out of the Info log.
-            Log?.Invoke(LogLevel.Trace, $"{(name != null ? $"Target '{name}'" : "A target (chest icon, name unread)")} - {(xBuff ? "X buff, " : "")}{shura}then the skill until it is gone.");
+            Log?.Invoke(LogLevel.Trace, $"{what} - {(xBuff ? "X buff, " : "")}{shura}then the skill until it is gone.");
 
             bool clicked = false;
             var x = xBuff ? _analyzer.FindSkillBarIcons(frame, [war.XBuffIcon], war.IconMatchScore)[0].Match : null;
@@ -988,9 +1124,102 @@ public sealed partial class AutomationPilot
             }
         }
 
+        _warNoTargetTabs++;
+        long clock = _warClock.Now(now);
+        if (_warWalkSteps >= WarWalkMaxSteps && clock >= _warWalkRestUntil)
+        {
+            // The rest after a spell's last step is over: a new spell.
+            _warWalkSteps = 0;
+            _warNoPlayersTold = false;
+            _warTitleUnreadTold = false;
+        }
+
+        if (WarWalkDue(_warNoTargetTabs, _warWalkSteps, clock, _warWalkRestUntil))
+        {
+            _warFightStep = 5;
+            _detail = WarFightDetail($"no target after {_warNoTargetTabs} Tabs - looking for players on screen", now);
+            _waitUntil = now + 100;     // the walk decides on the next tick's frame
+            return;
+        }
+
         _warFightStep = 0;
-        _detail = WarFightDetail("no target - Tab again", now);
+        _detail = WarFightDetail(_warWalkSteps >= WarWalkMaxSteps
+            ? $"no target - Tab again (Tab only for {Clock(_warWalkRestUntil - clock)} after {WarWalkMaxSteps} walk steps)"
+            : "no target - Tab again", now);
         _waitUntil = now + 1000;
+    }
+
+    /// <summary>
+    /// Step 5, a walk step out of the respawn point toward other players (user, 2026-10-28), only while the last minimap
+    /// title read was the war map: whole-screen OCR (x1) on this tick's frame, the nearest name tag in the game world
+    /// (<see cref="WarWalkGoal"/>; not our own) - Ctrl+click (a walk; a plain click attacks) the floor just below it
+    /// (<see cref="WarWalkClick"/>), never with Shura held; then Tab again
+    /// <see cref="WarWalkWaitMs"/> later. No tag: no click, Tab again, "no players in view" once per spell. After
+    /// <see cref="WarWalkMaxSteps"/> steps, Tab only for <see cref="WarWalkRestMs"/>. A dry run logs and sends nothing.
+    /// </summary>
+    private async Task TickWarWalkAsync(Mat frame, long now)
+    {
+        if (!_warTitleIsWarMap)
+        {
+            // A login or loading screen, a window over the minimap: its words are no name tags (a saved server list offers
+            // "Online" as the nearest one) - no click until the minimap reads the war map again.
+            if (!_warTitleUnreadTold)
+            {
+                _warTitleUnreadTold = true;
+                Log?.Invoke(LogLevel.Info, $"No target after {_warNoTargetTabs} Tabs, but the minimap does not read '{_settings.War.Destination}' - not walking, Tab again (said once per spell).");
+            }
+
+            _warFightStep = 0;
+            _detail = WarFightDetail("no target - Tab again (the minimap does not read the war map: no walk)", now);
+            _waitUntil = now + 1000;
+            return;
+        }
+
+        var full = new PixelRect(0, 0, frame.Width, frame.Height);
+        var lines = ScreenAnalyzer.ToLines(await _analyzer.Ocr.RecognizeAsync(frame, full, 1.0));
+        var goal = WarWalkGoal(lines, frame.Width, frame.Height, WarWorldBands(_settings.Regions, frame.Width, frame.Height));
+        if (goal is not { } tag)
+        {
+            if (!_warNoPlayersTold)
+            {
+                _warNoPlayersTold = true;
+                Log?.Invoke(LogLevel.Info, $"No target after {_warNoTargetTabs} Tabs and no players in view - Tab again (said once per spell).");
+            }
+
+            _warFightStep = 0;
+            _detail = WarFightDetail("no target, no players in view - Tab again", now);
+            _waitUntil = now + 1000;
+            return;
+        }
+
+        ReleaseHeldSkill();     // never walk with Shura held (nothing is held in steps 0-1; this is the guard)
+        var (x, y) = WarWalkClick(tag.Bounds, frame.Width, frame.Height);
+        _overlays.Add(new OverlayItem(tag.Bounds, $"walk to {tag.Text}", OverlayColor.Orange));
+        if (!_input.IsDryRun && !_input.CtrlClick(x, y))
+        {
+            _detail = "Ctrl+click blocked - waiting for the game to be in front";
+            _waitUntil = now + 300;     // step 5 again: decided afresh on the next frame
+            return;
+        }
+
+        _warWalkSteps++;
+        if (!_input.IsDryRun)
+            _lastClick = (x, y, now);
+        Log?.Invoke(LogLevel.Info, $"No target after {_warNoTargetTabs} Tabs - walking toward '{tag.Text}' (step {_warWalkSteps}/{WarWalkMaxSteps})."
+                                   + (_input.IsDryRun ? $" Dry run - would Ctrl+click {x},{y}." : ""));
+        if (!_input.IsDryRun)
+            Log?.Invoke(LogLevel.Trace, $"Ctrl+clicked {x},{y} for the tag '{tag.Text}' at {tag.Bounds.CenterX},{tag.Bounds.CenterY}.");
+        if (_warWalkSteps == 1)
+            WarShot(frame, "war_walk", (x, y));
+        if (_warWalkSteps >= WarWalkMaxSteps)
+        {
+            _warWalkRestUntil = _warClock.Now(now) + WarWalkRestMs;
+            Log?.Invoke(LogLevel.Info, $"{WarWalkMaxSteps} walk steps without a target - Tab only for {WarWalkRestMs / 1000}s, then walk again.");
+        }
+
+        _warFightStep = 0;
+        _detail = WarFightDetail($"walking toward '{tag.Text}' (step {_warWalkSteps}/{WarWalkMaxSteps})", now);
+        _waitUntil = now + WarWalkWaitMs;
     }
 
     /// <summary>
@@ -1081,7 +1310,7 @@ public sealed partial class AutomationPilot
 
     /// <summary>
     /// Step 4: the skill (<see cref="TapSkill"/>, with Ctrl + skill when that is on) every <see cref="LodSettings.SkillEveryMs"/>;
-    /// the target box every 700 ms - a name or the chest is a sight; none for <see cref="WarSettings.TargetGoneMs"/> on the
+    /// the target box every 700 ms - a name, the HP numbers or the chest is a sight; none for <see cref="WarSettings.TargetGoneMs"/> on the
     /// war clock - Tab again.
     /// </summary>
     private async Task TickWarAttackAsync(Mat frame, long now)
@@ -1103,13 +1332,13 @@ public sealed partial class AutomationPilot
         if (now >= _warTargetReadAt)
         {
             _warTargetReadAt = now + 700;
-            var (name, chest) = await _analyzer.ReadTargetAsync(frame);
+            var target = await _analyzer.ReadWarTargetAsync(frame);
             long clock = _warClock.Now(now);
-            if (name != null || chest != null)
+            if (target.Seen)
             {
                 _warTargetSeenAt = clock;
-                if (name != null)
-                    _warTarget = name;
+                if (target.Name != null)
+                    _warTarget = target.Name;
             }
             else if (WarTargetGone(clock, _warTargetSeenAt, war.TargetGoneMs))
             {

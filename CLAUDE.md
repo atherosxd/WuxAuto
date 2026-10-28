@@ -129,7 +129,8 @@ dotnet run --project .\tests\WuxAuto.SelfTest -- --confirm "$env:LOCALAPPDATA\Wu
 
 # Auto War probes (tests/WuxAuto.SelfTest/WarProbe.cs), each over a folder of PNGs
 dotnet run --project .\tests\WuxAuto.SelfTest -- --hp "$env:LOCALAPPDATA\WuxAuto\debug"      # top-left "cur / max" HP read (white-text read, plain fallback)
-dotnet run --project .\tests\WuxAuto.SelfTest -- --target "$env:LOCALAPPDATA\WuxAuto\debug"  # target-box name + treasure chest
+dotnet run --project .\tests\WuxAuto.SelfTest -- --target "$env:LOCALAPPDATA\WuxAuto\debug"  # the fight's target read: which read decided (x1.5 / white / red / numbers / chest) + the old name read
+dotnet run --project .\tests\WuxAuto.SelfTest -- --warwalk "$env:LOCALAPPDATA\WuxAuto\debug" # the walk out of the respawn point: goal name tag + Ctrl+click point per frame
 dotnet run --project .\tests\WuxAuto.SelfTest -- --warbar "$env:LOCALAPPDATA\WuxAuto\debug"  # BuffIcons + WeaponBuffIcons + ItemBuffIcons + Shura on the skill bar
 dotnet run --project .\tests\WuxAuto.SelfTest -- --menu "$env:LOCALAPPDATA\WuxAuto\debug"    # the menu button and the MENU window
 dotnet run --project .\tests\WuxAuto.SelfTest -- --tribe "$env:LOCALAPPDATA\WuxAuto\war-inputs"  # TRIBE STATUS: the Bohai row's countdown (the user's screenshot lives there, never in git)
@@ -835,11 +836,45 @@ do not run); the 5 s Bohai-dialog Cancel is skipped in this mode (the OK is what
   1 (sword)" with its icon is ~159 DIP). `WarSettings.IsBuffOn` / `SetBuffOn` (a new list replaces the old one: the loop thread may
   be reading it); saved like every other setting (close / Save settings). A character uses one weapon, so usually two of the three
   weapon buffs are unticked. SelfTest check "war buff switches" (labels, tooltips, DisabledBuffs written, damaged PNGs).
-* **Fight (`WarFight`, `.WarFight.cs`).** `Tab` ~1/s until a **target** (`WarText.FindTargetName` in the target box only: not the
-  version/ping line, a system notice or a lone number) or the "Gate is Open" line; cycle = `Tab` -> X buff (`XBuffIcon` warbuff4;
+* **Fight (`WarFight`, `.WarFight.cs`).** `Tab` ~1/s until a **target** (in the target box only: a name over its numbers line
+  (`WarText.FindTargetName`; not the version/ping line, a system notice or a lone number), the numbers line alone or the chest - see
+  "Target rule" below) or the "Gate is Open" line; cycle = `Tab` -> X buff (`XBuffIcon` warbuff4;
   skipped when unticked; ticked but not found -> one Warning per Start with its best score or "(no warbuff4.png in templates/Assets)" + `war_xbuff_missing` (`WarnXBuffMissing`, `_warMissingIcons`; with autobuff nothing else looks for it), 0.90 gate kept) -> **hold the Shura key `ShuraHoldMs` 1200** (`_heldSkill`, released by `Advance` / Stop / F10; **no Shura key
   = no hold**, one Info per Start "No Shura key is set ..." (`_warShuraSkipTold`)) -> skill spam (`TapSkill`, Ctrl + skill)
-  until no name for `TargetGoneMs` (2 s) -> next cycle. After the war has started a death/rebuff goes back to the cycle, not the start wait.
+  until no target for `TargetGoneMs` (2 s) -> next cycle. After the war has started a death/rebuff goes back to the cycle, not the start wait.
+  **Target rule (2026-10-28, user: "it seems not to try to attack" + a sample: player "zMADARAz" in red, "49293/49293" in white on a red
+  bar, buff icons under it, no chest):** the fight reads `ScreenAnalyzer.ReadWarTargetAsync` (the remember step keeps `ReadTargetAsync`,
+  unchanged): name by plain x1.5, then white x2, then **red x2** (`RedTextMask`: R - max(G,B) > 80 -> 255; `OcrRedTextAsync`; the
+  name from the red read, its numbers line from the red or white read) - and the target bar's **"N / M" line alone is a target**
+  (`WarText.TargetHpLine`: the whole line is the pair, spaces optional, O -> 0, <= 3 stray non-digit, non-':' characters each end, M >= 100;
+  dates, times, ':' lines and words never pass; **the line's centre in the middle half of the target box** - without that, 55 of the 592
+  saved frames, none with a target, read the pet / mount panel's gold "100/100" bar under the top bar at 0.69-0.71 w (1024, 1273,
+  1538 wide) as a target; the target bar sits at ~0.52 w), name "?" then. "Gone" uses the same rule. Before this a red name never read (the white
+  read blacks it out, the plain read drops the bar's slash), so a player was never a target and the skill never went out - the likely
+  cause of the report; once a target is seen nothing else stands between it and the skill (X buff and Shura are optional, `SkillKey` is
+  required at Start). The Trace log says which read decided (`Target 'X' (red x2)`, `A target (HP numbers, name unread: '...')`).
+  **Walk out of the respawn point (user, same day: "try to move out of respawn" -> toward players on screen):** step 5 of the fight.
+  `WarWalkAfterTabs` 5 Tabs in a row without a target -> only while the last minimap title read (`WarZoneCheckAsync`, `_warTitleIsWarMap`)
+  was the war map (a login / loading screen offers "• Online", "STATUS"... as tags; else "the minimap does not read" once per spell, Tab
+  again) -> on the next tick's frame whole-screen OCR x1, lines that pass `WarText.IsPlayerTagText` (3+ letters, no ':', no sentence
+  ending '.', '!', '?' or ',', no opening quote - a boss's speech -, <= 4 words - system notices -, not one bracketed name alone - zone
+  banners, "[Premium]") outside `WarWorldBands` (top 13 %, `Minimap`, `AttackMessage`, `Hotbar`, `ItemList` and the column between the minimap and the item list - the server's
+  event notices "Pet Exp x 2%" sit there; a tag counts by its centre)
+  and more than `WarOwnTagRadius` **0.22 h** from the character's spot (0.5 w, 0.54 h; our own name - the brief said 0.12 h, but on
+  the saved frames our own "[Premium]" / name tags sit up to 0.176 h away and 0.12 h walked toward them) -> the nearest (`WarWalkGoal`) -> **Ctrl+click**
+  (`WarWalkClick`: 4 % h below the tag, pulled in to <= 0.25 h from the spot, clamped to the LOD walk area 0.25-0.74 w, 0.25-0.78 h),
+  Shura released first, dry run logs only; Info "No target after N Tabs - walking toward 'X' (step k/6)."; `war_walk` snapshot on a
+  spell's first step (<= 3 per Start); `WarWalkWaitMs` 1.5 s -> Tab. A Tab without a target after a step -> the next step; <=
+  `WarWalkMaxSteps` 6 per spell, then Tab only for `WarWalkRestMs` 20 s (war clock), then a new spell. No tag -> no click, Tab again,
+  "no players in view" once per spell. Probes 2026-10-28 (592 saved frames, none from Bohai): `--target` 128 named (58 x1.5,
+  70 white x2, 0 red - no red name in them), 4 by the numbers alone (all four with the chest: a boss bar under a dialog), 11 by the
+  chest alone, 136 with the chest, 449 none; 0 frames without a target with a numbers line in the band (55 with the pet panel's
+  outside it); 127 of the 128 named targets would also be seen by their numbers alone (8-9 digit boss bars - the pair takes up to
+  9 digits). `--warwalk`: a goal on 68 frames - 5 real player tags ("(Tiger) [ZhuFan]", "[PvP] (Dragon) Delisya"...), the
+  "Spectral" boss tag, and words of open windows / login screens ("SERVERS" 21 - the minimap gate keeps those from a click -
+  "PAGE 2", "INVENTORY", "EXIT"...); never our own tag (with 0.12 h, 26 of 163 goals were our own tags). A target ends the spell; `BeginWarFight` (buffs, revive) starts fresh. Note `AttackMessage`
+  (0, 0.10, 0.40, 0.85) is a wide band: players on the left 40 % of the screen are never walked to. **Not seen live**: the red read
+  on a real red name, the numbers rule on a real player bar, name tags over players in Bohai, the walk itself.
 * **Death watch (`WarDead`).** The top-left HP "cur / max" read about once a second. Death = `Cur == 0` and Max in 0.5-1.05x of the
   **alive max** (the "0/3000" bar and the MP line never count; the alive max is learned from agreeing reads, a raise is capped at 1.5x
   and warned once). Unreadable = alive (`war_hp_unread` after 10 s). Dead: release keys, wait for HP > 0, rebuff, fight; 30 s dead -> `war_dead`.
