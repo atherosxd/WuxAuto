@@ -505,4 +505,93 @@ public class WarTextTests
     [InlineData("[12]", false)]
     [InlineData("Piercing City", false)]
     public void IsZoneTitleLine(string line, bool title) => Assert.Equal(title, WarText.IsZoneTitleLine(line));
+
+    // ---------------------------------------------------------------- a target by its HP numbers alone (user, 2026-10-28)
+
+    // Regions.TargetBox (0.25, 0.03, 0.50, 0.12) at 1920x1080 and at 1024x768.
+    static readonly PixelRect TargetBox1920 = new(480, 32, 960, 129);
+    static readonly PixelRect TargetBox1024 = new(256, 23, 512, 92);
+
+    [Fact]
+    public void TargetHpLine_ThePetPanelsGoldBar_RightOfTheCentreBand_IsNoTarget()
+    {
+        // 55 saved frames without a target: the pet / mount panel under the top bar (gold bar "100/100" over a blue
+        // "200.000") reaches into the target box at 1024, 1273 and 1538 wide - its line centre at 0.69-0.71 w.
+        Assert.Null(WarText.TargetHpLine([L("100/100", 710, 85, 39, 9)], TargetBox1024));
+        Assert.Null(WarText.TargetHpLine([L("100/100", 1250, 120, 59, 14)], TargetBox1920));
+        // The target bar's line sits under the name at about 0.52 w.
+        Assert.NotNull(WarText.TargetHpLine([L("41073/41073", 500, 60, 70, 10)], TargetBox1024));
+    }
+
+    [Fact]
+    public void TargetHpLine_TheUsersSample_TheRedNameUnread_TheNumbersAlone()
+    {
+        // zMADARAz: red name (blacked out by the white read), white "49293/49293" on the red bar, buff icons under it.
+        var hit = WarText.TargetHpLine([L("49293/49293", 900, 80, 140)], TargetBox1920);
+        Assert.Equal("49293/49293", hit?.Text);
+    }
+
+    [Theory]
+    [InlineData("49293/49293")]
+    [InlineData("49293 / 49293")]
+    [InlineData("4929O/49293")]     // O read for 0
+    [InlineData("0/42833")]         // a target at 0 HP is still in the box
+    [InlineData("100/100")]
+    [InlineData("[41000/42833")]    // a bar edge read as punctuation
+    [InlineData("16284125/65136500")]   // a boss's bar: 8 digits (saved Labyrinth / LOD frames)
+    [InlineData("4583629/59215000")]
+    public void TargetHpLine_NumbersLines(string text) => Assert.NotNull(WarText.TargetHpLine([L(text, 900, 80)], TargetBox1920));
+
+    [Theory]
+    [InlineData("Ver: 0.2.492.1 — 10/24/2026 09:03:10")]   // the version line: a date, never an HP bar
+    [InlineData("10/24/2026")]
+    [InlineData("62ms — FPS: 41")]
+    [InlineData("5/10")]                                  // maximum under 100
+    [InlineData("10/99")]
+    [InlineData("297")]                                   // a bare number
+    [InlineData("zMADARAz")]
+    [InlineData("12:30/1500")]
+    [InlineData("HP 100/100")]                            // words at the ends: letters never pass
+    [InlineData("100/100 Lv")]
+    [InlineData("Lv 120 1500/1500 Spawns")]               // a map list row, not the bar's own line
+    public void TargetHpLine_NotNumbersLines(string text) => Assert.Null(WarText.TargetHpLine([L(text, 900, 80)], TargetBox1920));
+
+    [Fact]
+    public void TargetHpLine_TheTopmostOfSeveral()
+    {
+        var hit = WarText.TargetHpLine([L("8000/11467", 900, 120), L("Enemy", 900, 40), L("41000/42833", 900, 80)], TargetBox1920);
+        Assert.Equal("41000/42833", hit?.Text);
+    }
+
+    // ---------------------------------------------------------------- player name tags in the game world
+
+    [Theory]
+    [InlineData("zMADARAz", true)]
+    [InlineData("[Snake] iMstrG", true)]
+    [InlineData("Abc", true)]
+    [InlineData("Ab", false)]                         // fewer than 3 letters
+    [InlineData("12345", false)]
+    [InlineData("Gate is Open.", false)]              // a sentence
+    [InlineData("Ver: 0.2.492.1", false)]             // ':' lines
+    // Combat-log lines, wherever they sit (the walk's log rectangle is measured, not the 40 % reading band).
+    [InlineData("Attack succeeded!Normal damage(+50)", false)]
+    [InlineData("Auto hunt started", false)]
+    [InlineData("Autohunt ended", false)]
+    [InlineData("Arrived Goblin", false)]
+    [InlineData("Critical damage(+4120)", false)]
+    [InlineData("  ", false)]
+    [InlineData("[PvP] (Dragon) Delisya", true)]    // a player's tag in a saved frame
+    [InlineData("[Guild] zMADARAz", true)]
+    // Saved frames (--warwalk): a boss's speech, system notices, zone banners - none is a name tag.
+    [InlineData("\"Your doom approaches, and I am its instrument.\"", false)]
+    [InlineData("\"Your doom approaches, and I am its instrument.", false)]
+    [InlineData("four doom approaches, and I am its instrument,", false)]
+    [InlineData("You honestly believe you can defeat me?!", false)]
+    [InlineData("has succeeded in reinforcing 120%", false)]          // more than 4 words
+    [InlineData("[10] minute(s) to battle of Dragonfall Outpost", false)]
+    [InlineData("[White Dragon] [Guardian Stone 1] created", false)]
+    [InlineData("[Maya Cliff]", false)]                               // one bracketed name: a zone banner (or a title over a name)
+    [InlineData("[Yinyang Island (WD)]", false)]
+    [InlineData("[Premium]", false)]
+    public void IsPlayerTagText(string text, bool tag) => Assert.Equal(tag, WarText.IsPlayerTagText(text));
 }

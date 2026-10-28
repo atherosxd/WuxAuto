@@ -1,3 +1,7 @@
+using System.Drawing;
+using Emgu.CV;
+using Emgu.CV.CvEnum;
+using Emgu.CV.Structure;
 using WuxAuto.Vision;
 
 namespace WuxAuto.Core.Tests;
@@ -162,5 +166,33 @@ public class ScreenAnalyzerTests
 
         Assert.Equal(PixelRect.FromBounds(601, 235, 795, 267), ScreenAnalyzer.CountdownBand(row, 795, 829));    // clamped to the frame
         Assert.Equal(PixelRect.FromBounds(601, 235, 921, 267), ScreenAnalyzer.CountdownBand(row, 1920, 1080)); // 20 x 16 px
+    }
+    [Fact]
+    public void RedTextMask_RedTextBright_WhiteGreyBlackAndOrangeDark()
+    {
+        // BGRA: the sample's red name, the white HP numbers, black, grey, an orange-ish brown, a pale pink.
+        var colours = new[]
+        {
+            (new MCvScalar(40, 40, 220, 255), true),     // red name
+            (new MCvScalar(60, 50, 180, 255), true),     // darker red
+            (new MCvScalar(240, 240, 240, 255), false),  // white numbers
+            (new MCvScalar(0, 0, 0, 255), false),
+            (new MCvScalar(128, 128, 128, 255), false),
+            (new MCvScalar(40, 140, 200, 255), false),   // orange: green too high
+            (new MCvScalar(200, 190, 230, 255), false),  // pale pink: too little red over the rest
+        };
+        using var image = new Mat(1, colours.Length, DepthType.Cv8U, 4);
+        for (int i = 0; i < colours.Length; i++)
+        {
+            using var px = new Mat(image, new Rectangle(i, 0, 1, 1));
+            px.SetTo(colours[i].Item1);
+        }
+
+        using var mask = ScreenAnalyzer.RedTextMask(image);
+        Assert.Equal(1, mask.NumberOfChannels);
+        var values = new byte[colours.Length];
+        mask.CopyTo(values);
+        for (int i = 0; i < colours.Length; i++)
+            Assert.True(colours[i].Item2 ? values[i] == 255 : values[i] == 0, $"colour {i}: {values[i]}");
     }
 }
