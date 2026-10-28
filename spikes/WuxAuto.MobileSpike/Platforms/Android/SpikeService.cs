@@ -143,6 +143,8 @@ public class SpikeService : AccessibilityService
                 return GestureAsync("TAP", new[] { Stroke(tap, 0, 100) });
             }
             case "MULTIC": return MultiContinuedAsync(i, W, H);
+            case "SEQ": return SeqAsync(i.GetStringExtra("steps") ?? "", W, H);
+            case "DRAG": return DragAsync(X("x1"), Y("y1"), X("x2"), Y("y2"), Ms(800), Cl(I("hold"), 0, 2000));
             case "OCR": return OcrAsync(I("x"), I("y"), I("w"), I("h"), I("scale", 1));
             case "MATCH": return Task.Run(() => Match(I("x"), I("y"), I("w"), I("h")));
         }
@@ -277,6 +279,66 @@ public class SpikeService : AccessibilityService
         var tap = new APath(); tap.MoveTo(tx, ty); tap.LineTo(tx + 1, ty);
         var second = first.ContinueStroke(Line(ex, ey, ex, ey + 1), 0, ms / 2, false)!;
         await GestureAsync("MULTIC-2", new[] { second, Stroke(tap, 50, 100) });
+    }
+
+    /// <summary>
+    /// Separate gestures back to back on the device, no adb round trips: "W:dx:dy:ms" joystick step (centre/radius as
+    /// WALK's defaults or jx/jy/jr in the step: "W:dx:dy:ms:jx:jy:jr"), "T:x:y" 100 ms tap, "G:ms" wait. Each gesture
+    /// is awaited (completed callback) before the next; every start/end is logged with ms since the sequence began.
+    /// </summary>
+    async Task SeqAsync(string steps, int W, int H)
+    {
+        static int Cl(int v, int lo, int hi) => Math.Min(Math.Max(v, lo), hi);
+        var sw = Stopwatch.StartNew();
+        long lastEnd = 0;
+        var n = 0;
+        foreach (var raw in steps.Split(';', StringSplitOptions.RemoveEmptyEntries))
+        {
+            if (++n > 40) { Log.Warn(Tag, "seq: more than 40 steps, stopped"); break; }
+            var p = raw.Split(':');
+            int P(int k, int d = 0) => k < p.Length && int.TryParse(p[k], out var v) ? v : d;
+            switch (p[0])
+            {
+                case "G":
+                    await Task.Delay(Cl(P(1), 0, 5000));
+                    Log.Info(Tag, $"seq {n} G{P(1)} t={sw.ElapsedMilliseconds}");
+                    break;
+                case "W":
+                {
+                    float dx = P(1), dy = P(2), len = MathF.Sqrt(dx * dx + dy * dy);
+                    if (len < 1) { Log.Warn(Tag, $"seq {n}: W needs dx/dy"); return; }
+                    float jx = Cl(P(4, (int)JoyX), 0, W - 1), jy = Cl(P(5, (int)JoyY), 0, H - 1), jr = Cl(P(6, (int)JoyR), 10, 400);
+                    var t0 = sw.ElapsedMilliseconds;
+                    var path = Line(jx, jy, jx + dx / len * jr, jy + dy / len * jr);
+                    await GestureAsync($"seq {n} W", new[] { Stroke(path, 0, Cl(P(3, 1500), 50, 10000)) });
+                    Log.Info(Tag, $"seq {n} W start={t0} gapSincePrevEnd={t0 - lastEnd} end={sw.ElapsedMilliseconds}");
+                    lastEnd = sw.ElapsedMilliseconds;
+                    break;
+                }
+                case "T":
+                {
+                    int x = Cl(P(1), 0, W - 1), y = Cl(P(2), 0, H - 1);
+                    var tap = new APath(); tap.MoveTo(x, y); tap.LineTo(x + 1, y);
+                    var t0 = sw.ElapsedMilliseconds;
+                    await GestureAsync($"seq {n} T", new[] { Stroke(tap, 0, 100) });
+                    Log.Info(Tag, $"seq {n} T {x},{y} start={t0} gapSincePrevEnd={t0 - lastEnd} end={sw.ElapsedMilliseconds}");
+                    lastEnd = sw.ElapsedMilliseconds;
+                    break;
+                }
+                default: Log.Warn(Tag, $"seq {n}: unknown step '{raw}'"); return;
+            }
+        }
+        Log.Info(Tag, $"seq done t={sw.ElapsedMilliseconds}");
+    }
+
+    /// <summary>A drag: the finger moves x1,y1 → x2,y2 over ms, then (hold &gt; 0) rests there for hold ms before lifting (continued stroke, 1 px).</summary>
+    async Task DragAsync(int x1, int y1, int x2, int y2, int ms, int hold)
+    {
+        var move = new GestureDescription.StrokeDescription(Line(x1, y1, x2, y2), 0, ms, hold > 0);
+        await GestureAsync("DRAG-move", new[] { move });
+        if (hold > 0)
+            await GestureAsync("DRAG-hold", new[] { move.ContinueStroke(Line(x2, y2, x2, y2 + 1), 0, hold, false)! });
+        Log.Info(Tag, $"DRAG done {x1},{y1}->{x2},{y2} ms={ms} hold={hold}");
     }
 
     static APath Line(float x1, float y1, float x2, float y2)
@@ -450,7 +512,7 @@ public class SpikeService : AccessibilityService
 public class SpikeReceiver : BroadcastReceiver
 {
     /// <summary>Action suffixes this receiver listens for. Add new ones here and handle them in <see cref="OnReceive"/>.</summary>
-    public static readonly string[] Actions = { "PING", "SHOT", "SHOTMP", "TAP", "MULTIC", "WALK", "SWIPE", "PINCH", "MULTI", "OCR", "MATCH" };
+    public static readonly string[] Actions = { "PING", "SHOT", "SHOTMP", "TAP", "MULTIC", "WALK", "SWIPE", "PINCH", "MULTI", "OCR", "MATCH", "SEQ", "DRAG" };
 
     readonly SpikeService _service;
 

@@ -2,7 +2,7 @@
 # Usage: Connect-MuMu; Install-Spike; Enable-Spike; Send-Spike SHOT -Extras '--ei','count','20'
 # Extras are one string per am token: -Extras '--ei','dx','0','--ei','dy','-100'
 $script:Adb = 'C:\Program Files\Netease\MuMuPlayerARM\shell\adb.exe'
-$script:Device = '10.0.2.95:5555'
+$script:Device = '10.0.2.80:5555'
 $script:Pkg = 'io.github.atherosxd.wuxauto.spike'
 $script:Here = $PSScriptRoot
 
