@@ -75,7 +75,10 @@ public sealed class MobileEngine : IDisposable
         _settings = settings;
         _capture = capture;
         if (touch is AndroidTouchInput android)
+        {
             android.DryRunSource = () => _settings.Sequence.DryRun;
+            android.LiftSettleMsSource = () => _settings.Phone.TapSettleMs;
+        }
         // Stamps every gesture, so the loop gate can tell a picture from before the pilot's own touch.
         _touch = new StampedTouch(touch);
 
@@ -378,11 +381,14 @@ public sealed class MobileEngine : IDisposable
             ReleaseQuietly($"waiting: {decision.Reason}");
         _lastDecision = decision;
         SetPause(decision.Tick ? string.Empty : decision.Reason);
-        if (frame == null || (!decision.Tick && !PhoneLoopGate.TicksWithoutTitle(decision)))
-            return;
-
         bool runningBefore = _pilot.IsRunning;
-        if (decision.Tick)
+        if (!decision.Tick)
+        {
+            // No zone title: only the pilot's disconnect check and its 2-minute limit (no shortcut search, nothing sent);
+            // any other wait restarts that limit's clock (review #1).
+            await PhoneLoopGate.HandOffAsync(decision, _pilot, frame, token);
+        }
+        else if (frame != null)
         {
             // Loop thread only (IShortcutSource): before every tick, so a size change or a missed press is re-found
             // before the pilot presses anything.
@@ -391,9 +397,7 @@ public sealed class MobileEngine : IDisposable
         }
         else
         {
-            // No zone title: only the pilot's disconnect check and its 2-minute limit (no shortcut search, no input
-            // but the login screens' taps once it has seen one).
-            await _pilot.TickWithoutTitleAsync(frame, token);
+            return;
         }
 
         // Done, a failure without a restart, or a Stop during the tick: nothing may stay pressed (C-1).

@@ -40,6 +40,9 @@ public sealed class AndroidTouchInput : ITouchInput, IDisposable
 
     volatile bool _releaseRequested;
 
+    // When the last finger lift went out (Environment.TickCount64; worker and Release's joystick cut).
+    long _liftedAt;
+
     public AndroidTouchInput()
     {
         _worker = new Thread(WorkerLoop) { IsBackground = true, Name = "wux-touch" };
@@ -50,6 +53,13 @@ public sealed class AndroidTouchInput : ITouchInput, IDisposable
     public Func<bool> DryRunSource { get; set; } = () => false;
 
     public bool IsDryRun => DryRunSource();
+
+    /// <summary>
+    /// The gap after a lift before the next gesture goes out (<see cref="PhoneSettings.TapSettleMs"/>; the engine points
+    /// it at the settings): the game reads the finger once per frame and drops a tap within ~40 ms of a lift (Task 1;
+    /// MuMu 2026-10-29: the gesture queued behind a held press was lost).
+    /// </summary>
+    public Func<int> LiftSettleMsSource { get; set; } = () => 100;
 
     static PilotAccessibilityService? Service => PilotAccessibilityService.Instance;
 
@@ -236,6 +246,7 @@ public sealed class AndroidTouchInput : ITouchInput, IDisposable
             return;
         var (ox, oy) = Wiggle(step.Cx, step.Cy);
         _ = service.DispatchAsync(Build(new Stroke(Line(step.Cx, step.Cy, ox, oy), 0, 10)));
+        Interlocked.Exchange(ref _liftedAt, Environment.TickCount64 + 10);
         Log.Info(Tag, "joystick step cut short");
     }
 
@@ -368,7 +379,10 @@ public sealed class AndroidTouchInput : ITouchInput, IDisposable
             if (job.Abandoned)
                 Log.Info(Tag, $"{job.What}: dropped, the caller stopped waiting");
             else if (Service?.IsGameActive() == true)
+            {
+                SettleAfterLift();
                 result = job.Work();
+            }
             else
                 Log.Info(Tag, $"{job.What}: game not in front, nothing sent");
         }
@@ -392,6 +406,25 @@ public sealed class AndroidTouchInput : ITouchInput, IDisposable
         var lift = stroke.ContinueStroke(Line(x, y, ox, oy), 0, 20, false)!;
         if (!service.DispatchAsync(Build(lift)).Wait(20 + CallbackSlackMs))
             Log.Warn(Tag, "lift: no callback");
+        Interlocked.Exchange(ref _liftedAt, Environment.TickCount64);
+    }
+
+    /// <summary>Worker only: waits out what is left of <see cref="LiftSettleMsSource"/> since the last lift.</summary>
+    void SettleAfterLift()
+    {
+        int settle;
+        try
+        {
+            settle = LiftSettleMsSource();
+        }
+        catch (Exception)
+        {
+            settle = 100;
+        }
+
+        int wait = Phone.LiftSettle.WaitMs(Interlocked.Read(ref _liftedAt), settle, Environment.TickCount64);
+        if (wait > 0)
+            Thread.Sleep(wait);
     }
 
     void ClearHold()

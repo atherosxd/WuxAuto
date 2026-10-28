@@ -84,6 +84,7 @@ public class DebugBundleContentsTests : AppPathsScope
         using var writer = new FileStream(log, FileMode.Create, FileAccess.Write, FileShare.ReadWrite);
         writer.Write("live"u8);
         writer.Flush();
+        File.SetLastWriteTime(log, Now); // "today" is the test's fixed Now, not the machine's date
         string zip = Path.Combine(root, "bundle.zip");
 
         Assert.Equal(1, DebugBundleContents.Create(zip, Now));

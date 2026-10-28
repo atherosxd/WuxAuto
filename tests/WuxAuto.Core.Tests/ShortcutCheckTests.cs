@@ -121,6 +121,68 @@ public class ShortcutCheckTests : AppPathsScope
     }
 
     [Fact]
+    public async Task MissingTwoAndNoFreeSlot_TheStopNamesBoth()
+    {
+        using var phone = new PhonePilot(TempRoot());
+        var ring = new FakeRing(phone) { Locked = true };
+        for (int i = 0; i < FakeRing.Slots.Length; i++)
+            ring.Fill(i, "Gold Scroll");
+
+        var phase = await phone.RunAsync(ring.Render, PilotPhase.Focus, () => false);
+
+        Assert.Equal(PilotPhase.Failed, phase);
+        Assert.Contains(phone.Lines, l => l.StartsWith("Add the 'Teleport Scroll', 'Pick up' shortcuts to the ring - no free (+) slot", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task PickerNotRead_NoEntryTapped()
+    {
+        // Review #2: entry labels without the picker's own "MENU" / "CLEAR" are not its entries - never tapped.
+        using var phone = new PhonePilot(TempRoot());
+        var ring = new FakeRing(phone) { Locked = true, PickerUnmarked = true };
+        ring.Fill(0, "Teleport Scroll");
+
+        var phase = await phone.RunAsync(ring.Render, PilotPhase.Focus, () => false);
+
+        Assert.Equal(PilotPhase.Failed, phase);
+        Assert.Contains(phone.Lines, l => l.StartsWith("Add the 'Pick up' shortcut to the ring - the shortcut picker did not open", StringComparison.Ordinal));
+        Assert.Empty(ring.Picked);
+        Assert.Empty(ring.StrayTaps);
+        Assert.True(ring.Locked);
+        Assert.Equal(3, phone.Touch.Taps.Count);         // padlock, (+), padlock - nothing in the picker, no close X
+    }
+
+    [Fact]
+    public async Task StopWhileTheGameIsBehind_RelocksOnceItIsBack()
+    {
+        // Review #5: a blocked tap while unwinding is retried, not skipped.
+        using var phone = new PhonePilot(TempRoot());
+        var ring = new FakeRing(phone) { Locked = true };
+        for (int i = 0; i < FakeRing.Slots.Length; i++)
+            ring.Fill(i, i == 0 ? "Teleport Scroll" : "Gold Scroll");
+        long behindSince = 0;
+        phone.Touch.OnTapAfter = () =>
+        {
+            if (behindSince == 0)
+            {
+                behindSince = Environment.TickCount64;
+                phone.Touch.InFront = false;      // the unlock went out; then another app comes in front
+            }
+        };
+
+        var phase = await phone.RunAsync(ring.Render, PilotPhase.Focus, () =>
+        {
+            if (behindSince > 0 && !phone.Touch.InFront && Environment.TickCount64 - behindSince > 1500)
+                phone.Touch.InFront = true;
+            return false;
+        });
+
+        Assert.Equal(PilotPhase.Failed, phase);
+        Assert.True(ring.Locked, phone.Log);
+        Assert.Equal(2, phone.Touch.Taps.Count);
+    }
+
+    [Fact]
     public async Task AllPresent_GoesToCheckZone()
     {
         using var phone = new PhonePilot(TempRoot());
@@ -273,6 +335,9 @@ sealed class FakeRing
     /// <summary>Draw a (+) on an empty slot even while locked: the 0.932 look-alike the probe saw on a locked ring.</summary>
     public bool PlusLookalikeWhileLocked { get; init; }
 
+    /// <summary>The picker shows its entries but neither its title "MENU" nor "CLEAR" reads.</summary>
+    public bool PickerUnmarked { get; init; }
+
     /// <summary>An entry the picker does not offer (the game changed its list).</summary>
     public string? PickerWithout { get; init; }
 
@@ -312,9 +377,9 @@ sealed class FakeRing
 
     private IReadOnlyList<OcrWord> Scene() => _pickerFor == null
         ? []
-        : Picker.Where(p => p.Entry != PickerWithout)
+        : Picker.Where(p => p.Entry != PickerWithout && !(PickerUnmarked && p.Entry == "CLEAR"))
             .SelectMany(p => FakeOcrEngine.Words(p.Entry, p.X - 45, p.Y + 43, 90, 14))
-            .Append(FakeOcrEngine.Line("MENU", 930, 20, 60, 18))
+            .Concat(PickerUnmarked ? [] : [FakeOcrEngine.Line("MENU", 930, 20, 60, 18)])
             .ToList();
 
     private void OnTap(int x, int y)

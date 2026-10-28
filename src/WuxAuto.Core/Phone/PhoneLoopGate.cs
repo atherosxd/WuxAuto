@@ -1,3 +1,4 @@
+using Emgu.CV;
 using WuxAuto.Automation;
 
 namespace WuxAuto.Phone;
@@ -137,6 +138,22 @@ public sealed class PhoneLoopGate
     /// after 2 minutes (the pilot's own limit) instead of lasting for ever.
     /// </summary>
     public static bool TicksWithoutTitle(LoopDecision decision) => !decision.Tick && decision.Kind == LoopWait.NoTitle;
+
+    /// <summary>
+    /// The engine's call on a pass that does not tick the pilot: a no-title pass hands the frame to
+    /// <see cref="AutomationPilot.TickWithoutTitleAsync"/>; any other wait (the game behind, the panel open, no recent
+    /// frame, ...) calls <see cref="AutomationPilot.NoTitlePaused"/>, so the 2-minute no-title limit only counts passes
+    /// in which the title was the only thing missing (review #1).
+    /// </summary>
+    public static async Task HandOffAsync(LoopDecision decision, AutomationPilot pilot, Mat? frame, CancellationToken token)
+    {
+        if (decision.Tick)
+            return;
+        if (TicksWithoutTitle(decision) && frame != null)
+            await pilot.TickWithoutTitleAsync(frame, token);
+        else
+            pilot.NoTitlePaused();
+    }
 
     /// <summary>The pilot was running before its tick and is not after it (Done, Fail, Stop): lift every touch.</summary>
     public static bool StoppedDuringTick(bool runningBefore, bool runningAfter) => runningBefore && !runningAfter;

@@ -329,30 +329,175 @@ public class PhoneLodFlowTests : AppPathsScope
     }
 
     [Fact]
-    public async Task PhoneNoTitle_GameBehind_OrTitleBackInBetween_TheLimitDoesNotRun()
+    public async Task PhoneNoTitle_ClockCountsOnlyUnbrokenNoTitlePasses_InTheGatesOrder()
+    {
+        // Review #1: the game behind / the panel open are decided before the title, so the pilot is not called on those
+        // passes - the engine's hand-off (PhoneLoopGate.HandOffAsync) restarts the clock instead. Driven pass by pass
+        // through the gate's own decisions, as MobileEngine does.
+        using var phone = new PhonePilot(TempRoot());
+        phone.Pilot.NoTitleLimitMs = 300;
+        using var frame = PhoneFrames.Grey();
+        phone.Pilot.Start(PilotPhase.LodRun);
+        var gate = new PhoneLoopGate();
+        var kinds = new List<LoopWait>();
+
+        async Task Pass(bool front, bool panel)
+        {
+            long now = FrameGate.NowTicks();
+            var decision = gate.Decide(now, new CaptureState(true, now), front, panel, phone.Pilot.Phase);
+            kinds.Add(decision.Kind);
+            if (decision.Tick)
+                await phone.Pilot.TickAsync(frame, CancellationToken.None);
+            else
+                await PhoneLoopGate.HandOffAsync(decision, phone.Pilot, frame, CancellationToken.None);
+        }
+
+        bool failed() => phone.Lines.Any(l => l.StartsWith("The minimap's zone title has not read", StringComparison.Ordinal));
+
+        // No title, then the game behind for 400 ms, then no title again: the behind passes restarted the clock.
+        await Pass(front: true, panel: false);
+        for (int i = 0; i < 4; i++)
+        {
+            await Task.Delay(100);
+            await Pass(front: false, panel: false);
+        }
+
+        await Pass(front: true, panel: false);
+        Assert.False(failed(), phone.Log);
+
+        // The same with the floating panel open.
+        for (int i = 0; i < 4; i++)
+        {
+            await Task.Delay(100);
+            await Pass(front: true, panel: true);
+        }
+
+        await Pass(front: true, panel: false);
+        Assert.False(failed(), phone.Log);
+        Assert.Contains(LoopWait.NotInFront, kinds);
+        Assert.Contains(LoopWait.PanelOpen, kinds);
+        Assert.Contains(LoopWait.NoTitle, kinds);
+        Assert.Equal(PilotPhase.LodRun, phone.Pilot.Phase);
+
+        // An unbroken run of no-title passes past the limit: the zone guard's fail -> restart from the top.
+        for (int i = 0; i < 5 && !failed(); i++)
+        {
+            await Task.Delay(100);
+            await Pass(front: true, panel: false);
+        }
+
+        Assert.True(failed(), phone.Log);
+        Assert.Equal(PilotPhase.Focus, phone.Pilot.Phase);
+        Assert.Empty(phone.Touch.Calls);
+    }
+
+    [Fact]
+    public async Task PhoneNoTitle_AFullTickInBetween_RestartsTheClock()
     {
         using var phone = new PhonePilot(TempRoot());
         phone.Pilot.NoTitleLimitMs = 200;
         using var frame = PhoneFrames.Grey();
         phone.Pilot.Start(PilotPhase.LodRun);
-        await phone.Pilot.TickAsync(frame, CancellationToken.None);
 
-        // Behind another app: the time does not count.
-        phone.Touch.InFront = false;
-        await phone.Pilot.TickWithoutTitleAsync(frame, CancellationToken.None);
-        await Task.Delay(300);
-        await phone.Pilot.TickWithoutTitleAsync(frame, CancellationToken.None);
-        Assert.Equal(PilotPhase.LodRun, phone.Pilot.Phase);
-
-        // In front again, a full tick (the title read) in between restarts the count.
-        phone.Touch.InFront = true;
         await phone.Pilot.TickWithoutTitleAsync(frame, CancellationToken.None);
         await Task.Delay(150);
-        await phone.Pilot.TickAsync(frame, CancellationToken.None);
+        await phone.Pilot.TickAsync(frame, CancellationToken.None);  // the title read again
         await Task.Delay(150);
         await phone.Pilot.TickWithoutTitleAsync(frame, CancellationToken.None);
 
         Assert.DoesNotContain(phone.Lines, l => l.StartsWith("The minimap's zone title has not read", StringComparison.Ordinal));
         Assert.Equal(PilotPhase.LodRun, phone.Pilot.Phase);
     }
+
+    [Fact]
+    public async Task PhoneReconnect_ReadAndClickOnly_NoGuessedButtons()
+    {
+        // Review #10: no phone login frame yet - the desktop's guessed LOG IN (gold button, the "Remember me" - BACK
+        // gap) is off on the phone; a LOG IN that reads is still tapped.
+        using var phone = new PhonePilot(TempRoot());
+        phone.Settings.Sequence.ReconnectStepDelayMs = 50;
+        bool logInReads = false;
+        phone.Ocr.Scene = () =>
+        {
+            var words = new List<OcrWord>
+            {
+                FakeOcrEngine.Line("ACCOUNT NAME", 800, 300, 200, 20),
+                FakeOcrEngine.Line("Remember me", 800, 420, 160, 20),
+                FakeOcrEngine.Line("BACK", 900, 700, 80, 20),
+            };
+            if (logInReads)
+                words.Add(FakeOcrEngine.Line("LOG IN", 900, 560, 100, 24));
+            return words;
+        };
+        using var frame = PhoneFrames.Grey();
+        // A gold "button" where the desktop's colour fallback would find one.
+        CvInvoke.Rectangle(frame, new Rectangle(860, 540, 200, 50), new MCvScalar(40, 150, 220, 255), -1);
+        phone.Pilot.Start(PilotPhase.LodRun);
+        await phone.Pilot.TickWithoutTitleAsync(frame, CancellationToken.None);
+        Assert.Equal(PilotPhase.Reconnect, phone.Pilot.Phase);
+
+        long until = Environment.TickCount64 + 1200;
+        while (Environment.TickCount64 < until)
+        {
+            await phone.Pilot.TickAsync(frame, CancellationToken.None);
+            await Task.Delay(20);
+        }
+
+        Assert.Empty(phone.Touch.Calls);
+
+        logInReads = true;
+        until = Environment.TickCount64 + 1000;
+        while (Environment.TickCount64 < until && phone.Touch.Taps.Count == 0)
+        {
+            await phone.Pilot.TickAsync(frame, CancellationToken.None);
+            await Task.Delay(20);
+        }
+
+        Assert.Equal([new Point(950, 572)], phone.Touch.Taps);
+    }
+
+    [Fact]
+    public async Task PhoneRunSkill_OrbStillOff_TappedOncePerStart()
+    {
+        // Review #3: the phone's ring band is unverified - a ring it cannot see must not have the orb toggled on and off.
+        using var phone = new PhonePilot(TempRoot());
+        phone.Shortcuts.Icons[GameAction.RunSkillKey] = RunOrb;
+        using var frame = PhoneFrames.Grey();
+
+        await phone.RunAsync(() => frame, PilotPhase.RunSkill, () => phone.Pilot.Phase != PilotPhase.RunSkill);
+
+        Assert.Equal([Centre(RunOrb)], phone.Touch.Taps);
+        Assert.Contains(phone.Lines, l => l.StartsWith("The Run skill is off (ring 0.", StringComparison.Ordinal));
+        Assert.Contains(phone.Lines, l => l.StartsWith("The Run skill still reads off (ring 0.", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task PhoneDryRun_Teleport_WouldTap_ThenStopsCleanly_NoRestart()
+    {
+        using var phone = new PhonePilot(TempRoot());
+        phone.Touch.DryRun = true;
+        phone.Shortcuts.Icons[GameAction.TeleportScroll] = TeleportScroll;
+        using var frame = PhoneFrames.Grey();
+
+        var phase = await phone.RunAsync(() => frame, PilotPhase.OpenInventory, () => false);
+
+        Assert.False(phone.Pilot.IsRunning, phone.Log);
+        Assert.Equal(PilotPhase.Idle, phase);
+        Assert.Contains(phone.Lines, l => l == "Dry run - would tap the Teleport Scroll shortcut.");
+        Assert.Contains(phone.Lines, l => l.StartsWith("Dry run stops here: FindChevron needs the real tap", StringComparison.Ordinal));
+        Assert.DoesNotContain(phone.Lines, l => l.StartsWith("Restarting", StringComparison.Ordinal));
+        Assert.Empty(phone.Touch.Calls);
+    }
+
+    [Theory]
+    [InlineData(0, 100, 5000, 0)]          // no lift yet
+    [InlineData(1000, 100, 1000, 100)]     // right after the lift: the whole settle
+    [InlineData(1000, 100, 1060, 40)]
+    [InlineData(1000, 100, 1100, 0)]
+    [InlineData(1000, 100, 2000, 0)]
+    [InlineData(1000, 99999, 1000, LiftSettle.MaxSettleMs)]
+    [InlineData(1000, -5, 1000, 0)]
+    public void LiftSettle_WaitsOutTheSettleFromTheLift(long liftedAt, int settle, long now, int expected) =>
+        // B8: the touch worker's gap between a lift and the next gesture (AndroidTouchInput.SettleAfterLift).
+        Assert.Equal(expected, LiftSettle.WaitMs(liftedAt, settle, now));
 }

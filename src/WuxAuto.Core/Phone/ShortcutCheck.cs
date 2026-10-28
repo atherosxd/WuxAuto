@@ -183,14 +183,14 @@ public sealed class ShortcutCheck(ScreenAnalyzer analyzer, IGameControls control
         {
             if (++_padlockMisses < 3)
                 return ShortcutCheckStep.Wait(500, "looking for the shortcut ring's padlock");
-            return BeginStop(missing[0].Entry, "the ring's padlock was not found, so no free slot could be checked");
+            return BeginStop("the ring's padlock was not found, so no free slot could be checked");
         }
 
         _padlockMisses = 0;
         if (padlock == Padlock.Locked)
         {
             if (_unlockTaps >= 2)
-                return BeginStop(missing[0].Entry, "the ring did not unlock");
+                return BeginStop("the ring did not unlock");
             if (!controls.Tap(lockBox.CenterX, lockBox.CenterY))
                 return ShortcutCheckStep.Wait(300, "padlock tap blocked - waiting for the game to be in front");
             _unlockTaps++;
@@ -202,7 +202,7 @@ public sealed class ShortcutCheck(ScreenAnalyzer analyzer, IGameControls control
 
         var free = FreeSlots(frame, lockBox);
         if (free.Count == 0)
-            return BeginStop(missing[0].Entry, "no free (+) slot is left on it");
+            return BeginStop("no free (+) slot is left on it");
 
         var slot = free[0];
         if (!controls.Tap(slot.CenterX, slot.CenterY))
@@ -219,14 +219,16 @@ public sealed class ShortcutCheck(ScreenAnalyzer analyzer, IGameControls control
     {
         var area = PickerArea(frame.Width, frame.Height).Clamp(frame.Width, frame.Height);
         var words = await analyzer.Ocr.RecognizeAsync(frame, area, 1.0);
-        if (IsPicker(words))
-            _pickerOpen = true;
-        var label = FindEntry(words, _adding.Entry);
+        // An entry is only tapped on a read that shows the picker itself: the same words elsewhere are not its entries.
+        _pickerOpen = IsPicker(words);
+        var label = _pickerOpen ? FindEntry(words, _adding.Entry) : null;
         if (label == null)
         {
             if (++_pickerReads < 3)
                 return ShortcutCheckStep.Wait(600, $"reading the shortcut picker for '{_adding.Entry}'");
-            return BeginStop(_adding.Entry, $"'{_adding.Entry}' was not found in the shortcut picker");
+            return BeginStop(_pickerOpen
+                ? $"'{_adding.Entry}' was not found in the shortcut picker"
+                : "the shortcut picker did not open");
         }
 
         var l = label.Value;
@@ -256,7 +258,7 @@ public sealed class ShortcutCheck(ScreenAnalyzer analyzer, IGameControls control
 
         if (++_verifyTicks < 4)
             return ShortcutCheckStep.Wait(700, $"checking '{_adding.Entry}' is on the ring");
-        return BeginStop(_adding.Entry, $"'{_adding.Entry}' was picked but its icon does not show on the ring");
+        return BeginStop($"'{_adding.Entry}' was picked but its icon does not show on the ring");
     }
 
     private ShortcutCheckStep Lock(Mat frame)
@@ -286,9 +288,11 @@ public sealed class ShortcutCheck(ScreenAnalyzer analyzer, IGameControls control
     /// Stops the check: on the next ticks the picker is closed and the ring locked again (if this check opened them)
     /// before the Stop goes out.
     /// </summary>
-    private ShortcutCheckStep BeginStop(string entry, string why)
+    private ShortcutCheckStep BeginStop(string why)
     {
-        _stopReason = $"Add the '{entry}' shortcut to the ring - {why}. The pilot needs it and never replaces a filled slot.";
+        var names = Missing().Select(m => $"'{m.Entry}'").ToList();
+        string what = names.Count == 1 ? $"the {names[0]} shortcut" : $"the {string.Join(", ", names)} shortcuts";
+        _stopReason = $"Add {what} to the ring - {why}. The pilot needs {(names.Count == 1 ? "it" : "them")} and never replaces a filled slot.";
         _state = State.Unwind;
         return ShortcutCheckStep.Wait(0, "stopping the shortcut check");
     }
@@ -298,21 +302,25 @@ public sealed class ShortcutCheck(ScreenAnalyzer analyzer, IGameControls control
         var (w, h) = _frameSize;
         if (_pickerOpen && w > 0 && h > 0)
         {
-            _pickerOpen = false;
             var (x, y) = PickerClose(w, h);
-            controls.Tap(x, y);
+            if (!controls.Tap(x, y))
+                return ShortcutCheckStep.Wait(300, "picker close blocked - waiting for the game to be in front");
+            _pickerOpen = false;
             return ShortcutCheckStep.Wait(700, "closing the shortcut picker");
         }
 
         // Only a padlock that reads open is tapped: "the ring did not unlock" must not unlock it now.
         if (_ringOpenedByUs && !_relockTried)
         {
-            _relockTried = true;
             if (ReadPadlock(frame, out var box) == Padlock.Unlocked)
             {
-                controls.Tap(box.CenterX, box.CenterY);
+                if (!controls.Tap(box.CenterX, box.CenterY))
+                    return ShortcutCheckStep.Wait(300, "padlock tap blocked - waiting for the game to be in front");
+                _relockTried = true;
                 return ShortcutCheckStep.Wait(700, "locking the shortcut ring again");
             }
+
+            _relockTried = true;
         }
 
         return new ShortcutCheckStep(ShortcutCheckOutcome.Stop, Reason: _stopReason);

@@ -219,6 +219,7 @@ public sealed partial class AutomationPilot
     private bool _runSkillDue;                // RunSkill: in town this run, not checked yet
     private int _runSkillClicks;              // RunSkill: clicks on the icon this visit (<= 3)
     private bool _runKeyPressed;              // RunSkill: the fallback key went out this Start (a toggle - never twice)
+    private bool _runOrbTapped;               // RunSkill, phone: the orb was tapped this Start (its ring band is unverified - never twice)
     private int _huntOffPresses;              // AutohuntOff: taps of the autohunt key this visit (<= 3)
     private long _huntOffPressedAt;
     private List<string> _huntOffBaseline = [];   // autohunt log lines before the last tap
@@ -353,6 +354,7 @@ public sealed partial class AutomationPilot
         _phoneSettingsSkipTold = false;
         _noTitleSince = 0;
         _runKeyPressed = false;
+        _runOrbTapped = false;
         _labyOut = false;
         _lodOut = false;
         _restartTimes.Clear();
@@ -874,6 +876,13 @@ public sealed partial class AutomationPilot
         cancellationToken.ThrowIfCancellationRequested();
     }
 
+    /// <summary>
+    /// Phone: the loop held the pilot for something other than the zone title (the game behind, the panel open, no
+    /// recent frame - all decided before the title): the no-title clock of <see cref="TickWithoutTitleAsync"/> starts
+    /// again, so only an unbroken run of no-title passes counts towards its limit.
+    /// </summary>
+    public void NoTitlePaused() => _noTitleSince = 0;
+
     /// <summary>Disconnected (a login screen read): from wherever the run is, log back in (<see cref="PilotPhase.Reconnect"/>).</summary>
     private void EnterReconnect(Mat frame, long now)
     {
@@ -894,8 +903,9 @@ public sealed partial class AutomationPilot
     /// frame is not black, so only the title proves the picture is the game - <c>PhoneLoopGate</c>). The login screens
     /// have no minimap either, so on such a pass the loop calls this instead: only the disconnect check (every 5 s, as in
     /// <see cref="TickAsync"/>; a login screen = <see cref="PilotPhase.Reconnect"/>, which then ticks normally) and the
-    /// no-title limit - held for <see cref="NoTitleLimitMs"/> (2 min) with the game in front = <see cref="Fail"/> (the
-    /// zone guard's own limit and restart path). Behind another app the limit does not count, as in the zone guard.
+    /// no-title limit - <see cref="NoTitleLimitMs"/> (2 min) of no-title passes in a row = <see cref="Fail"/> (the zone
+    /// guard's own limit and restart path). The loop only gets here with the game in front and the panel shut; every
+    /// other pass calls <see cref="NoTitlePaused"/> (or <see cref="TickAsync"/>), which starts the clock again.
     /// Nothing else is read and nothing is sent.
     /// </summary>
     public async Task TickWithoutTitleAsync(Mat frame, CancellationToken cancellationToken)
@@ -905,7 +915,7 @@ public sealed partial class AutomationPilot
 
         _overlays.Clear();
         long now = Environment.TickCount64;
-        if (!_controls.IsGameInFront || _noTitleSince == 0)
+        if (_noTitleSince == 0)
             _noTitleSince = now;
 
         if (_settings.Sequence.AutoReconnect && _phase != PilotPhase.Reconnect && now >= _nextDisconnectCheckAt)
@@ -1427,6 +1437,16 @@ public sealed partial class AutomationPilot
             return;
         }
 
+        // Phone: the ring band is not verified on a real orb yet, and the orb is a toggle - a ring the reader misses would
+        // have every tap turn the skill off again. One tap per Start, the ring logged each time (review #3).
+        if (phone && _runOrbTapped)
+        {
+            Log?.Invoke(LogLevel.Warning, $"The Run skill still reads off (ring {ring:0.00} round the orb at {x},{y}) - it was tapped once this Start already, not again.");
+            DebugArtifacts.SaveFrame(frame, _overlays, "runskill_off");
+            Done();
+            return;
+        }
+
         if (_runSkillClicks >= 3)
         {
             Log?.Invoke(LogLevel.Warning, $"Still no ring round the Run skill icon at {x},{y} after {_runSkillClicks} clicks (ring {ring:0.00}) - carrying on.");
@@ -1443,7 +1463,11 @@ public sealed partial class AutomationPilot
         }
 
         _runSkillClicks++;
-        Log?.Invoke(LogLevel.Info, $"The Run skill is off (ring {ring:0.00}) - clicked its icon at {x},{y} ({_runSkillClicks}/3, score {icon.Score:0.00}).");
+        if (phone)
+            _runOrbTapped = true;
+        Log?.Invoke(LogLevel.Info, phone
+            ? $"The Run skill is off (ring {ring:0.00}) - tapped its orb at {x},{y} (once per Start)."
+            : $"The Run skill is off (ring {ring:0.00}) - clicked its icon at {x},{y} ({_runSkillClicks}/3, score {icon.Score:0.00}).");
         _detail = $"clicked the Run skill icon ({_runSkillClicks}/3) - looking for its ring";
         _waitUntil = now + 900;
     }
@@ -1858,7 +1882,7 @@ public sealed partial class AutomationPilot
                 return;
             }
 
-            Log?.Invoke(LogLevel.Info, "Tapped the Teleport Scroll shortcut.");
+            Log?.Invoke(LogLevel.Info, _controls.IsDryRun ? "Dry run - would tap the Teleport Scroll shortcut." : "Tapped the Teleport Scroll shortcut.");
             Advance(PilotPhase.FindDestination, _settings.Sequence.InventoryOpenMs);
             return;
         }
@@ -5395,7 +5419,10 @@ public sealed partial class AutomationPilot
         // came up directly); the server list showing again starts over.
         bool servers = lines.Any(l => l.Text == "servers");
         bool loginForm = lines.Any(l => l.Text is "accountname" or "rememberme");
-        var gold = _analyzer.FindGoldButtons(frame);
+        // Phone: no login frame exists yet, so no guessed positions (gold buttons, the "Remember me" - BACK gap) - only
+        // buttons whose label reads (review #10).
+        bool guessButtons = Profile != PlatformProfile.Phone;
+        var gold = guessButtons ? _analyzer.FindGoldButtons(frame) : [];
         if (servers && _reconnectStep > 1)
             _reconnectStep = 0;
 
@@ -5496,6 +5523,9 @@ public sealed partial class AutomationPilot
             // Dark text on gold: the colour finds it when OCR does not.
             if (loginForm && gold.Count > 0)
                 return gold.OrderBy(b => Math.Abs(b.CenterX - frame.Width / 2) + Math.Abs(b.CenterY - frame.Height / 2)).First();
+
+            if (!guessButtons)
+                return null;
 
             var remember = lines.FirstOrDefault(l => l.Text == "rememberme");
             var back = lines.FirstOrDefault(l => l.Text == "back");
@@ -5639,6 +5669,16 @@ public sealed partial class AutomationPilot
     /// <param name="restart">False: stop for good even with Restart on error (a restart would hit the same wall).</param>
     private void Fail(Mat? frame, string reason, bool restart = true)
     {
+        // Phone dry run: nothing was tapped, so a later step that needs a tap's result (the list a dry teleport never
+        // opened) cannot succeed - end the dry run there instead of failing and burning the restarts (MuMu, 2026-10-29).
+        if (Profile == PlatformProfile.Phone && _controls.IsDryRun)
+        {
+            Log?.Invoke(LogLevel.Info, $"Dry run stops here: {_phase} needs the real tap ({reason})");
+            ReleaseSweepKey();
+            Stop("dry run ended");
+            return;
+        }
+
         Log?.Invoke(LogLevel.Error, reason);
 
         if (frame != null)

@@ -27,6 +27,8 @@ public sealed class DebugReceiver : BroadcastReceiver
     static readonly string[] Actions =
         ["PING", "FRONT", "TEMPLATES", "CAPTURE", "STOPCAPTURE", "SHOT", "OCR", "TAP", "SWIPE", "DRAG", "JOY", "PINCH", "HOLD", "RELEASE"];
 
+    static readonly HashSet<string> TouchActions = ["TAP", "SWIPE", "DRAG", "JOY", "PINCH", "HOLD", "RELEASE"];
+
     static readonly Lazy<MlKitOcrEngine> Ocr = new(() => new MlKitOcrEngine());
 
     readonly Context _context;
@@ -61,7 +63,25 @@ public sealed class DebugReceiver : BroadcastReceiver
         if (name == "PING")
             return;
 
-        // OnReceive runs on the main thread with a ~10 s budget, and the touches block: work in the background.
+        // Touches block (a JOY step for its whole length): run them in the background without holding the broadcast -
+        // a pending GoAsync result kept the next broadcast (RELEASE, meant to cut that JOY short) from being delivered.
+        if (TouchActions.Contains(name))
+        {
+            Task.Run(async () =>
+            {
+                try
+                {
+                    await RunAsync(name, intent);
+                }
+                catch (Exception ex)
+                {
+                    Log.Error(Tag, $"debug {name} failed: {ex}");
+                }
+            });
+            return;
+        }
+
+        // The rest: OnReceive runs on the main thread with a ~10 s budget - work in the background, holding the broadcast.
         var pending = GoAsync();
         Task.Run(async () =>
         {

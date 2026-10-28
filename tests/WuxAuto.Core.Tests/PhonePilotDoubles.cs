@@ -21,6 +21,9 @@ sealed class RecordingTouch : ITouchInput
     public bool DryRun { get; set; }
     public Action<int, int>? OnTap { get; set; }
 
+    /// <summary>Runs after <see cref="OnTap"/> (a test changing the world after a tap, e.g. another app coming in front).</summary>
+    public Action? OnTapAfter { get; set; }
+
     public bool IsDryRun => DryRun;
     public bool IsGameInFront => InFront;
     public bool BringGameToFront() => true;
@@ -29,6 +32,7 @@ sealed class RecordingTouch : ITouchInput
     {
         Calls.Add($"Tap {x},{y}");
         OnTap?.Invoke(x, y);
+        OnTapAfter?.Invoke();
         return true;
     }
 
