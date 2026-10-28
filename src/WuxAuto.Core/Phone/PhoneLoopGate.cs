@@ -130,6 +130,14 @@ public sealed class PhoneLoopGate
     public static bool MustRelease(LoopDecision previous, LoopDecision current) =>
         current.Kind is LoopWait.NotInFront or LoopWait.PanelOpen && previous.Kind != current.Kind;
 
+    /// <summary>
+    /// Whether the engine hands this pass's frame to <see cref="AutomationPilot.TickWithoutTitleAsync"/> instead of the
+    /// full tick: only while the zone title is all that is missing (capture, frame, front and panel are fine). The login
+    /// screens have no minimap, so this is how the pilot still sees a disconnect - and how a pause without a title ends
+    /// after 2 minutes (the pilot's own limit) instead of lasting for ever.
+    /// </summary>
+    public static bool TicksWithoutTitle(LoopDecision decision) => !decision.Tick && decision.Kind == LoopWait.NoTitle;
+
     /// <summary>The pilot was running before its tick and is not after it (Done, Fail, Stop): lift every touch.</summary>
     public static bool StoppedDuringTick(bool runningBefore, bool runningAfter) => runningBefore && !runningAfter;
 

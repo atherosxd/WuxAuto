@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using Emgu.CV;
 using WuxAuto.Core;
+using WuxAuto.Phone;
 using WuxAuto.Vision;
 using LogLevel = WuxAuto.Core.LogLevel;
 
@@ -48,6 +49,7 @@ public enum PilotPhase
     WarBack,
     WarArrive,
     WarHuntOn,
+    ShortcutCheck,
     Done,
     Failed,
 }
@@ -247,13 +249,29 @@ public sealed partial class AutomationPilot
     /// <summary>What differs on this platform (no profile given = <see cref="PlatformProfile.Desktop"/>).</summary>
     public PlatformProfile Profile { get; }
 
-    public AutomationPilot(AppSettings settings, ScreenAnalyzer analyzer, IGameControls controls, PlatformProfile? profile = null)
+    /// <param name="shortcuts">The phone's on-screen buttons (the shortcut check, the Run orb); null on the desktop.</param>
+    public AutomationPilot(AppSettings settings, ScreenAnalyzer analyzer, IGameControls controls, PlatformProfile? profile = null,
+        IShortcutSource? shortcuts = null)
     {
         Profile = profile ?? PlatformProfile.Desktop;
         _settings = settings;
         _analyzer = analyzer;
         _controls = controls;
+        _shortcuts = shortcuts;
+        _shortcutCheck = new ShortcutCheck(analyzer, controls, shortcuts, (level, text) => Log?.Invoke(level, text));
     }
+
+    private readonly IShortcutSource? _shortcuts;
+    private readonly ShortcutCheck _shortcutCheck;
+    private bool _shortcutsChecked;          // phone: the shortcut check ran this Start
+    private bool _phoneSettingsSkipTold;     // phone: the Settings visit's skip was logged this Start
+    private long _noTitleSince;              // phone: since when the loop has held the pilot for an unread zone title (0 = it ticks)
+
+    /// <summary>The phone's limit for <see cref="TickWithoutTitleAsync"/>: this long without a zone title, the game in front = fail (restart).</summary>
+    internal int NoTitleLimitMs { get; set; } = 120_000;
+
+    /// <summary>Ctrl + skill on manual skill presses: the setting, where the platform has a Ctrl key (desktop only).</summary>
+    private bool CtrlSkillOn => _settings.Dungeon.CtrlSkill && Profile.SupportsCtrlSkill;
 
     public event Action<LogLevel, string>? Log;
     public event Action? StateChanged;
@@ -315,6 +333,7 @@ public sealed partial class AutomationPilot
         PilotPhase.WarBack => "teleporting back to the cave",
         PilotPhase.WarArrive => "walking to the monster",
         PilotPhase.WarHuntOn => "turning the autohunt on",
+        PilotPhase.ShortcutCheck => "checking the shortcut ring",
         PilotPhase.Done => "sequence complete",
         PilotPhase.Failed => "failed",
         _ => "idle",
@@ -330,6 +349,9 @@ public sealed partial class AutomationPilot
     {
         _runCount = 0;
         _fontChecked = false;
+        _shortcutsChecked = false;
+        _phoneSettingsSkipTold = false;
+        _noTitleSince = 0;
         _runKeyPressed = false;
         _labyOut = false;
         _lodOut = false;
@@ -448,6 +470,7 @@ public sealed partial class AutomationPilot
         _headingSamples = 0;
         _turnWest = false;
         _faceSouth = false;
+        _lodStayPut = false;
         _lodStill = 0;
         _lodWaitLogged = false;
         _fromWaypoint = false;
@@ -517,6 +540,7 @@ public sealed partial class AutomationPilot
             return;
 
         _overlays.Clear();
+        _noTitleSince = 0;
 
         if (_positionsResetPending)
         {
@@ -557,16 +581,7 @@ public sealed partial class AutomationPilot
 
                 if (_settings.Sequence.AutoReconnect && IsServersScreen(screenWords))
                 {
-                    ReleaseSweepKey();
-                    Log?.Invoke(LogLevel.Warning, $"Disconnected (login screens) during {_phase} - logging back in.");
-                    DebugArtifacts.SaveFrame(frame, _overlays, "disconnected");
-                    _reconnectStartedAt = now;
-                    _reconnectClicks = 0;
-                    _startGameClicked = false;
-                    _charScreenSince = 0;
-                    _startGameUnreadSaved = false;
-                    _reconnectStep = 0;
-                    Advance(PilotPhase.Reconnect, _settings.Sequence.ReconnectStepDelayMs);
+                    EnterReconnect(frame, now);
                     return;
                 }
 
@@ -722,6 +737,9 @@ public sealed partial class AutomationPilot
                 case PilotPhase.Focus:
                     TickFocus();
                     break;
+                case PilotPhase.ShortcutCheck:
+                    await TickShortcutCheckAsync(frame);
+                    break;
                 case PilotPhase.CheckZone:
                     await TickCheckZoneAsync(frame);
                     break;
@@ -856,6 +874,69 @@ public sealed partial class AutomationPilot
         cancellationToken.ThrowIfCancellationRequested();
     }
 
+    /// <summary>Disconnected (a login screen read): from wherever the run is, log back in (<see cref="PilotPhase.Reconnect"/>).</summary>
+    private void EnterReconnect(Mat frame, long now)
+    {
+        ReleaseSweepKey();
+        Log?.Invoke(LogLevel.Warning, $"Disconnected (login screens) during {_phase} - logging back in.");
+        DebugArtifacts.SaveFrame(frame, _overlays, "disconnected");
+        _reconnectStartedAt = now;
+        _reconnectClicks = 0;
+        _startGameClicked = false;
+        _charScreenSince = 0;
+        _startGameUnreadSaved = false;
+        _reconnectStep = 0;
+        Advance(PilotPhase.Reconnect, _settings.Sequence.ReconnectStepDelayMs);
+    }
+
+    /// <summary>
+    /// Phone: the loop holds <see cref="TickAsync"/> while the minimap's zone title does not read (a launcher or login
+    /// frame is not black, so only the title proves the picture is the game - <c>PhoneLoopGate</c>). The login screens
+    /// have no minimap either, so on such a pass the loop calls this instead: only the disconnect check (every 5 s, as in
+    /// <see cref="TickAsync"/>; a login screen = <see cref="PilotPhase.Reconnect"/>, which then ticks normally) and the
+    /// no-title limit - held for <see cref="NoTitleLimitMs"/> (2 min) with the game in front = <see cref="Fail"/> (the
+    /// zone guard's own limit and restart path). Behind another app the limit does not count, as in the zone guard.
+    /// Nothing else is read and nothing is sent.
+    /// </summary>
+    public async Task TickWithoutTitleAsync(Mat frame, CancellationToken cancellationToken)
+    {
+        if (!IsRunning)
+            return;
+
+        _overlays.Clear();
+        long now = Environment.TickCount64;
+        if (!_controls.IsGameInFront || _noTitleSince == 0)
+            _noTitleSince = now;
+
+        if (_settings.Sequence.AutoReconnect && _phase != PilotPhase.Reconnect && now >= _nextDisconnectCheckAt)
+        {
+            _nextDisconnectCheckAt = now + 5000;
+            try
+            {
+                var words = await _analyzer.Ocr.RecognizeAsync(frame, new PixelRect(0, 0, frame.Width, frame.Height), 1.0);
+                if (IsServersScreen(words))
+                {
+                    _noTitleSince = 0;
+                    EnterReconnect(frame, now);
+                    return;
+                }
+            }
+            catch (Exception ex)
+            {
+                Log?.Invoke(LogLevel.Trace, $"Disconnect check failed: {ex.Message}");
+            }
+        }
+
+        if (now - _noTitleSince > NoTitleLimitMs)
+        {
+            _noTitleSince = 0;
+            Fail(frame, $"The minimap's zone title has not read for {NoTitleLimitMs / 1000}s with the game in front (during {_phase}) - " +
+                        "stopped instead of sending input to a screen that is not the game.");
+        }
+
+        cancellationToken.ThrowIfCancellationRequested();
+    }
+
     // ---------------------------------------------------------------- phases
 
     private void TickFocus()
@@ -866,7 +947,7 @@ public sealed partial class AutomationPilot
             {
                 Log?.Invoke(LogLevel.Info, "Game window is in the foreground; input will only go there.");
                 // The game needs a moment after activation before it takes keys reliably.
-                Advance(PilotPhase.CheckZone, _settings.Input.FocusSettleMs);
+                Advance(AfterFocus(), _settings.Input.FocusSettleMs);
                 return;
             }
 
@@ -882,7 +963,41 @@ public sealed partial class AutomationPilot
             return;
         }
 
-        Advance(PilotPhase.CheckZone, 120);
+        Advance(AfterFocus(), 120);
+    }
+
+    /// <summary>The phone checks its shortcut ring once per Start before the zone check; the desktop goes straight to it.</summary>
+    private PilotPhase AfterFocus()
+    {
+        if (!Profile.ShortcutCheck || _shortcutsChecked)
+            return PilotPhase.CheckZone;
+
+        _shortcutCheck.Begin(IsLod);
+        return PilotPhase.ShortcutCheck;
+    }
+
+    /// <summary>
+    /// Phone, every Start (spec §6.1): the shortcuts the run needs on the ring, added in free (+) slots when missing
+    /// (<see cref="ShortcutCheck"/>). Missing with no free slot = stop for good with the shortcut's name: a restart would
+    /// find the same ring.
+    /// </summary>
+    private async Task TickShortcutCheckAsync(Mat frame)
+    {
+        var step = await _shortcutCheck.TickAsync(frame);
+        switch (step.Outcome)
+        {
+            case ShortcutCheckOutcome.Working:
+                _detail = step.Detail;
+                _waitUntil = Environment.TickCount64 + Math.Max(0, step.WaitMs);
+                break;
+            case ShortcutCheckOutcome.Done:
+                _shortcutsChecked = true;
+                Advance(PilotPhase.CheckZone, 120);
+                break;
+            default:
+                Fail(frame, step.Reason ?? "A needed shortcut is not on the ring.", restart: false);
+                break;
+        }
     }
 
     /// <summary>
@@ -1054,6 +1169,18 @@ public sealed partial class AutomationPilot
         bool settingsCheck = _settings.Sequence.FontSizePercent > 0 || tabDefault;
         if (_fontChecked || !settingsCheck)
             return PilotPhase.OpenInventory;
+
+        // Phone: the Settings visit is not ported yet (its rows are not confirmed on the phone, Task 7 ruling) - skipped.
+        if (Profile == PlatformProfile.Phone)
+        {
+            if (!_phoneSettingsSkipTold)
+            {
+                _phoneSettingsSkipTold = true;
+                Log?.Invoke(LogLevel.Info, "Font size / TAB target: not checked on the phone (the Settings visit is desktop-only for now).");
+            }
+
+            return PilotPhase.OpenInventory;
+        }
 
         // The Laby/LOD visit, from the same read of the TAB target box as the decision above.
         _visitTabTarget = tabDefault ? "Default" : null;
@@ -1228,7 +1355,16 @@ public sealed partial class AutomationPilot
 
         void Done() => Advance(AfterTownChecks(), 120);
 
-        var icon = FindRunSkill(frame);
+        bool phone = Profile == PlatformProfile.Phone;
+        var icon = phone ? FindPhoneRunOrb(frame) : FindRunSkill(frame);
+        if (icon == null && phone)
+        {
+            // Phone: no key to fall back on, and the hotbar copy of the icon has no ring (Task 1 #11) - nothing to do.
+            Log?.Invoke(LogLevel.Info, "The Run skill orb is not on screen - not checked (the phone has no Run key to fall back on).");
+            Done();
+            return;
+        }
+
         if (icon == null)
         {
             string missing = string.IsNullOrWhiteSpace(seq.RunSkillTemplate)
@@ -1270,7 +1406,9 @@ public sealed partial class AutomationPilot
             return;
         }
 
-        double ring = _analyzer.RingFraction(frame, icon.Bounds);
+        double ring = phone
+            ? _analyzer.RingFraction(frame, icon.Bounds, PhoneRunRingMin, PhoneRunRingMax)
+            : _analyzer.RingFraction(frame, icon.Bounds);
         bool on = ring >= seq.RunSkillRingMin;
         _overlays.Add(new OverlayItem(icon.Bounds.Inflate(icon.Bounds.Width / 3), $"ring {ring:0.00}", on ? OverlayColor.Green : OverlayColor.Red));
         int x = icon.Bounds.CenterX, y = icon.Bounds.CenterY;
@@ -1308,6 +1446,31 @@ public sealed partial class AutomationPilot
         Log?.Invoke(LogLevel.Info, $"The Run skill is off (ring {ring:0.00}) - clicked its icon at {x},{y} ({_runSkillClicks}/3, score {icon.Score:0.00}).");
         _detail = $"clicked the Run skill icon ({_runSkillClicks}/3) - looking for its ring";
         _waitUntil = now + 900;
+    }
+
+    /// <summary>
+    /// The phone's Run ring (Task 1 #11): four gold arcs at r 66-72 px round the orb's centre at 1920x1080, where the
+    /// <c>phone_runskill</c> template is the 84 px square inside the orb (r 59) - 0.79-0.86 of the box width, with room
+    /// on both sides and clear of the orb's own edge (0.70).
+    /// </summary>
+    internal const double PhoneRunRingMin = 0.74;
+    internal const double PhoneRunRingMax = 0.92;
+
+    /// <summary>
+    /// Phone: the Run skill's orb as the shortcut map found it. Its copy on the hotbar has no ring (it would always read
+    /// off and get tapped), so a hit inside <see cref="RegionSettings.Hotbar"/> does not count.
+    /// </summary>
+    private TemplateMatch? FindPhoneRunOrb(Mat frame)
+    {
+        if (_shortcuts?.Find(GameAction.RunSkillKey) is not { } orb)
+            return null;
+
+        var bar = _settings.Regions.Hotbar.ToPixels(frame.Width, frame.Height);
+        if (bar.Contains(orb.CenterX, orb.CenterY))
+            return null;
+
+        _overlays.Add(new OverlayItem(orb, "run orb", OverlayColor.Green));
+        return new TemplateMatch("phone_runskill", 1.0, orb, 1.0);
     }
 
     /// <summary>
@@ -1679,6 +1842,27 @@ public sealed partial class AutomationPilot
 
     private void TickOpenInventory(Mat frame)
     {
+        // Phone: the Teleport Scroll shortcut on the ring opens the destination list directly (Task 1) - no inventory.
+        if (Profile.TeleportViaShortcut)
+        {
+            if (!_controls.Has(GameAction.TeleportScroll))
+            {
+                Retry(frame, "The Teleport Scroll shortcut on the ring");
+                return;
+            }
+
+            if (!_controls.Press(GameAction.TeleportScroll))
+            {
+                _waitUntil = Environment.TickCount64 + 250;
+                _detail = "input blocked - waiting for the game to be in front";
+                return;
+            }
+
+            Log?.Invoke(LogLevel.Info, "Tapped the Teleport Scroll shortcut.");
+            Advance(PilotPhase.FindDestination, _settings.Sequence.InventoryOpenMs);
+            return;
+        }
+
         var scrollRoi = _settings.Regions.Scroll.ToPixels(frame.Width, frame.Height);
         var probe = _analyzer.FindIcon(frame, "teleportscroll", scrollRoi, ScrollThreshold);
 
@@ -1969,9 +2153,11 @@ public sealed partial class AutomationPilot
         string template = _analyzer.Library.TryGet(dungeon.FlashlightTemplate, out _) ? dungeon.FlashlightTemplate : "flashlight";
         // Auto LOD: the user's flashlightLOD crop already faces SOUTH - used as is for the south turn
         // (it was turned 180 degrees by mistake, and the pilot lined up facing north).
-        bool lodSouthCrop = IsLod && _faceSouth && _analyzer.Library.TryGet(_settings.Lod.FlashlightTemplate, out _);
+        // The phone has its own minimap, so its own crop (PhoneLodSouthTemplate).
+        string lodSouth = Profile == PlatformProfile.Phone ? PhoneLodSouthTemplate : _settings.Lod.FlashlightTemplate;
+        bool lodSouthCrop = IsLod && _faceSouth && _analyzer.Library.TryGet(lodSouth, out _);
         if (lodSouthCrop)
-            template = _settings.Lod.FlashlightTemplate;
+            template = lodSouth;
         if (_turnWest && !_westDone && _analyzer.Library.TryGet(template + "west", out _))
             template += "west";
         if (_faceSouth && !lodSouthCrop && _analyzer.Library.TryGet(template + "south", out _))
@@ -2481,7 +2667,9 @@ public sealed partial class AutomationPilot
                 return;
             }
 
-            Log?.Invoke(LogLevel.Info, $"Zoomed out (Ctrl + {dungeon.ZoomOutNotches} wheel notches down).");
+            Log?.Invoke(LogLevel.Info, Profile == PlatformProfile.Phone
+                ? $"Zoomed out ({Math.Max(1, dungeon.ZoomOutNotches / 5)} pinch(es))."
+                : $"Zoomed out (Ctrl + {dungeon.ZoomOutNotches} wheel notches down).");
         }
 
         if (IsLod)
@@ -3797,7 +3985,7 @@ public sealed partial class AutomationPilot
     private const int CtrlSkillGapMs = KeyboardMouseControls.CtrlSkillGapMs;
 
     /// <summary>A skill press for the log: '1', or '1' + Ctrl+1 with CtrlSkill.</summary>
-    private string SkillText(string key) => _settings.Dungeon.CtrlSkill ? $"'{key}' + Ctrl+{key}" : $"'{key}'";
+    private string SkillText(string key) => CtrlSkillOn ? $"'{key}' + Ctrl+{key}" : $"'{key}'";
 
     /// <summary>
     /// Starts a held skill press: the key goes down now and stays down until <c>HoldSkillMs</c> is
@@ -3843,7 +4031,7 @@ public sealed partial class AutomationPilot
 
         ReleaseHeldSkill();
         _holdUntil = null;
-        if (dungeon.CtrlSkill)
+        if (CtrlSkillOn)
         {
             Thread.Sleep(CtrlSkillGapMs);
             _controls.SkillCtrlTap(dungeon.SkillKey);
@@ -5448,7 +5636,8 @@ public sealed partial class AutomationPilot
         _waitUntil = Environment.TickCount64 + _settings.Sequence.RetryDelayMs;
     }
 
-    private void Fail(Mat? frame, string reason)
+    /// <param name="restart">False: stop for good even with Restart on error (a restart would hit the same wall).</param>
+    private void Fail(Mat? frame, string reason, bool restart = true)
     {
         Log?.Invoke(LogLevel.Error, reason);
 
@@ -5464,7 +5653,7 @@ public sealed partial class AutomationPilot
         // Start over from the top instead of stopping (user), a limited number of times.
         long now = Environment.TickCount64;
         _restartTimes.RemoveAll(t => now - t > 30 * 60 * 1000);
-        if (_settings.Sequence.RestartOnError && _restartTimes.Count < _settings.Sequence.MaxRestarts)
+        if (restart && _settings.Sequence.RestartOnError && _restartTimes.Count < _settings.Sequence.MaxRestarts)
         {
             _restartTimes.Add(now);
             Log?.Invoke(LogLevel.Warning,
@@ -5475,7 +5664,7 @@ public sealed partial class AutomationPilot
             return;
         }
 
-        if (_settings.Sequence.RestartOnError)
+        if (restart && _settings.Sequence.RestartOnError)
             Log?.Invoke(LogLevel.Error, $"{_settings.Sequence.MaxRestarts} restarts in 30 minutes - stopping.");
 
         IsRunning = false;

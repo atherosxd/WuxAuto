@@ -138,6 +138,10 @@ public sealed class ShortcutMap(ScreenAnalyzer analyzer, double threshold = Shor
         return zones.Select(z => PhoneLayout.ToPixels(z.X, z.Y, z.W, z.H, z.Anchor, width, height)).ToList();
     }
 
+    /// <summary>The shortcut ring round the joystick (bottom left) on a <paramref name="width"/> x <paramref name="height"/> frame.</summary>
+    public static PixelRect RingZone(int width, int height) =>
+        PhoneLayout.ToPixels(Ring.X, Ring.Y, Ring.W, Ring.H, Ring.Anchor, width, height);
+
     public PixelRect? Find(GameAction action) =>
         ActionTemplates.TryGetValue(action, out string? template) ? Box(template) : null;
 
@@ -169,6 +173,24 @@ public sealed class ShortcutMap(ScreenAnalyzer analyzer, double threshold = Shor
             Forget(template);
     }
 
+    /// <summary>
+    /// A press found no shortcut: searched on this frame size and not there = left to the <see cref="AbsentRetryMs"/>
+    /// cool-down (an LOD skill spam on an absent button would otherwise search on every press); otherwise (never searched,
+    /// or forgotten since) the same as <see cref="Invalidate(GameAction)"/>.
+    /// </summary>
+    public void Missed(GameAction action)
+    {
+        if (ActionTemplates.TryGetValue(action, out string? template))
+            ForgetUnlessAbsent(template);
+    }
+
+    /// <inheritdoc cref="Missed(GameAction)"/>
+    public void MissedSkill(string skill)
+    {
+        if (SkillTemplates.TryGetValue(skill, out string? template))
+            ForgetUnlessAbsent(template);
+    }
+
     public void InvalidateJoystick() => Forget(JoystickTemplate);
 
     public void InvalidateMenu() => Forget(MenuTemplate);
@@ -177,6 +199,12 @@ public sealed class ShortcutMap(ScreenAnalyzer analyzer, double threshold = Shor
     {
         _found.Remove(template);
         _stale.Add(template);
+    }
+
+    private void ForgetUnlessAbsent(string template)
+    {
+        if (!_absentSince.ContainsKey(template))
+            Forget(template);
     }
 
     private PixelRect? Box(string template) => _found.TryGetValue(template, out var m) ? m.Bounds : null;

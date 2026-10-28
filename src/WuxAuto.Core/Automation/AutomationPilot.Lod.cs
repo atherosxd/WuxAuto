@@ -47,6 +47,18 @@ public sealed partial class AutomationPilot
 
     private bool IsLod => _settings.Sequence.Mode == RunMode.AutoLod;
 
+    /// <summary>
+    /// Phone: the south-facing beam on the phone's LOD minimap (no crop yet - no LOD frame exists). The desktop's
+    /// flashlightLOD is a crop of the PC minimap and is not used on the phone.
+    /// </summary>
+    public const string PhoneLodSouthTemplate = "phone_flashlightlod";
+
+    // Phone without a south-beam picture: no south turn, so no heading for a walk - stand and Tab (LodRun) instead.
+    private bool _lodStayPut;
+
+    /// <summary>The phone has no picture of the LOD south beam (<see cref="PhoneLodSouthTemplate"/>).</summary>
+    private bool PhoneLodSouthMissing => Profile == PlatformProfile.Phone && !_analyzer.Library.TryGet(PhoneLodSouthTemplate, out _);
+
     /// <summary>Teleport list entry and minimap zone for the selected mode (Auto War: the cave).</summary>
     private string Destination => IsWar ? WarHomeMap : IsLod ? _settings.Lod.Destination : _settings.Sequence.DestinationText;
 
@@ -266,6 +278,21 @@ public sealed partial class AutomationPilot
         // caught by the timer in the walk.
         if (buff)
             TryLodBuff(null, Environment.TickCount64, force: true);
+        // Phone without a picture of the south beam: no turn (it would spin on a score that never comes), no walk (the
+        // steering needs the heading) - Tab for the boss from where the teleport put the character (spec §6.9 targets with
+        // the sword anyway).
+        if (PhoneLodSouthMissing)
+        {
+            if (!_lodStayPut)
+                Log?.Invoke(LogLevel.Warning, $"No picture of the LOD minimap's south beam on the phone yet ('{PhoneLodSouthTemplate}') - " +
+                                              "skipping the south turn; tabbing for the boss from here instead of walking.");
+            _lodStayPut = true;
+            _faceSouth = false;
+            _lodHeadingUnknown = false;
+            Advance(AfterFaceSouth(), 400);
+            return;
+        }
+
         _faceSouth = true;
         _earlyNorth = false;
         _compassAnchored = false;
@@ -482,8 +509,8 @@ public sealed partial class AutomationPilot
         }
 
         // Stay put (user, 2026-10-27: "stay still on the same place upon teleport, just keep tabbing
-        // until the boss name shows") - no walk clicks, no coordinate reads.
-        if (!lod.WalkToBossSpot)
+        // until the boss name shows") - no walk clicks, no coordinate reads. The phone without a south turn too.
+        if (!lod.WalkToBossSpot || _lodStayPut)
         {
             if (!_lodWaitLogged)
             {
@@ -608,7 +635,7 @@ public sealed partial class AutomationPilot
             {
                 // Held down for the whole fight; ReleaseHeldSkill lets go on every way out. With
                 // CtrlSkill it is let go every SkillEveryMs for a Ctrl + skill tap, then held again.
-                if (_heldSkill != null && _settings.Dungeon.CtrlSkill && now - _lodSkillAt >= lod.SkillEveryMs)
+                if (_heldSkill != null && CtrlSkillOn && now - _lodSkillAt >= lod.SkillEveryMs)
                 {
                     ReleaseHeldSkill();
                     Thread.Sleep(CtrlSkillGapMs);

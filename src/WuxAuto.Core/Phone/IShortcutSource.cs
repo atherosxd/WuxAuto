@@ -37,4 +37,14 @@ public interface IShortcutSource
 
     /// <summary>Forgets only the ☰ button (a menu press found none).</summary>
     void InvalidateMenu();
+
+    /// <summary>
+    /// A press of the action found no shortcut. Default: <see cref="Invalidate(GameAction)"/>. A source that knows a
+    /// shortcut was searched for and is simply not there may ignore it and look again on its own schedule (a skill spam
+    /// on an absent button must not cost a search per press).
+    /// </summary>
+    void Missed(GameAction action) => Invalidate(action);
+
+    /// <summary>A press of the skill button found none. Default: <see cref="InvalidateSkill"/> (see <see cref="Missed(GameAction)"/>).</summary>
+    void MissedSkill(string skill) => InvalidateSkill(skill);
 }

@@ -82,7 +82,7 @@ public sealed class MobileEngine : IDisposable
         _analyzer = new ScreenAnalyzer(settings, ocr);
         _shortcuts = new ShortcutMap(_analyzer);
         _controls = new TouchControls(settings, _touch, _shortcuts);
-        _pilot = new AutomationPilot(settings, _analyzer, _controls, PlatformProfile.Phone);
+        _pilot = new AutomationPilot(settings, _analyzer, _controls, PlatformProfile.Phone, _shortcuts);
 
         Directory.CreateDirectory(AppPaths.LogFolder);
         _logFile = Path.Combine(AppPaths.LogFolder, $"wuxauto_{DateTime.Now:yyyyMMdd_HHmmss}.log");
@@ -378,14 +378,24 @@ public sealed class MobileEngine : IDisposable
             ReleaseQuietly($"waiting: {decision.Reason}");
         _lastDecision = decision;
         SetPause(decision.Tick ? string.Empty : decision.Reason);
-        if (!decision.Tick || frame == null)
+        if (frame == null || (!decision.Tick && !PhoneLoopGate.TicksWithoutTitle(decision)))
             return;
 
-        // Loop thread only (IShortcutSource): before every tick, so a size change or a missed press is re-found
-        // before the pilot presses anything.
-        _shortcuts.Refresh(frame);
         bool runningBefore = _pilot.IsRunning;
-        await _pilot.TickAsync(frame, token);
+        if (decision.Tick)
+        {
+            // Loop thread only (IShortcutSource): before every tick, so a size change or a missed press is re-found
+            // before the pilot presses anything.
+            _shortcuts.Refresh(frame);
+            await _pilot.TickAsync(frame, token);
+        }
+        else
+        {
+            // No zone title: only the pilot's disconnect check and its 2-minute limit (no shortcut search, no input
+            // but the login screens' taps once it has seen one).
+            await _pilot.TickWithoutTitleAsync(frame, token);
+        }
+
         // Done, a failure without a restart, or a Stop during the tick: nothing may stay pressed (C-1).
         if (PhoneLoopGate.StoppedDuringTick(runningBefore, _pilot.IsRunning))
             ReleaseQuietly("the pilot stopped");

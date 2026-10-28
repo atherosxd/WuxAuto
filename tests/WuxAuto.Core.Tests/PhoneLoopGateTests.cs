@@ -267,6 +267,33 @@ public class PhoneLoopGateTests
         Assert.False(PhoneLoopGate.MustRelease(behind, go));
     }
 
+    [Fact]
+    public void TicksWithoutTitle_OnlyWhileTheTitleIsAllThatIsMissing()
+    {
+        // Task 7 ruling: the login screens have no minimap - on a no-title pass the engine still hands the frame to the
+        // pilot's disconnect check (AutomationPilot.TickWithoutTitleAsync); on every other wait it hands over nothing.
+        Assert.True(PhoneLoopGate.TicksWithoutTitle(LoopDecision.Wait(LoopWait.NoTitle, "x")));
+        Assert.False(PhoneLoopGate.TicksWithoutTitle(LoopDecision.Go));
+        foreach (var kind in Enum.GetValues<LoopWait>().Where(k => k is not (LoopWait.NoTitle or LoopWait.None)))
+            Assert.False(PhoneLoopGate.TicksWithoutTitle(LoopDecision.Wait(kind, "x")), kind.ToString());
+    }
+
+    [Fact]
+    public void LoginScreen_NoTitle_GateHandsTheFrameOver()
+    {
+        // A login screen while the pilot is mid-LOD: no title for longer than the grace -> NoTitle, handed to the pilot.
+        var gate = new PhoneLoopGate();
+        long now = 1_000 * TimeSpan.TicksPerSecond;
+        gate.TitleChecked(now, read: true);
+        now += (PhoneLoopGate.TitleGraceMs + 1) * TimeSpan.TicksPerMillisecond;
+        gate.TitleChecked(now, read: false);
+
+        var decision = gate.Decide(now, captureAlive: true, frameTicks: now, gameInFront: true, panelOpen: false, PilotPhase.LodAttack);
+
+        Assert.Equal(LoopWait.NoTitle, decision.Kind);
+        Assert.True(PhoneLoopGate.TicksWithoutTitle(decision));
+    }
+
     [Theory]
     [InlineData(true, false, true)]
     [InlineData(true, true, false)]

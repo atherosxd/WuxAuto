@@ -439,14 +439,15 @@ public sealed class ScreenAnalyzer : IDisposable
     /// The user's active icon: 0.5 (the icon covers parts of the ring). Under a modal dialog the whole
     /// screen is dimmed (a 1920x1080 frame: ring V 66-86, the icon's flame 102 instead of 255), so the
     /// brightness floor follows the brightest pixel of the icon (150 of 255). 0 when the ring would
-    /// leave the frame.
+    /// leave the frame. <paramref name="minFraction"/> / <paramref name="maxFraction"/>: the band, as fractions of the
+    /// icon's width (the phone's Run orb has its ring further out, see <c>AutomationPilot.PhoneRunRingMin</c>).
     /// </summary>
-    public double RingFraction(Mat frame, PixelRect icon)
+    public double RingFraction(Mat frame, PixelRect icon, double minFraction = 0.68, double maxFraction = 0.85)
     {
         double cx = icon.X + icon.Width / 2.0;
         double cy = icon.Y + icon.Height / 2.0;
-        double rMin = icon.Width * 0.68;
-        double rMax = icon.Width * 0.85;
+        double rMin = icon.Width * minFraction;
+        double rMax = icon.Width * maxFraction;
         int margin = (int)Math.Ceiling(rMax) + 1;
         var roi = new PixelRect((int)cx - margin, (int)cy - margin, margin * 2 + 1, margin * 2 + 1);
         if (roi.X < 0 || roi.Y < 0 || roi.Right > frame.Width || roi.Bottom > frame.Height || rMin < 2)

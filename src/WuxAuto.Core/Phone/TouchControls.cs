@@ -65,23 +65,23 @@ public sealed class TouchControls(AppSettings settings, ITouchInput touch, IShor
     public bool Press(GameAction action) =>
         Send(() => IsMenuAction(action)
             ? TapCentre(shortcuts.Menu, shortcuts.InvalidateMenu)
-            : TapCentre(shortcuts.Find(action), () => shortcuts.Invalidate(action)));
+            : TapCentre(shortcuts.Find(action), () => shortcuts.Missed(action)));
 
     /// <summary>Holds the action's shortcut icon; actions behind ☰ cannot be held.</summary>
     public bool ActionDown(GameAction action) =>
-        Send(() => !IsMenuAction(action) && Hold(ActionHold(action), shortcuts.Find(action), () => shortcuts.Invalidate(action)));
+        Send(() => !IsMenuAction(action) && Hold(ActionHold(action), shortcuts.Find(action), () => shortcuts.Missed(action)));
 
     public void ActionUp(GameAction action) => LetGo(ActionHold(action));
 
     public bool Tap(int x, int y) => Send(() => touch.Tap(x, y, Phone.TapHoldMs));
     public bool UseItem(int x, int y) => Send(() => touch.Tap(x, y, Phone.TapHoldMs));
 
-    public bool SkillTap(string skill) => Send(() => TapCentre(shortcuts.Skill(skill), () => shortcuts.InvalidateSkill(skill)));
+    public bool SkillTap(string skill) => Send(() => TapCentre(shortcuts.Skill(skill), () => shortcuts.MissedSkill(skill)));
 
     /// <summary>No Ctrl on the phone: the same tap as <see cref="SkillTap"/>.</summary>
     public bool SkillCtrlTap(string skill) => SkillTap(skill);
 
-    public bool SkillDown(string skill) => Send(() => Hold(SkillHold(skill), shortcuts.Skill(skill), () => shortcuts.InvalidateSkill(skill)));
+    public bool SkillDown(string skill) => Send(() => Hold(SkillHold(skill), shortcuts.Skill(skill), () => shortcuts.MissedSkill(skill)));
     /// <summary>Lets go of the skill if it is held; a dry run reports true like <c>WindowInput.KeyUp</c> (nothing went down).</summary>
     public bool SkillUp(string skill) => LetGo(SkillHold(skill)) || touch.IsDryRun;
 
@@ -190,7 +190,7 @@ public sealed class TouchControls(AppSettings settings, ITouchInput touch, IShor
         return send();
     }
 
-    /// <summary>Taps the button's centre; no button = nothing sent and <paramref name="missed"/> forgets just that one.</summary>
+    /// <summary>Taps the button's centre; no button = nothing sent and <paramref name="missed"/> reports just that one (<see cref="IShortcutSource.Missed(GameAction)"/>).</summary>
     private bool TapCentre(PixelRect? button, Action missed)
     {
         if (button is not { } r)

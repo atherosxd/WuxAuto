@@ -321,6 +321,57 @@ public class ShortcutMapTests : AppPathsScope
     }
 
     [Fact]
+    public void RepeatedSkillTapOnAbsentButton_NoExtraSearchesWithinCooldown()
+    {
+        // Task 7 carry: an LOD skill spam (a tap every 0.3 s) on a skill button that is not on screen must not cost a
+        // template search per press - the absent cool-down decides when it is looked for again.
+        long now = 1_000_000;
+        using var analyzer = NewAnalyzer();
+        var map = new ShortcutMap(analyzer, clock: () => now);
+        var touch = new RecordingTouch();
+        var controls = new TouchControls(new AppSettings(), touch, map, sleep: _ => { });
+        using var frame = HudFrameWithout("phone_skill1", out _);
+        map.Refresh(frame);
+        Assert.Null(map.Skill("1"));
+        int searches = map.SearchCount;
+
+        for (int i = 0; i < 10; i++)
+        {
+            Assert.False(controls.SkillTap("1"));
+            now += 300;
+            map.Refresh(frame);
+        }
+
+        Assert.Equal(searches, map.SearchCount);
+        Assert.Empty(touch.Calls);
+
+        now += ShortcutMap.AbsentRetryMs;
+        map.Refresh(frame);
+        Assert.Equal(searches + 1, map.SearchCount); // the cool-down still brings it back
+    }
+
+    [Fact]
+    public void Missed_ShortcutNotKnownAbsent_IsSearchedAgain()
+    {
+        // A miss on a shortcut that is not recorded as absent (found before, forgotten since) is looked for at once.
+        long now = 1_000_000;
+        using var analyzer = NewAnalyzer();
+        var map = new ShortcutMap(analyzer, clock: () => now);
+        var (hud, placed) = HudFrame(1920, 1080);
+        using (hud)
+        {
+            map.Refresh(hud);
+            int searches = map.SearchCount;
+
+            map.Missed(GameAction.Buff);
+            map.Refresh(hud);
+
+            Assert.Equal(searches + 1, map.SearchCount);
+            AssertAt(placed["phone_autobuff"], map.Find(GameAction.Buff), "Buff after the miss");
+        }
+    }
+
+    [Fact]
     public void MissingFile_NeverSearched()
     {
         long now = 1_000_000;
