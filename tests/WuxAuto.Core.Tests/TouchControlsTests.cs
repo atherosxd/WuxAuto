@@ -178,6 +178,29 @@ public sealed class TouchControlsTests
     }
 
     [Fact]
+    public async Task ReleaseAll_HoldOnAnotherThread_WaitsUntilTheReleaseIsDone()
+    {
+        // ReleaseAll from the UI thread; the loop thread's SkillDown must not land between clearing the held press
+        // and the Release (it would be lifted while still counted as held).
+        var h = new Harness();
+        h.Shortcuts.Skills["1"] = SkillButton;
+        Task<bool>? hold = null;
+        bool finishedDuringRelease = false;
+        h.Touch.OnRelease = () =>
+        {
+            h.Touch.OnRelease = null;
+            hold = Task.Run(() => h.Controls.SkillDown("1"));
+            finishedDuringRelease = hold.Wait(150);
+        };
+
+        h.Controls.ReleaseAll();
+        Assert.False(finishedDuringRelease);
+        Assert.True(await hold!.WaitAsync(TimeSpan.FromSeconds(5)));
+        Assert.True(h.Controls.SkillUp("1")); // the hold that came after is still held - and can be let go
+        Assert.Equal(["Release", "Down:830,630", "Release"], h.Touch.Calls);
+    }
+
+    [Fact]
     public void Release_WithTheGameBehind_StillLiftsTheFinger()
     {
         var h = new Harness();
@@ -322,6 +345,27 @@ public sealed class TouchControlsTests
         Assert.Equal(["Swipe:350,280,650,280,300"], h.Touch.Calls);
     }
 
+    [Fact]
+    public void Turn_NothingToTurn_SendsNothingAndReturnsTrue()
+    {
+        // A zero-length swipe is a tap on the ground (walk / attack): ms <= 0 or under a pixel sends nothing.
+        var h = new Harness();
+        Assert.True(h.Controls.Turn(TurnDirection.Left, 0));
+        Assert.True(h.Controls.Turn(TurnDirection.Right, -5));
+        Assert.True(h.Controls.BeginTurn(TurnDirection.Left)); // RotateLeftSweepMs 0
+        h.Settings.Phone.SwipePxPerTurnMs = 0.001;
+        Assert.True(h.Controls.Turn(TurnDirection.Left, 500)); // 0.5 px
+        Assert.Empty(h.Touch.Calls);
+    }
+
+    [Fact]
+    public void Turn_LongSwipe_StaysOnTheFrame()
+    {
+        // 2000 px on a 1000 px frame: the end points are clamped to 0 .. 999.
+        Assert.Equal(["Swipe:0,280,999,280,2000"], Run(c => c.Turn(TurnDirection.Left, 2000)));
+        Assert.Equal(["Swipe:999,280,0,280,2000"], Run(c => c.Turn(TurnDirection.Right, 2000)));
+    }
+
     [Fact] public void TurnByDrag_SwipesSideways() => Assert.Equal(["Swipe:1,2,51,2,300"], Run(c => c.TurnByDrag(1, 2, 50, 300)));
     [Fact] public void TiltCamera_SwipesVertically() => Assert.Equal(["Swipe:1,2,1,-58,300"], Run(c => c.TiltCamera(1, 2, -60, 300)));
 
@@ -371,6 +415,21 @@ public sealed class TouchControlsTests
             Assert.True(call(h.Controls), name);
         Assert.Empty(h.Touch.Calls);
         Assert.Equal(0, h.Shortcuts.Invalidations);
+    }
+
+    [Fact]
+    public void DryRun_LettingGo_ReturnsTrueAndSendsNothing()
+    {
+        // WindowInput.KeyUp returns true in a dry run; nothing went down here either.
+        var h = new Harness();
+        h.Fill();
+        h.Touch.DryRun = true;
+        Assert.True(h.Controls.SkillDown("1"));
+        Assert.True(h.Controls.SkillUp("1"));
+        Assert.True(h.Controls.SkillUp("2"));
+        h.Controls.ActionDown(GameAction.ShuraKey);
+        h.Controls.ActionUp(GameAction.ShuraKey);
+        Assert.Empty(h.Touch.Calls);
     }
 
     [Fact]
@@ -469,7 +528,14 @@ public sealed class TouchControlsTests
         public bool Pinch(int cx, int cy, int fromGap, int toGap, int durationMs) => Record($"Pinch:{cx},{cy},{fromGap},{toGap},{durationMs}");
         public bool Joystick(int cx, int cy, int dx, int dy, int durationMs) => Record($"Joy:{cx},{cy},{dx},{dy},{durationMs}");
         public bool PressDown(int x, int y) => Record($"Down:{x},{y}");
-        public void Release() => Calls.Add("Release");
+        public void Release()
+        {
+            Calls.Add("Release");
+            OnRelease?.Invoke();
+        }
+
+        /// <summary>Runs inside <see cref="Release"/> (to race another thread against it).</summary>
+        public Action? OnRelease { get; set; }
 
         private bool Record(string call)
         {

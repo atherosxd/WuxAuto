@@ -63,7 +63,8 @@ public sealed class TouchControls(AppSettings settings, ITouchInput touch, IShor
     public bool SkillCtrlTap(string skill) => SkillTap(skill);
 
     public bool SkillDown(string skill) => Send(() => Hold(SkillHold(skill), shortcuts.Skill(skill)));
-    public bool SkillUp(string skill) => LetGo(SkillHold(skill));
+    /// <summary>Lets go of the skill if it is held; a dry run reports true like <c>WindowInput.KeyUp</c> (nothing went down).</summary>
+    public bool SkillUp(string skill) => LetGo(SkillHold(skill)) || touch.IsDryRun;
 
     /// <summary>
     /// One joystick step towards the point (there is no attack-instead-of-walk on the stick, so
@@ -125,9 +126,12 @@ public sealed class TouchControls(AppSettings settings, ITouchInput touch, IShor
     /// <summary>Lets go of whatever is held, joystick step included (Stop / F10 / the end of a run); safe to call any time.</summary>
     public void ReleaseAll()
     {
+        // Inside the lock (as in Hold): a Hold on the loop thread must not slip in between and be lifted with _held set.
         lock (_heldLock)
+        {
             _held = null;
-        touch.Release();
+            touch.Release();
+        }
     }
 
     /// <summary>The gate every sending call goes through: dry run = nothing sent, true; the game behind = nothing sent, false.</summary>
@@ -189,17 +193,30 @@ public sealed class TouchControls(AppSettings settings, ITouchInput touch, IShor
         }
     }
 
+    /// <summary>
+    /// A turn swipe centred on the ground above the character. Nothing to turn (ms &lt;= 0 or under a pixel) sends
+    /// nothing and reports true: a zero-length swipe is a tap on the ground, which could walk or attack. The end points
+    /// are kept on the frame (Task 1 tunes the length).
+    /// </summary>
     private bool TurnSwipe(TurnDirection direction, int ms)
     {
+        double length = ms * Phone.SwipePxPerTurnMs;
+        if (ms <= 0 || length < 1)
+            return true;
+
         var (w, h) = shortcuts.FrameSize;
         if (w <= 0 || h <= 0)
             return false;
 
         int cx = (int)Math.Round(w * TurnSwipeX);
         int cy = (int)Math.Round(h * TurnSwipeY);
-        int half = (int)Math.Round(ms * Phone.SwipePxPerTurnMs / 2);
+        int half = (int)Math.Round(length / 2);
         int sign = direction == TurnDirection.Left ? 1 : -1; // left = the finger moves right (Task 1 confirms)
-        return touch.Swipe(cx - sign * half, cy, cx + sign * half, cy, ms);
+        int x1 = Math.Clamp(cx - sign * half, 0, w - 1);
+        int x2 = Math.Clamp(cx + sign * half, 0, w - 1);
+        if (x1 == x2)
+            return true;
+        return touch.Swipe(x1, cy, x2, cy, ms);
     }
 
     private static bool IsMenuAction(GameAction action) =>
