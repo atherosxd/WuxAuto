@@ -949,6 +949,11 @@ Dry run on in the real settings).
 | `RunClickPx` / `RunStepWaitMs` / `RunMaxSteps` | 200 / 1500 / 200 | final run steering |
 | `NoPathText` | `no walkable path` | logged only, diagnostic |
 
+Keys and mouse buttons are read only by `KeyboardMouseControls` (Core, M3): the pilot asks for a
+`GameAction` (or a skill / turn / walk) and never names a key. `Input.RotateKeyReverse` and
+`Sequence.RotationMode` are no longer read by anything (their only user, `ApplyTurn`, had no callers and
+was deleted in M3); they stay in settings.json and the UI until removed with a settings migration.
+
 Input: `InputMode.ForegroundSendInput` (default) requires the bound HWND to be foreground;
 otherwise the action is suppressed + logged and retried. `BackgroundMessages` posts to the HWND —
 works for some clicks, but **long key holds (the 5 s `A` sweep) only work in foreground mode**, and
