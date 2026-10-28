@@ -17,7 +17,7 @@ internal static class FrameProbe
     /// </summary>
     public static async Task<int> TitlesAsync(string dir)
     {
-        var settings = SettingsStore.Load();
+        var settings = SettingsStore.Load(persistMigration: false);
         using var analyzer = new ScreenAnalyzer(settings, new OcrService());
         foreach (string path in Directory.GetFiles(dir, "*.png").Where(p => !p.EndsWith(".scan.png") && !p.EndsWith(".crop.png")).Order())
         {
@@ -54,7 +54,7 @@ internal static class FrameProbe
     /// </summary>
     public static int LodParts(string dir)
     {
-        var settings = SettingsStore.Load();
+        var settings = SettingsStore.Load(persistMigration: false);
         using var analyzer = new ScreenAnalyzer(settings, new OcrService());
         foreach (string path in Directory.GetFiles(dir, "*.png").Where(p => !p.EndsWith(".scan.png") && !p.EndsWith(".crop.png")).Order())
         {
@@ -78,7 +78,7 @@ internal static class FrameProbe
     /// </summary>
     public static int Ring(string dir)
     {
-        var settings = SettingsStore.Load();
+        var settings = SettingsStore.Load(persistMigration: false);
         using var analyzer = new ScreenAnalyzer(settings, new OcrService());
         string outDir = Path.Combine(Path.GetTempPath(), "wuxauto-ring");
         Directory.CreateDirectory(outDir);
@@ -120,7 +120,7 @@ internal static class FrameProbe
     /// </summary>
     public static async Task<int> MapOpenAsync(string dir)
     {
-        var settings = SettingsStore.Load();
+        var settings = SettingsStore.Load(persistMigration: false);
         using var analyzer = new ScreenAnalyzer(settings, new OcrService());
         int open = 0, shut = 0, differ = 0;
         foreach (string path in Directory.GetFiles(dir, "*.png").Where(p => !p.EndsWith(".scan.png") && !p.EndsWith(".crop.png")).Order())
@@ -165,7 +165,7 @@ internal static class FrameProbe
     /// </summary>
     public static int RunSkill(string dir)
     {
-        var settings = SettingsStore.Load();
+        var settings = SettingsStore.Load(persistMigration: false);
         using var analyzer = new ScreenAnalyzer(settings, new OcrService());
         string template = settings.Sequence.RunSkillTemplate;
         string outDir = Path.Combine(Path.GetTempPath(), "wuxauto-runskill");
@@ -200,7 +200,7 @@ internal static class FrameProbe
     /// <summary>--confirm &lt;dir&gt;: the auto-confirm dialog (message line + OK) for every PNG, as the app finds it.</summary>
     public static async Task<int> ConfirmAsync(string dir)
     {
-        var settings = SettingsStore.Load();
+        var settings = SettingsStore.Load(persistMigration: false);
         using var analyzer = new ScreenAnalyzer(settings, new OcrService());
         foreach (string path in Directory.GetFiles(dir, "*.png").Where(p => !p.EndsWith(".scan.png") && !p.EndsWith(".crop.png")).Order())
         {
@@ -227,7 +227,7 @@ internal static class FrameProbe
     /// </summary>
     public static int Shura(string dir)
     {
-        var settings = SettingsStore.Load();
+        var settings = SettingsStore.Load(persistMigration: false);
         using var analyzer = new ScreenAnalyzer(settings, new OcrService());
         string template = settings.Lod.ShuraTemplate;
         foreach (string path in Directory.GetFiles(dir, "*.png").Where(p => !p.EndsWith(".scan.png") && !p.EndsWith(".crop.png")).Order())
@@ -261,7 +261,7 @@ internal static class FrameProbe
         if (source.Channels() != 4)
             Cv2.CvtColor(source, frame, ColorConversionCodes.BGR2BGRA);
 
-        var settings = SettingsStore.Load();
+        var settings = SettingsStore.Load(persistMigration: false);
         using var analyzer = new ScreenAnalyzer(settings, new OcrService());
 
         Console.WriteLine($"frame: {path} {frame.Width}x{frame.Height}");

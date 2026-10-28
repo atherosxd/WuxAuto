@@ -9,7 +9,7 @@ namespace WuxAuto.SelfTest;
 
 /// <summary>
 /// Auto War screen readers over a folder of saved frames, one line per PNG:
-/// --hp (player HP), --target (target name + chest), --warbar (buff icons + Shura on the skill bar),
+/// --hp (player HP), --target (target name + chest), --warbar (buff and item buff icons + Shura on the skill bar),
 /// --menu (the top-centre MENU button, the "Tribe Status" tile), --tribe (the war row's countdown).
 /// </summary>
 internal static class WarProbe
@@ -39,7 +39,7 @@ internal static class WarProbe
     /// </summary>
     public static async Task<int> HpAsync(string dir)
     {
-        var settings = SettingsStore.Load();
+        var settings = SettingsStore.Load(persistMigration: false);
         using var analyzer = new ScreenAnalyzer(settings, new OcrService());
         int read = 0, byPlain = 0, full = 0, zeroLines = 0, total = 0;
         foreach (string path in Frames(dir))
@@ -87,7 +87,7 @@ internal static class WarProbe
     /// </summary>
     public static async Task<int> TargetAsync(string dir)
     {
-        var settings = SettingsStore.Load();
+        var settings = SettingsStore.Load(persistMigration: false);
         using var analyzer = new ScreenAnalyzer(settings, new OcrService());
         int named = 0, namedPlain = 0, chests = 0, total = 0;
         foreach (string path in Frames(dir))
@@ -129,15 +129,18 @@ internal static class WarProbe
     }
 
     /// <summary>
-    /// --warbar &lt;dir&gt;: each buff icon (War.BuffIcons) and Shura on the skill bar - the best score at any
-    /// scale (0.30 floor, a hit at War.IconMatchScore or more marked HIT), then what the pilot's
-    /// ScreenAnalyzer.FindSkillBarIcons call at that score returns.
+    /// --warbar &lt;dir&gt;: each buff icon (War.BuffIcons, then War.ItemBuffIcons - ticked off or not) and Shura on
+    /// the skill bar - the best score at any scale (0.30 floor, a hit at War.IconMatchScore or more marked HIT), then
+    /// what the pilot's ScreenAnalyzer.FindSkillBarIcons call at that score returns.
     /// </summary>
     public static int WarBar(string dir)
     {
-        var settings = SettingsStore.Load();
+        var settings = SettingsStore.Load(persistMigration: false);
         using var analyzer = new ScreenAnalyzer(settings, new OcrService());
-        var templates = settings.War.BuffIcons.Append(settings.Lod.ShuraTemplate).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+        var templates = settings.War.BuffIcons.Concat(settings.War.ItemBuffIcons).Append(settings.Lod.ShuraTemplate)
+            .Where(t => !string.IsNullOrWhiteSpace(t))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
         double minScore = settings.War.IconMatchScore;
         var hitFrames = templates.ToDictionary(t => t, _ => 0);
         var bestScores = templates.ToDictionary(t => t, _ => 0.0);
@@ -188,7 +191,7 @@ internal static class WarProbe
     /// </summary>
     public static async Task<int> MenuAsync(string dir)
     {
-        var settings = SettingsStore.Load();
+        var settings = SettingsStore.Load(persistMigration: false);
         using var analyzer = new ScreenAnalyzer(settings, new OcrService());
         string tileText = settings.War.MenuTileText;
         int total = 0, buttons = 0, tiles = 0, lineOnly = 0, titles = 0, acts = 0;
@@ -246,7 +249,7 @@ internal static class WarProbe
     /// </summary>
     public static async Task<int> TribeAsync(string path)
     {
-        var settings = SettingsStore.Load();
+        var settings = SettingsStore.Load(persistMigration: false);
         using var analyzer = new ScreenAnalyzer(settings, new OcrService());
         string rowText = settings.War.TribeRowText;
 

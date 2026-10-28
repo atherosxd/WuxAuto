@@ -27,7 +27,7 @@ internal static class ActionProbe
             return 1;
         }
 
-        var settings = SettingsStore.Load();
+        var settings = SettingsStore.Load(persistMigration: false);
         Console.WriteLine($"target: 0x{target.Handle:X} {target.ProcessName} client {target.ClientWidth}x{target.ClientHeight}, dry run {settings.Sequence.DryRun}");
         if (settings.Sequence.DryRun)
         {
