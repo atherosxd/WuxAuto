@@ -65,6 +65,7 @@ public partial class MainViewModel : ObservableObject, IAsyncDisposable
     {
         _dispatcher = Dispatcher.CurrentDispatcher;
         Settings = SettingsStore.Load();
+        WarBuffSwitches = WarBuffSwitch.For(Settings);
         _engine = new WuxEngine(Settings);
 
         _engine.Log += entry => Post(() => AppendLog(entry));
@@ -276,6 +277,9 @@ public partial class MainViewModel : ObservableObject, IAsyncDisposable
     }
 
     public AppSettings Settings { get; }
+
+    /// <summary>Auto War's "Buffs" row: one check box per buff icon the pilot clicks (<see cref="WarBuffSwitch"/>).</summary>
+    public IReadOnlyList<WarBuffSwitch> WarBuffSwitches { get; }
 
     /// <summary>Re-reads every settings binding (the settings objects raise no change events).</summary>
     public void RefreshSettings() => OnPropertyChanged(nameof(Settings));
