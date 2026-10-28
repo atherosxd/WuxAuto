@@ -1,7 +1,7 @@
 using System.Diagnostics;
 using System.IO;
 using System.Runtime.InteropServices;
-using OpenCvSharp;
+using Emgu.CV;
 using WuxAuto.Capture;
 using WuxAuto.Core;
 using WuxAuto.Input;
@@ -154,14 +154,13 @@ internal static class InputProbe
         if (frame == null)
             return null;
 
-        var mat = Mat.FromPixelData(frame.Height, frame.Width, MatType.CV_8UC4, frame.Buffer).Clone();
-        return mat;
+        return CaptureMats.Copy(frame);
     }
 
     private static void Save(Mat mat, string name)
     {
         string path = Path.Combine(Path.GetTempPath(), "wuxauto-" + name);
-        Cv2.ImWrite(path, mat);
+        ImageFile.Write(path, mat);
         Console.WriteLine($"frame      : {path}");
     }
 
@@ -173,13 +172,13 @@ internal static class InputProbe
         int changed = 0;
         int width = a.Width, height = a.Height;
         long total = width * (long)height;
+        byte[] pa = CvHelpers.Bytes(a), pb = CvHelpers.Bytes(b);
         for (int y = 0; y < height; y++)
         {
             for (int x = 0; x < width; x++)
             {
-                var p = a.At<Vec4b>(y, x);
-                var q = b.At<Vec4b>(y, x);
-                if (Math.Abs(p.Item0 - q.Item0) + Math.Abs(p.Item1 - q.Item1) + Math.Abs(p.Item2 - q.Item2) > 30)
+                int i = (y * width + x) * 4;
+                if (Math.Abs(pa[i] - pb[i]) + Math.Abs(pa[i + 1] - pb[i + 1]) + Math.Abs(pa[i + 2] - pb[i + 2]) > 30)
                     changed++;
             }
         }

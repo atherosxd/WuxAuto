@@ -2,7 +2,8 @@ using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
-using OpenCvSharp;
+using Emgu.CV;
+using Emgu.CV.CvEnum;
 using WuxAuto.Automation;
 using WuxAuto.Capture;
 using WuxAuto.Core;
@@ -10,6 +11,7 @@ using WuxAuto.Input;
 using WuxAuto.Interop;
 using WuxAuto.Vision;
 using LogLevel = WuxAuto.Core.LogLevel;
+using Size = System.Drawing.Size;
 
 namespace WuxAuto.Engine;
 
@@ -234,13 +236,16 @@ public sealed class WuxEngine : IAsyncDisposable
                 var stopwatch = Stopwatch.StartNew();
                 Interlocked.Increment(ref _framesThisSecond);
 
+                // The Mat is a header over the capture buffer, which stays pinned until the Mat
+                // (disposed at the end of the try block) is gone.
                 var handle = GCHandle.Alloc(frame.Buffer, GCHandleType.Pinned);
                 try
                 {
-                    using var mat = Mat.FromPixelData(
+                    using var mat = new Mat(
                         frame.Height,
                         frame.Width,
-                        MatType.CV_8UC4,
+                        DepthType.Cv8U,
+                        4,
                         handle.AddrOfPinnedObject(),
                         frame.Stride);
 
@@ -345,7 +350,7 @@ public sealed class WuxEngine : IAsyncDisposable
             using var small = new Mat();
             if (scale < 1.0)
             {
-                Cv2.Resize(frame, small, new Size((int)Math.Round(frame.Width * scale), (int)Math.Round(frame.Height * scale)), 0, 0, InterpolationFlags.Area);
+                CvInvoke.Resize(frame, small, new Size((int)Math.Round(frame.Width * scale), (int)Math.Round(frame.Height * scale)), 0, 0, Inter.Area);
             }
             else
             {
@@ -377,16 +382,17 @@ public sealed class WuxEngine : IAsyncDisposable
         int stride = bgra.Width * 4;
         var bytes = new byte[stride * bgra.Height];
 
-        if (bgra.IsContinuous())
+        // Read out of the Mat (never written into through managed code, CLAUDE.md section 10).
+        if (bgra.IsContinuous)
         {
-            Marshal.Copy(bgra.Data, bytes, 0, bytes.Length);
+            Marshal.Copy(bgra.DataPointer, bytes, 0, bytes.Length);
         }
         else
         {
             int height = bgra.Height;
-            long step = bgra.Step();
+            long step = bgra.Step;
             for (int y = 0; y < height; y++)
-                Marshal.Copy(bgra.Data + (int)(y * step), bytes, y * stride, stride);
+                Marshal.Copy(bgra.DataPointer + (int)(y * step), bytes, y * stride, stride);
         }
 
         var bitmap = BitmapSource.Create(bgra.Width, bgra.Height, 96, 96, PixelFormats.Bgra32, null, bytes, stride);

@@ -1,6 +1,9 @@
 using System.Diagnostics;
+using System.Drawing;
 using System.Text.RegularExpressions;
-using OpenCvSharp;
+using Emgu.CV;
+using Emgu.CV.CvEnum;
+using Emgu.CV.Structure;
 using WuxAuto.Automation;
 using WuxAuto.Core;
 
@@ -371,23 +374,21 @@ public sealed class ScreenAnalyzer : IDisposable
     public IReadOnlyList<PixelRect> FindGoldButtons(Mat frame, int minWidth, int minHeight, int maxHeight)
     {
         using var bgr = new Mat();
-        Cv2.CvtColor(frame, bgr, ColorConversionCodes.BGRA2BGR);
+        CvInvoke.CvtColor(frame, bgr, ColorConversion.Bgra2Bgr);
         using var hsv = new Mat();
-        Cv2.CvtColor(bgr, hsv, ColorConversionCodes.BGR2HSV);
+        CvInvoke.CvtColor(bgr, hsv, ColorConversion.Bgr2Hsv);
         using var mask = new Mat();
         // Measured on the LOG IN button: H 15-18, S 128-143, V 103-232. The sunset behind the login
         // panel has the same hue but S ~85, so saturation is what separates them.
-        Cv2.InRange(hsv, new Scalar(12, 110, 95), new Scalar(25, 255, 255), mask);
-        using var kernel = Cv2.GetStructuringElement(MorphShapes.Rect, new Size(3, 3));
-        Cv2.MorphologyEx(mask, mask, MorphTypes.Close, kernel);
+        CvHelpers.InRange(hsv, new MCvScalar(12, 110, 95), new MCvScalar(25, 255, 255), mask);
+        using var kernel = CvHelpers.StructuringElement(MorphShapes.Rectangle, new Size(3, 3));
+        CvHelpers.MorphologyEx(mask, mask, MorphOp.Close, kernel);
 
-        Cv2.FindContours(mask, out var contours, out _, RetrievalModes.External, ContourApproximationModes.ApproxSimple);
         var buttons = new List<PixelRect>();
-        foreach (var contour in contours)
+        foreach (var (box, contourArea) in CvHelpers.ExternalContours(mask))
         {
-            var box = Cv2.BoundingRect(contour);
             double aspect = box.Width / (double)Math.Max(1, box.Height);
-            double fill = Cv2.ContourArea(contour) / Math.Max(1.0, box.Width * box.Height);
+            double fill = contourArea / Math.Max(1.0, box.Width * box.Height);
             if (box.Width < minWidth || box.Height < minHeight || box.Height > maxHeight)
                 continue;
             if (aspect < 1.8 || aspect > 12 || fill < 0.5)
@@ -405,23 +406,21 @@ public sealed class ScreenAnalyzer : IDisposable
     /// </summary>
     public PixelRect? FindRedOrangeGlow(Mat frame, PixelRect roi, int minArea)
     {
-        using var crop = new Mat(frame, new Rect(roi.X, roi.Y, roi.Width, roi.Height));
+        using var crop = new Mat(frame, new Rectangle(roi.X, roi.Y, roi.Width, roi.Height));
         using var bgr = new Mat();
-        Cv2.CvtColor(crop, bgr, ColorConversionCodes.BGRA2BGR);
+        CvInvoke.CvtColor(crop, bgr, ColorConversion.Bgra2Bgr);
         using var hsv = new Mat();
-        Cv2.CvtColor(bgr, hsv, ColorConversionCodes.BGR2HSV);
+        CvInvoke.CvtColor(bgr, hsv, ColorConversion.Bgr2Hsv);
         using var low = new Mat();
         using var high = new Mat();
-        Cv2.InRange(hsv, new Scalar(0, 120, 120), new Scalar(22, 255, 255), low);
-        Cv2.InRange(hsv, new Scalar(168, 120, 120), new Scalar(180, 255, 255), high);
+        CvHelpers.InRange(hsv, new MCvScalar(0, 120, 120), new MCvScalar(22, 255, 255), low);
+        CvHelpers.InRange(hsv, new MCvScalar(168, 120, 120), new MCvScalar(180, 255, 255), high);
         using var mask = new Mat();
-        Cv2.BitwiseOr(low, high, mask);
-        using var kernel = Cv2.GetStructuringElement(MorphShapes.Ellipse, new Size(7, 7));
-        Cv2.MorphologyEx(mask, mask, MorphTypes.Close, kernel);
+        CvInvoke.BitwiseOr(low, high, mask);
+        using var kernel = CvHelpers.StructuringElement(MorphShapes.Ellipse, new Size(7, 7));
+        CvHelpers.MorphologyEx(mask, mask, MorphOp.Close, kernel);
 
-        Cv2.FindContours(mask, out var contours, out _, RetrievalModes.External, ContourApproximationModes.ApproxSimple);
-        var best = contours
-            .Select(c => (Box: Cv2.BoundingRect(c), Area: Cv2.ContourArea(c)))
+        var best = CvHelpers.ExternalContours(mask)
             .Where(t => t.Area >= minArea)
             .OrderByDescending(t => t.Area)
             .FirstOrDefault();
@@ -453,23 +452,25 @@ public sealed class ScreenAnalyzer : IDisposable
         if (roi.X < 0 || roi.Y < 0 || roi.Right > frame.Width || roi.Bottom > frame.Height || rMin < 2)
             return 0;
 
-        using var crop = new Mat(frame, new Rect(roi.X, roi.Y, roi.Width, roi.Height));
+        using var crop = new Mat(frame, new Rectangle(roi.X, roi.Y, roi.Width, roi.Height));
         using var bgr = new Mat();
-        if (crop.Channels() == 4)
-            Cv2.CvtColor(crop, bgr, ColorConversionCodes.BGRA2BGR);
+        if (crop.NumberOfChannels == 4)
+            CvInvoke.CvtColor(crop, bgr, ColorConversion.Bgra2Bgr);
         else
             crop.CopyTo(bgr);
         using var hsv = new Mat();
-        Cv2.CvtColor(bgr, hsv, ColorConversionCodes.BGR2HSV);
+        CvInvoke.CvtColor(bgr, hsv, ColorConversion.Bgr2Hsv);
 
-        var iconRect = new Rect(icon.X - roi.X, icon.Y - roi.Y, icon.Width, icon.Height);
+        var iconRect = new Rectangle(icon.X - roi.X, icon.Y - roi.Y, icon.Width, icon.Height);
         using var iconHsv = new Mat(hsv, iconRect);
-        using var value = iconHsv.ExtractChannel(2);
-        Cv2.MinMaxLoc(value, out _, out double maxValue);
+        using var value = new Mat();
+        CvInvoke.ExtractChannel(iconHsv, value, 2);
+        var (maxValue, _) = CvHelpers.MaxLoc(value);
         double minValue = Math.Max(40, 150 * maxValue / 255);
 
         using var mask = new Mat();
-        Cv2.InRange(hsv, new Scalar(15, 60, minValue), new Scalar(30, 150, 240), mask);
+        CvHelpers.InRange(hsv, new MCvScalar(15, 60, minValue), new MCvScalar(30, 150, 240), mask);
+        byte[] maskPixels = CvHelpers.Bytes(mask);
 
         const int directions = 36;
         int hits = 0;
@@ -481,7 +482,7 @@ public sealed class ScreenAnalyzer : IDisposable
             {
                 int x = (int)Math.Round(cx + r * Math.Cos(angle)) - roi.X;
                 int y = (int)Math.Round(cy + r * Math.Sin(angle)) - roi.Y;
-                hit = x >= 0 && y >= 0 && x < mask.Width && y < mask.Height && mask.At<byte>(y, x) != 0;
+                hit = x >= 0 && y >= 0 && x < mask.Width && y < mask.Height && maskPixels[y * mask.Width + x] != 0;
             }
 
             if (hit)
@@ -504,22 +505,22 @@ public sealed class ScreenAnalyzer : IDisposable
         if (roi.Width < 8 || roi.Height < 8)
             return null;
 
-        using var crop = new Mat(frame, new Rect(roi.X, roi.Y, roi.Width, roi.Height));
+        using var crop = new Mat(frame, new Rectangle(roi.X, roi.Y, roi.Width, roi.Height));
         using var bgr = new Mat();
-        if (crop.Channels() == 4)
-            Cv2.CvtColor(crop, bgr, ColorConversionCodes.BGRA2BGR);
+        if (crop.NumberOfChannels == 4)
+            CvInvoke.CvtColor(crop, bgr, ColorConversion.Bgra2Bgr);
         else
             crop.CopyTo(bgr);
         using var hsv = new Mat();
-        Cv2.CvtColor(bgr, hsv, ColorConversionCodes.BGR2HSV);
+        CvInvoke.CvtColor(bgr, hsv, ColorConversion.Bgr2Hsv);
         using var mask = new Mat();
-        Cv2.InRange(hsv, new Scalar(138, 89, 190), new Scalar(156, 255, 255), mask);
+        CvHelpers.InRange(hsv, new MCvScalar(138, 89, 190), new MCvScalar(156, 255, 255), mask);
 
-        int count = Cv2.CountNonZero(mask);
+        int count = CvInvoke.CountNonZero(mask);
         if (count < frame.Width * (double)frame.Height * minFraction)
             return null;
 
-        var box = Cv2.BoundingRect(mask);
+        var box = CvInvoke.BoundingRectangle(mask);
         return new PixelRect(roi.X + box.X, roi.Y + box.Y, box.Width, box.Height);
     }
 
@@ -538,17 +539,17 @@ public sealed class ScreenAnalyzer : IDisposable
 
         using var hsv = ToHsv(frame, roi);
         using var mask = new Mat();
-        Cv2.InRange(hsv, new Scalar(135, 35, 170), new Scalar(162, 255, 255), mask);
+        CvHelpers.InRange(hsv, new MCvScalar(135, 35, 170), new MCvScalar(162, 255, 255), mask);
         int k = Math.Max(3, frame.Height / 90) | 1;
-        using var kernel = Cv2.GetStructuringElement(MorphShapes.Ellipse, new Size(k, k));
-        Cv2.MorphologyEx(mask, mask, MorphTypes.Close, kernel);
+        using var kernel = CvHelpers.StructuringElement(MorphShapes.Ellipse, new Size(k, k));
+        CvHelpers.MorphologyEx(mask, mask, MorphOp.Close, kernel);
 
         double minPixels = frame.Width * (double)frame.Height * 1.5e-4;
         var parts = Components(mask).Where(c => c.Pixels >= minPixels / 6).ToList();
         var seed = parts
             .Where(c => c.Pixels >= minPixels && c.Box.Width >= frame.Width * 0.04 && c.Box.Width >= c.Box.Height)
             .OrderByDescending(c => c.Pixels)
-            .Select(c => (Rect?)c.Box)
+            .Select(c => (Rectangle?)c.Box)
             .FirstOrDefault();
         if (seed is not { } ring)
             return null;
@@ -566,7 +567,7 @@ public sealed class ScreenAnalyzer : IDisposable
                 if (box.Height > box.Width * 2 || !Inflate(ring, reach).IntersectsWith(box))
                     continue;
 
-                var union = ring | box;
+                var union = Rectangle.Union(ring, box);
                 parts.RemoveAt(i);
                 if (union == ring)
                     continue;
@@ -578,7 +579,7 @@ public sealed class ScreenAnalyzer : IDisposable
 
         return new PixelRect(roi.X + ring.X, roi.Y + ring.Y, ring.Width, ring.Height);
 
-        static Rect Inflate(Rect r, int by) => new(r.X - by, r.Y - by, r.Width + 2 * by, r.Height + 2 * by);
+        static Rectangle Inflate(Rectangle r, int by) => new(r.X - by, r.Y - by, r.Width + 2 * by, r.Height + 2 * by);
     }
 
     /// <summary>
@@ -616,7 +617,7 @@ public sealed class ScreenAnalyzer : IDisposable
 
         using var hsv = ToHsv(frame, roi);
         using var mask = new Mat();
-        Cv2.InRange(hsv, new Scalar(80, 120, 170), new Scalar(100, 255, 255), mask);
+        CvHelpers.InRange(hsv, new MCvScalar(80, 120, 170), new MCvScalar(100, 255, 255), mask);
 
         double unit = frame.Height / 1080.0;
         var blobs = Components(mask)
@@ -624,17 +625,17 @@ public sealed class ScreenAnalyzer : IDisposable
             .Select(c => c.Box)
             .ToList();
 
-        Rect? found = blobs
+        Rectangle? found = blobs
             .Where(b => b.Height >= frame.Height * 0.10 && b.Height >= 3 * b.Width)
             .OrderByDescending(b => b.Height)
-            .Select(b => (Rect?)b)
+            .Select(b => (Rectangle?)b)
             .FirstOrDefault();
 
         // A chain: from each patch downwards, the next patch in the same column within a gap.
         double column = frame.Height * 0.03, gap = frame.Height * 0.08;
         foreach (var top in blobs.OrderBy(b => b.Y))
         {
-            var chain = new List<Rect> { top };
+            var chain = new List<Rectangle> { top };
             var last = top;
             foreach (var next in blobs.Where(b => b.Y > last.Y).OrderBy(b => b.Y))
             {
@@ -649,14 +650,14 @@ public sealed class ScreenAnalyzer : IDisposable
                 continue;
 
             int left = chain.Min(b => b.X), right = chain.Max(b => b.Right);
-            var box = new Rect(left, top.Y, right - left, last.Bottom - top.Y);
+            var box = new Rectangle(left, top.Y, right - left, last.Bottom - top.Y);
             if (found is not { } f || box.Height > f.Height)
                 found = box;
         }
 
         return found is { } belt ? new PixelRect(roi.X + belt.X, roi.Y + belt.Y, belt.Width, belt.Height) : null;
 
-        static double CenterX(Rect r) => r.X + r.Width / 2.0;
+        static double CenterX(Rectangle r) => r.X + r.Width / 2.0;
     }
 
     /// <summary>The game world between the HUD panels, where the ring and boss detectors look.</summary>
@@ -664,17 +665,21 @@ public sealed class ScreenAnalyzer : IDisposable
         (int)(frame.Width * 0.70), (int)(frame.Height * 0.78)).Clamp(frame.Width, frame.Height);
 
     /// <summary>Connected patches of a mask: bounding box and pixel count.</summary>
-    private static List<(Rect Box, int Pixels)> Components(Mat mask)
+    private static List<(Rectangle Box, int Pixels)> Components(Mat mask)
     {
         using var labels = new Mat();
         using var stats = new Mat();
         using var centroids = new Mat();
-        int count = Cv2.ConnectedComponentsWithStats(mask, labels, stats, centroids);
-        var list = new List<(Rect, int)>(Math.Max(0, count - 1));
+        int count = CvInvoke.ConnectedComponentsWithStats(mask, labels, stats, centroids);
+        // One row per label: left, top, width, height, area.
+        int[] table = CvHelpers.Int32s(stats);
+        int columns = stats.Cols;
+        var list = new List<(Rectangle, int)>(Math.Max(0, count - 1));
         for (int i = 1; i < count; i++)
         {
-            var box = new Rect(stats.At<int>(i, 0), stats.At<int>(i, 1), stats.At<int>(i, 2), stats.At<int>(i, 3));
-            list.Add((box, stats.At<int>(i, 4)));
+            int row = i * columns;
+            var box = new Rectangle(table[row], table[row + 1], table[row + 2], table[row + 3]);
+            list.Add((box, table[row + 4]));
         }
 
         return list;
@@ -694,19 +699,18 @@ public sealed class ScreenAnalyzer : IDisposable
 
         using var hsv = ToHsv(frame, band);
         using var mask = new Mat();
-        Cv2.InRange(hsv, new Scalar(10, 70, 110), new Scalar(32, 255, 255), mask);
-        if (Cv2.CountNonZero(mask) < h)
+        CvHelpers.InRange(hsv, new MCvScalar(10, 70, 110), new MCvScalar(32, 255, 255), mask);
+        if (CvInvoke.CountNonZero(mask) < h)
             return fallback;
 
         // The rows sit ~2 px apart, so the gold frames of the boxes above and below touch this one
         // and merge into one tall outline. Its width is still the box size: the box is that square,
         // centred on the label's row.
-        Cv2.FindContours(mask, out var contours, out _, RetrievalModes.External, ContourApproximationModes.ApproxSimple);
         int labelCy = label.CenterY - band.Y;
-        var best = contours.Select(Cv2.BoundingRect)
+        var best = CvHelpers.ExternalContours(mask).Select(c => c.Box)
             .Where(r => r.Width >= h * 0.6 && r.Width <= h * 3 && r.Y <= labelCy && r.Bottom >= labelCy)
             .OrderByDescending(r => r.Right)
-            .Select(r => (Rect?)r)
+            .Select(r => (Rectangle?)r)
             .FirstOrDefault();
         if (best is not { } r0)
             return fallback;
@@ -725,10 +729,10 @@ public sealed class ScreenAnalyzer : IDisposable
         if (inner.Width < 2 || inner.Height < 2)
             return false;
 
-        using var crop = new Mat(frame, new Rect(inner.X, inner.Y, inner.Width, inner.Height));
+        using var crop = new Mat(frame, new Rectangle(inner.X, inner.Y, inner.Width, inner.Height));
         using var gray = new Mat();
-        Cv2.CvtColor(crop, gray, crop.Channels() == 4 ? ColorConversionCodes.BGRA2GRAY : ColorConversionCodes.BGR2GRAY);
-        Cv2.MinMaxLoc(gray, out _, out double max);
+        CvInvoke.CvtColor(crop, gray, crop.NumberOfChannels == 4 ? ColorConversion.Bgra2Gray : ColorConversion.Bgr2Gray);
+        var (max, _) = CvHelpers.MaxLoc(gray);
         return max > 140;
     }
 
@@ -780,14 +784,14 @@ public sealed class ScreenAnalyzer : IDisposable
 
     private static Mat ToHsv(Mat frame, PixelRect roi)
     {
-        using var crop = new Mat(frame, new Rect(roi.X, roi.Y, roi.Width, roi.Height));
+        using var crop = new Mat(frame, new Rectangle(roi.X, roi.Y, roi.Width, roi.Height));
         using var bgr = new Mat();
-        if (crop.Channels() == 4)
-            Cv2.CvtColor(crop, bgr, ColorConversionCodes.BGRA2BGR);
+        if (crop.NumberOfChannels == 4)
+            CvInvoke.CvtColor(crop, bgr, ColorConversion.Bgra2Bgr);
         else
             crop.CopyTo(bgr);
         var hsv = new Mat();
-        Cv2.CvtColor(bgr, hsv, ColorConversionCodes.BGR2HSV);
+        CvInvoke.CvtColor(bgr, hsv, ColorConversion.Bgr2Hsv);
         return hsv;
     }
 
@@ -798,15 +802,15 @@ public sealed class ScreenAnalyzer : IDisposable
         if (roi.Width < 4 || roi.Height < 4)
             return blobs;
 
-        using var sub = new Mat(frame, new Rect(roi.X, roi.Y, roi.Width, roi.Height));
+        using var sub = new Mat(frame, new Rectangle(roi.X, roi.Y, roi.Width, roi.Height));
         using var gray = new Mat();
-        switch (sub.Channels())
+        switch (sub.NumberOfChannels)
         {
             case 4:
-                Cv2.CvtColor(sub, gray, ColorConversionCodes.BGRA2GRAY);
+                CvInvoke.CvtColor(sub, gray, ColorConversion.Bgra2Gray);
                 break;
             case 3:
-                Cv2.CvtColor(sub, gray, ColorConversionCodes.BGR2GRAY);
+                CvInvoke.CvtColor(sub, gray, ColorConversion.Bgr2Gray);
                 break;
             default:
                 sub.CopyTo(gray);
@@ -814,15 +818,10 @@ public sealed class ScreenAnalyzer : IDisposable
         }
 
         using var mask = new Mat();
-        Cv2.Threshold(gray, mask, 0, 255, ThresholdTypes.Binary | ThresholdTypes.Otsu);
+        CvInvoke.Threshold(gray, mask, 0, 255, ThresholdType.Binary | ThresholdType.Otsu);
 
-        using var hierarchy = new Mat();
-        Cv2.FindContours(mask, out Point[][] contours, out _, RetrievalModes.External,
-            ContourApproximationModes.ApproxSimple);
-
-        foreach (var contour in contours)
+        foreach (var (box, _) in CvHelpers.ExternalContours(mask))
         {
-            var box = Cv2.BoundingRect(contour);
             if (box.Width < 2 || box.Height < 3 || box.Width * box.Height < 6)
                 continue;
 
@@ -970,20 +969,20 @@ public sealed class ScreenAnalyzer : IDisposable
     private async Task<(string Text, PixelRect Bounds)> OcrEnhancedAsync(Mat frame, PixelRect box, int up, bool binarize = true)
     {
         const int Pad = 20;
-        using var crop = new Mat(frame, new Rect(box.X, box.Y, box.Width, box.Height));
+        using var crop = new Mat(frame, new Rectangle(box.X, box.Y, box.Width, box.Height));
         using var gray = new Mat();
-        Cv2.CvtColor(crop, gray, ColorConversionCodes.BGRA2GRAY);
+        CvInvoke.CvtColor(crop, gray, ColorConversion.Bgra2Gray);
         using var big = new Mat();
-        Cv2.Resize(gray, big, new Size(), up, up, InterpolationFlags.Cubic);
+        CvInvoke.Resize(gray, big, new Size(), up, up, Inter.Cubic);
         using var binary = new Mat();
         if (binarize)
-            Cv2.Threshold(big, binary, 0, 255, ThresholdTypes.Binary | ThresholdTypes.Otsu);
+            CvInvoke.Threshold(big, binary, 0, 255, ThresholdType.Binary | ThresholdType.Otsu);
         else
             big.CopyTo(binary);
         using var padded = new Mat();
-        Cv2.CopyMakeBorder(binary, padded, Pad, Pad, Pad, Pad, BorderTypes.Constant, Scalar.Black);
+        CvInvoke.CopyMakeBorder(binary, padded, Pad, Pad, Pad, Pad, BorderType.Constant, new MCvScalar(0, 0, 0));
         using var bgra = new Mat();
-        Cv2.CvtColor(padded, bgra, ColorConversionCodes.GRAY2BGRA);
+        CvInvoke.CvtColor(padded, bgra, ColorConversion.Gray2Bgra);
 
         var words = await Ocr.RecognizeAsync(bgra, new PixelRect(0, 0, bgra.Width, bgra.Height), 1.0);
         if (words.Count == 0)
@@ -1078,15 +1077,15 @@ public sealed class ScreenAnalyzer : IDisposable
     /// </summary>
     internal async Task<IReadOnlyList<(string Text, PixelRect Bounds)>> OcrWhiteTextAsync(Mat frame, PixelRect roi, double scale)
     {
-        using var crop = new Mat(frame, new Rect(roi.X, roi.Y, roi.Width, roi.Height));
-        var channels = Cv2.Split(crop);
+        using var crop = new Mat(frame, new Rectangle(roi.X, roi.Y, roi.Width, roi.Height));
+        var channels = crop.Split();
         try
         {
             using var darkest = new Mat();
-            Cv2.Min(channels[0], channels[1], darkest);
-            Cv2.Min(darkest, channels[2], darkest);
+            CvInvoke.Min(channels[0], channels[1], darkest);
+            CvInvoke.Min(darkest, channels[2], darkest);
             using var bgra = new Mat();
-            Cv2.CvtColor(darkest, bgra, ColorConversionCodes.GRAY2BGRA);
+            CvInvoke.CvtColor(darkest, bgra, ColorConversion.Gray2Bgra);
             var words = await Ocr.RecognizeAsync(bgra, new PixelRect(0, 0, bgra.Width, bgra.Height), scale);
             return ToLines(words)
                 .Select(l => (l.Text, new PixelRect(roi.X + l.Bounds.X, roi.Y + l.Bounds.Y, l.Bounds.Width, l.Bounds.Height)))
@@ -1214,35 +1213,34 @@ public sealed class ScreenAnalyzer : IDisposable
     /// </summary>
     private static Mat GapAfterColons(Mat frame, PixelRect band, int textHeight, out int colons)
     {
-        using var crop = new Mat(frame, new Rect(band.X, band.Y, band.Width, band.Height));
+        using var crop = new Mat(frame, new Rectangle(band.X, band.Y, band.Width, band.Height));
         using var gray = new Mat();
-        Cv2.CvtColor(crop, gray, crop.Channels() == 4 ? ColorConversionCodes.BGRA2GRAY : ColorConversionCodes.BGR2GRAY);
+        CvInvoke.CvtColor(crop, gray, crop.NumberOfChannels == 4 ? ColorConversion.Bgra2Gray : ColorConversion.Bgr2Gray);
         using var bright = new Mat();
-        Cv2.Threshold(gray, bright, 0, 255, ThresholdTypes.Binary | ThresholdTypes.Otsu);
-        using var labels = new Mat();
-        using var stats = new Mat();
-        using var centroids = new Mat();
-        int count = Cv2.ConnectedComponentsWithStats(bright, labels, stats, centroids);
+        CvInvoke.Threshold(gray, bright, 0, 255, ThresholdType.Binary | ThresholdType.Otsu);
 
-        var blobs = Enumerable.Range(1, Math.Max(0, count - 1))
-            .Select(i => new PixelRect(stats.At<int>(i, 0), stats.At<int>(i, 1), stats.At<int>(i, 2), stats.At<int>(i, 3)))
+        // connectedComponentsWithStats with its defaults (8-connectivity, 32-bit labels), as Components runs it.
+        var blobs = Components(bright)
+            .Select(c => new PixelRect(c.Box.X, c.Box.Y, c.Box.Width, c.Box.Height))
             .ToList();
         var cuts = ColonCuts(blobs, textHeight);
 
         colons = cuts.Count;
         int gap = Math.Max(4, textHeight / 2);
         using var dark = new Mat();
-        Cv2.BitwiseNot(bright, dark);
-        var background = Cv2.Mean(crop, dark);
-        var result = new Mat(crop.Rows, crop.Cols + gap * cuts.Count, crop.Type(), background);
+        CvInvoke.BitwiseNot(bright, dark);
+        var background = CvInvoke.Mean(crop, dark);
+        // cv::Mat(rows, cols, type, scalar): allocated by OpenCV, every pixel set to the scalar.
+        var result = new Mat(crop.Rows, crop.Cols + gap * cuts.Count, crop.Depth, crop.NumberOfChannels);
+        result.SetTo(background);
         int from = 0, to = 0;
         foreach (int cut in cuts.Append(crop.Cols))
         {
             int end = Math.Min(crop.Cols, cut);
             if (end > from)
             {
-                using var source = new Mat(crop, new Rect(from, 0, end - from, crop.Rows));
-                using var target = new Mat(result, new Rect(to, 0, end - from, crop.Rows));
+                using var source = new Mat(crop, new Rectangle(from, 0, end - from, crop.Rows));
+                using var target = new Mat(result, new Rectangle(to, 0, end - from, crop.Rows));
                 source.CopyTo(target);
             }
 

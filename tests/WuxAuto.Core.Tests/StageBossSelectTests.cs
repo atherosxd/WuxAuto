@@ -1,4 +1,4 @@
-using OpenCvSharp;
+using Emgu.CV;
 using WuxAuto.Automation;
 using WuxAuto.Core;
 using WuxAuto.Vision;
@@ -105,7 +105,7 @@ public class StageBossSelectTests
             pilot.Log += (_, text) => lines.Add(text);
             pilot.Start(PilotPhase.WaitBoss, stageIndex: 0);
 
-            using var frame = new Mat(Height, Width, MatType.CV_8UC4, Scalar.All(0));
+            using var frame = Blank.Bgra(Height, Width);
             long deadline = Environment.TickCount64 + 15000;
             while (pilot.Phase != PilotPhase.WatchBoss && pilot.IsRunning && Environment.TickCount64 < deadline)
             {

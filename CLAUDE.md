@@ -10,7 +10,8 @@ earlier history exists only in this file.
 
 `WuxAuto` is a **.NET 10 / WPF** pilot for the game window `Wuxen2.exe` (TwelveSky2, Unity port).
 It captures the game with the **Desktop Duplication API**, finds UI elements with **OpenCV template
-matching + Windows.Media.Ocr**, and sends **keyboard/mouse input only to the bound window**.
+matching (through Emgu CV 5) + Windows.Media.Ocr**, and sends **keyboard/mouse input only to the
+bound window**.
 
 The automation goal:
 
@@ -44,9 +45,13 @@ dotnet build .\WuxAuto.slnx
 .\src\WuxAuto\bin\Debug\net10.0-windows10.0.19041.0\WuxAuto.exe
 ```
 
-Another PC: `.\publish.ps1` → `dist\WuxAuto-win-x64.zip` (self-contained, no .NET install; the
-unused `opencv_videoio_ffmpeg` DLL is dropped). `App.OnStartup` runs `Core/StartupCheck` (desktop project) before
-the window: Media Foundation DLLs (imported by `OpenCvSharpExtern.dll` — missing on Windows N and
+Another PC: `.\publish.ps1` → `dist\WuxAuto-win-x64.zip` (self-contained, no .NET install; Emgu CV's
+native `cvextern.dll` and the MSVC runtime are kept once, next to the exe — the second copies the
+runtime packages' build targets add under `runtimes\win-x64\native` made the process load
+`cvextern.dll` twice and are dropped, as is the unused `opencv_videoio_ffmpeg` plugin; the script
+fails unless exactly one `cvextern.dll` is left; `LICENSE` goes in as `LICENSE.txt`).
+`App.OnStartup` runs `Core/StartupCheck` (desktop project) before the window: Media Foundation
+DLLs (`MF.dll`, `MFPlat.DLL`, `MFReadWrite.dll`, imported by `cvextern.dll` — missing on Windows N and
 trimmed "lite" builds such as Ghost Spectre; fatal), OpenCV load (fatal), English OCR and build
 ≥ 19041 (warnings). Report → `logs\startup_check_*.txt`, unhandled errors → `logs\crash_*.txt`.
 `StartupUri` was removed: `App` creates `MainWindow` itself so a failed start exits instead of
@@ -68,7 +73,7 @@ Package for someone else (self-contained, no .NET needed; `src/WuxAuto/Assets/Qu
 the zip's top-level `README.md`):
 
 ```powershell
-.\publish.ps1     # -> dist\build\WuxAuto\ (the build), dist\WuxAuto-win-x64.zip (~93 MB) and dist\WuxAuto\
+.\publish.ps1     # -> dist\build\WuxAuto\ (the build), dist\WuxAuto-win-x64.zip (~76 MB) and dist\WuxAuto\
                   # (refreshed from the build only while no WuxAuto.exe runs from it - the user's live
                   # copy lives there and updates itself from the release; 2026-10-27 a release died on
                   # "Access to the path '...\dist\WuxAuto\Accessibility.dll' is denied" mid-run, and
@@ -128,12 +133,35 @@ dotnet run --project .\tests\WuxAuto.SelfTest -- --target "$env:LOCALAPPDATA\Wux
 dotnet run --project .\tests\WuxAuto.SelfTest -- --warbar "$env:LOCALAPPDATA\WuxAuto\debug"  # BuffIcons + WeaponBuffIcons + ItemBuffIcons + Shura on the skill bar
 dotnet run --project .\tests\WuxAuto.SelfTest -- --menu "$env:LOCALAPPDATA\WuxAuto\debug"    # the menu button and the MENU window
 dotnet run --project .\tests\WuxAuto.SelfTest -- --tribe "$env:LOCALAPPDATA\WuxAuto\war-inputs"  # TRIBE STATUS: the Bohai row's countdown (the user's screenshot lives there, never in git)
+
+# M2 parity: the pilot's detectors and x1.5 OCR reads on the frozen legacy vision (tests\...\Legacy,
+# OpenCvSharp 4.13) vs Core's (Emgu CV), per frame; ends with two summary lines (see below)
+dotnet run --project .\tests\WuxAuto.SelfTest -- --parity "$env:LOCALAPPDATA\WuxAuto\parity-frames"
 ```
+
+`--parity` prints every difference line, the coverage per check, the pilot-view rules and then two
+summary lines. `pilot-view: differences=… excluded=…` counts capped hit lists the way the pilot's
+call site consumes them (best pick, count, the focused-row chevron, the fallback click point) and
+leaves out detectors the pilot no longer calls (`compass`, `compass-angle` = Test scan only;
+`selectionring`); the last line, `parity: frames=… checks=… differences=…`, is the strict view (every
+check, hit lists hit by hit; exit code 1 when it is not 0). A difference line tagged `[strict-only]`
+counts only in the strict line, `[pilot-view]` only in the pilot-view line. The OCR checks (`dest-*`,
+`bossname-s*`, `lod-*`, `settingswin-*`, `attacklog`, `autohunt-*`, `gatetext*`, `stagewide*`) read each
+region once per side at `Detection.OcrScale` and judge every needle with the pilot's own rules. Auto War
+(merged from main 2026-10-28) is covered too: `warbar-*` (FindSkillBarIcons per buff icon, Shura, X buff),
+`target-*`, `player-hp`, `menubutton`, `huntsettings-*`, `itemlist-*`, `warlist-x<scale>-*` (teleport list
+at x1.5 / x2 / x1), `wargate`, `menutile`, `warwindow*`, `warcountdown`, `tribestatus-shows`, `wardialog-*`,
+`warlog-*`, `warmap-*` (MonsterRows for the stage names) and `bossring-away`; the legacy side runs main's
+OpenCvSharp code for them, frozen verbatim in `Legacy/ScreenAnalyzer.War.cs` (a `partial` of the legacy
+analyzer). The saved frames hold no AUTO BUFF dialog, war gate or "Arrived" line, so those checks only
+compare "not found" until such frames exist. There is no built-in pass criterion: whether the Emgu CV switch is accepted with the differences found is the
+user's decision, recorded in the M2 PR.
 
 `--do` frames land in `%TEMP%\wuxauto-step<N>-<verb>.png`. Check the frame before every click: an
 Escape with a target selected only clears the target (no SETTINGS window), and the clicks meant for
-the window then walk the character (2026-10-24). `WuxAuto.slnx` does not build `tests\WuxAuto.SelfTest`
-— build it on its own before `--no-build` runs, or the probe is stale.
+the window then walk the character (2026-10-24). `WuxAuto.slnx` builds `tests\WuxAuto.SelfTest` too, but
+into `bin\x64\Debug\…` (the solution maps it to x64), while `dotnet run --project tests\WuxAuto.SelfTest`
+uses `bin\Debug\…` — run `dotnet build tests\WuxAuto.SelfTest` before `--no-build` runs, or the probe is stale.
 
 The frame probe prints, per template, the best score, box, learned scale and timing, plus OCR
 words and the map scroll-arrow result. `--crop` writes `<frame>.crop.png` next to the frame.
@@ -194,7 +222,10 @@ src/WuxAuto.Core            net10.0 class library, platform-free (M1, 2026-10-27
                        in `WuxAuto.Input`. ScreenAnalyzer takes (and disposes) its IOcrEngine, the pilot takes
                        an IGameInput; `AutomationPilot.TickAsync(Mat, CancellationToken)` gets only the frame
   Vision/              TemplateMatcher, TemplateLibrary, ScreenAnalyzer, CompassDetector, OverlayRenderer,
-                       KillScreenshots, TextMatcher, VisionModels
+                       KillScreenshots, TextMatcher, VisionModels. OpenCV through Emgu CV 5.0 (M2): Core
+                       references only the managed `Emgu.CV`; each host adds the native runtime (desktop:
+                       `Emgu.CV.runtime.mini.windows`). CvHelpers supplies the OpenCV default
+                       arguments that Emgu leaves to the caller
   RULE: Core must stay OS-free - no WPF, WinRT, Win32/P-Invoke, System.Windows.*, registry. Anything
   that touches the OS goes behind a Platform/ interface and is implemented in the desktop project.
 src/WuxAuto                 WPF desktop app, references Core
@@ -209,15 +240,20 @@ src/WuxAuto                 WPF desktop app, references Core
   Interop/             NativeMethods, window enumeration, global hotkeys, process info
   Vision/              OcrService (Windows.Media.Ocr, implements IOcrEngine)
   ViewModels/, MainWindow.*   WPF UI
-tests/WuxAuto.SelfTest      offline probes (see above)
-tests/WuxAuto.Core.Tests    xUnit tests of Core (AppPathsTests, which round-trips settings through SettingsStore; TextMatcherTests;
+tests/WuxAuto.SelfTest      offline probes (see above); Legacy/ = the frozen pre-port vision on OpenCvSharp
+                            4.13, only for `--parity` (ScreenAnalyzer.War.cs: main's Auto War vision as of 28763e1)
+tests/WuxAuto.Core.Tests    xUnit tests of Core; `dotnet test`. AppPathsTests (round-trips settings through
+                            SettingsStore), TextMatcherTests, TemplateLibraryTests, ImageFileTests (non-ASCII
+                            folders), CvHelpersTests (pixel-copy guards); the AppPaths-touching classes derive
+                            from AppPathsScope, which puts AppPaths back and deletes its temp folders after
+                            each test. Pilot and vision tests: ScreenAnalyzerTests;
                             StageBossSelectTests: ticks the real AutomationPilot from WaitBoss at stage 1 (`Start(WaitBoss,
                             stageIndex: 0)`) over a blank 1440×900 Mat with PilotTestDoubles - FakeOcrEngine returns a scripted
                             scene (minimap title, boss name, 8 attack-log lines whose numbers shift per click) for whatever area is
                             asked, FakeGameInput records every call - and asserts the input order: hold on → Tab, KeyDown/KeyUp 1,
                             Ctrl+1, J, centre click, "boss selected on click 1" → WatchBoss; hold off → J, Tab, click. No templates
-                            (AppPaths points at an empty temp root), so the boss is found by name; needs OpenCvSharp4.runtime.win
-                            in the test project; LodStandStillTests: the same doubles from `Start(LodRun)` in AutoLod -
+                            (AppPaths points at an empty temp root), so the boss is found by name; needs the native OpenCV
+                            (Emgu.CV.runtime.mini.windows) in the test project; LodStandStillTests: the same doubles from `Start(LodRun)` in AutoLod -
                             defaults: a walk click from 1195,1578, then at 1201,1760 "the boss spot" and only Tab;
                             `WalkToBossSpot` off → only Tab until "[LOD] Bai Gu Great" reads, then LodAttack;
                             SettingsMigrationTests: an edited settings.json loaded back (v22: LOD walk on, 1191,2413 → 1199,1782);
@@ -225,13 +261,14 @@ tests/WuxAuto.Core.Tests    xUnit tests of Core (AppPathsTests, which round-trip
                             2 Ctrl+clicks, then "Ring check 1" and a 3rd, each after Shura's key; ring underfoot → 1 click only;
                             `RingCheckEveryMs` 0 → 2 only; ring + a cyan "belt" gone / shown after the click → "under the boss", 1 click; a cyan "belt" after the
                             walk → no ring-check walk; RingDistanceTests: DistanceFromRing on 6 real ring boxes; the shared
-                            runner is `PilotRun.RunAsync` in PilotTestDoubles); `dotnet test`
+                            runner is `PilotRun.RunAsync` in PilotTestDoubles
 tests/probe-baseline.ps1    runs every SelfTest probe over a frozen frame set and writes normalised
                             output for before/after diffs (refactor parity check, section 2)
 tests/WuxAuto.UiShot        renders the window to a PNG
 branding/                   wuxen2-source.png + make_icon.py -> WuxAuto-logo.png (README) and
                             src/WuxAuto/WuxAuto.ico (exe + window icon; "AUTO" drawn over "ONLINE")
 README.md                   user-facing documentation (kept up to date - read it too)
+LICENSE                     GPL-3.0 (gnu.org text); Emgu CV's open-source licence is the GPL v3
 ```
 
 Threading: `WuxEngine.VisionLoopAsync` owns capture → `AutomationPilot.TickAsync` → preview
@@ -935,7 +972,7 @@ left down sticks for every program.
    ```
 
 4. Overlays use `DebugArtifacts.SaveFrame(frame, overlays, tag, click)`; the click point is drawn
-   as a crosshair. Note the overlay renderer fills some boxes white — that is expected.
+   as a crosshair. Overlays are drawn opaque (alpha 255) since M2; older snapshots show white or see-through boxes where the alpha was 0.
 5. Logs: the log pane, and since 2026-10-20 also `%LOCALAPPDATA%\WuxAuto\logs\wuxauto_<start time>.log`
    (one file per app start). `WuxAuto.exe --autostart` binds the detected game window and presses
    Start, so a run can be launched and followed from a terminal. The most useful lines:
@@ -1032,9 +1069,18 @@ Template scores seen on real 1024×768 frames:
 ## 10. Gotchas / hard-won lessons
 
 * **Settings JSON overrides defaults** — see §6. This is the single biggest time sink so far.
-* **OpenCvSharp ships only `win-x64` natives** — the app must stay `PlatformTarget x64` (it is).
-* **Do not `Marshal.Copy` into `mat.Data`** on this machine (Windows on ARM, x64 emulation) — it
-  crashed the CLR. Use `Mat.FromPixelData(...)` over a pinned buffer, and `.Clone()` for copies.
+* **The app stays x64** (`PlatformTarget x64`, `publish.ps1 -r win-x64`). Emgu CV's runtime package
+  also carries win-x86 and win-arm64 `cvextern.dll`, but only the win-x64 build is shipped and tested
+  (OpenCvSharp, used until the M2 port, had only win-x64 natives).
+* **Never write into a Mat's memory from managed code** on this machine (Windows on ARM, x64
+  emulation): `Marshal.Copy` into OpenCvSharp's `mat.Data` crashed the CLR. With Emgu CV a frame is a
+  Mat header over the pinned capture buffer (`new Mat(rows, cols, DepthType.Cv8U, 4, ptr, stride)`,
+  `WuxEngine`), pixels are read out through OpenCV (`CvHelpers.Bytes` = `Mat.CopyTo(byte[])`) or
+  copied *from* `DataPointer` (preview, OCR), and copies are `.Clone()`.
+* **Emgu CV 5 is OpenCV 5.0**: `putText` draws its own fonts (not 4.x's Hershey strokes) and, with
+  anti-aliasing on a BGRA image, blends the alpha channel - the text comes out nearly transparent and
+  Windows OCR reads garbage from it. Synthetic test text goes on a BGR canvas, then `Bgr2Bgra`
+  (WarProbe `--tribe`, 2026-10-28). Overlay labels on the preview / debug snapshots use the new font.
 * **Desktop Duplication cannot capture exclusive fullscreen**; the game must be windowed/borderless.
 * **Hybrid-GPU laptops:** the default adapter (dGPU) cannot duplicate a monitor wired to the iGPU
   (`DXGI_ERROR_UNSUPPORTED`), so the device must be created on the output's own adapter — and with an
@@ -1063,7 +1109,7 @@ Template scores seen on real 1024×768 frames:
   centre**.
 * Window-input safety: every send is gated on the bound HWND being foreground; a suppressed action
   is not a bug, it logs `Input blocked ...`.
-* Debug snapshots include overlays; a white filled box in a snapshot is the renderer, not game UI.
+* Debug snapshots include overlays; a filled box or label in a snapshot is the renderer, not game UI (snapshots before M2 show them white or see-through: alpha 0).
 * `Assets\*.png` are copied to the output on build; user overrides go to
   `%LOCALAPPDATA%\WuxAuto\templates` and win over `Assets`. That folder is currently empty.
 * Stray PNGs in the repo root are the user's original screenshots — do not delete them.

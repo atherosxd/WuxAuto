@@ -1,4 +1,4 @@
-using OpenCvSharp;
+using Emgu.CV;
 using WuxAuto.Core;
 using WuxAuto.Input;
 using WuxAuto.Interop;

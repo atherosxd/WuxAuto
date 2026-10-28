@@ -1,5 +1,5 @@
 using System.Globalization;
-using OpenCvSharp;
+using Emgu.CV;
 using WuxAuto.Core;
 using WuxAuto.Vision;
 using LogLevel = WuxAuto.Core.LogLevel;

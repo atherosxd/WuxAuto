@@ -1,5 +1,8 @@
+using System.Drawing;
 using System.IO;
-using OpenCvSharp;
+using Emgu.CV;
+using Emgu.CV.CvEnum;
+using Emgu.CV.Structure;
 using WuxAuto.Core;
 using WuxAuto.Vision;
 
@@ -21,15 +24,15 @@ internal static class FrameProbe
         using var analyzer = new ScreenAnalyzer(settings, new OcrService());
         foreach (string path in Directory.GetFiles(dir, "*.png").Where(p => !p.EndsWith(".scan.png") && !p.EndsWith(".crop.png")).Order())
         {
-            using var source = Cv2.ImRead(path, ImreadModes.Unchanged);
-            if (source.Empty())
+            using var source = ImageFile.Read(path, ImreadModes.Unchanged);
+            if (source.IsEmpty)
                 continue;
 
             using var frame = new Mat();
-            if (source.Channels() == 4)
+            if (source.NumberOfChannels == 4)
                 source.CopyTo(frame);
             else
-                Cv2.CvtColor(source, frame, ColorConversionCodes.BGR2BGRA);
+                CvInvoke.CvtColor(source, frame, ColorConversion.Bgr2Bgra);
 
             var band = settings.Regions.Minimap.ToPixels(frame.Width, frame.Height);
             // Same rule as AutomationPilot.ReadMinimapTitleAsync.
@@ -58,8 +61,8 @@ internal static class FrameProbe
         using var analyzer = new ScreenAnalyzer(settings, new OcrService());
         foreach (string path in Directory.GetFiles(dir, "*.png").Where(p => !p.EndsWith(".scan.png") && !p.EndsWith(".crop.png")).Order())
         {
-            using var frame = Cv2.ImRead(path, ImreadModes.Color);
-            if (frame.Empty())
+            using var frame = ImageFile.Read(path, ImreadModes.ColorBgr);
+            if (frame.IsEmpty)
                 continue;
 
             var ring = analyzer.FindBossRing(frame);
@@ -85,8 +88,8 @@ internal static class FrameProbe
         int found = 0, total = 0;
         foreach (string path in Directory.GetFiles(dir, "*.png").Where(p => !p.EndsWith(".scan.png") && !p.EndsWith(".crop.png")).Order())
         {
-            using var frame = Cv2.ImRead(path, ImreadModes.Color);
-            if (frame.Empty())
+            using var frame = ImageFile.Read(path, ImreadModes.ColorBgr);
+            if (frame.IsEmpty)
                 continue;
 
             total++;
@@ -97,12 +100,13 @@ internal static class FrameProbe
                 found++;
                 where = $"{box.X},{box.Y} {box.Width}x{box.Height} (centre {box.CenterX},{box.CenterY})";
                 int pad = Math.Max(40, box.Width);
-                var crop = new Rect(Math.Max(0, box.X - pad), Math.Max(0, box.Y - pad),
+                var crop = new Rectangle(Math.Max(0, box.X - pad), Math.Max(0, box.Y - pad),
                     Math.Min(frame.Width - Math.Max(0, box.X - pad), box.Width + 2 * pad),
                     Math.Min(frame.Height - Math.Max(0, box.Y - pad), box.Height + 2 * pad));
-                using var view = new Mat(frame, crop).Clone();
-                Cv2.Rectangle(view, new Rect(box.X - crop.X, box.Y - crop.Y, box.Width, box.Height), Scalar.Lime, 1);
-                Cv2.ImWrite(Path.Combine(outDir, Path.GetFileName(path)), view);
+                using var cropView = new Mat(frame, crop);
+                using var view = cropView.Clone();
+                CvHelpers.DrawRectangle(view, new Rectangle(box.X - crop.X, box.Y - crop.Y, box.Width, box.Height), new MCvScalar(0, 255, 0), 1);
+                ImageFile.Write(Path.Combine(outDir, Path.GetFileName(path)), view);
             }
 
             Console.WriteLine($"{Path.GetFileName(path)} {frame.Width}x{frame.Height} | ring {where}");
@@ -125,8 +129,8 @@ internal static class FrameProbe
         int open = 0, shut = 0, differ = 0;
         foreach (string path in Directory.GetFiles(dir, "*.png").Where(p => !p.EndsWith(".scan.png") && !p.EndsWith(".crop.png")).Order())
         {
-            using var frame = Cv2.ImRead(path, ImreadModes.Color);
-            if (frame.Empty())
+            using var frame = ImageFile.Read(path, ImreadModes.ColorBgr);
+            if (frame.IsEmpty)
                 continue;
 
             var roi = settings.Regions.MapBossList.ToPixels(frame.Width, frame.Height);
@@ -172,8 +176,8 @@ internal static class FrameProbe
         Directory.CreateDirectory(outDir);
         foreach (string path in Directory.GetFiles(dir, "*.png").Where(p => !p.EndsWith(".scan.png") && !p.EndsWith(".crop.png")).Order())
         {
-            using var frame = Cv2.ImRead(path, ImreadModes.Color);
-            if (frame.Empty())
+            using var frame = ImageFile.Read(path, ImreadModes.ColorBgr);
+            if (frame.IsEmpty)
                 continue;
 
             var roi = settings.Regions.Hotbar.ToPixels(frame.Width, frame.Height);
@@ -187,8 +191,8 @@ internal static class FrameProbe
                 verdict = hit.Score < settings.Sequence.RunSkillMatchScore ? "below score"
                     : ring >= settings.Sequence.RunSkillRingMin ? "ON" : "off -> click";
                 var box = hit.Bounds.Inflate(hit.Bounds.Width / 2).Clamp(frame.Width, frame.Height);
-                using var crop = new Mat(frame, new Rect(box.X, box.Y, box.Width, box.Height));
-                Cv2.ImWrite(Path.Combine(outDir, Path.GetFileName(path)), crop);
+                using var crop = new Mat(frame, new Rectangle(box.X, box.Y, box.Width, box.Height));
+                ImageFile.Write(Path.Combine(outDir, Path.GetFileName(path)), crop);
             }
 
             Console.WriteLine($"{Path.GetFileName(path)} {frame.Width}x{frame.Height} | {template}: {(hit == null ? "not found" : $"{hit.Score:0.000} at {hit.Bounds.CenterX},{hit.Bounds.CenterY} {hit.Bounds.Width}x{hit.Bounds.Height} scale {hit.Scale:0.00}")}{ringText} -> {verdict} ({ms:0} ms)");
@@ -204,11 +208,11 @@ internal static class FrameProbe
         using var analyzer = new ScreenAnalyzer(settings, new OcrService());
         foreach (string path in Directory.GetFiles(dir, "*.png").Where(p => !p.EndsWith(".scan.png") && !p.EndsWith(".crop.png")).Order())
         {
-            using var source = Cv2.ImRead(path, ImreadModes.Color);
-            if (source.Empty())
+            using var source = ImageFile.Read(path, ImreadModes.ColorBgr);
+            if (source.IsEmpty)
                 continue;
             using var frame = new Mat();
-            Cv2.CvtColor(source, frame, ColorConversionCodes.BGR2BGRA);
+            CvInvoke.CvtColor(source, frame, ColorConversion.Bgr2Bgra);
 
             var trace = new List<string>();
             var watch = System.Diagnostics.Stopwatch.StartNew();
@@ -232,8 +236,8 @@ internal static class FrameProbe
         string template = settings.Lod.ShuraTemplate;
         foreach (string path in Directory.GetFiles(dir, "*.png").Where(p => !p.EndsWith(".scan.png") && !p.EndsWith(".crop.png")).Order())
         {
-            using var frame = Cv2.ImRead(path, ImreadModes.Color);
-            if (frame.Empty())
+            using var frame = ImageFile.Read(path, ImreadModes.ColorBgr);
+            if (frame.IsEmpty)
                 continue;
 
             var roi = settings.Regions.Hotbar.ToPixels(frame.Width, frame.Height);
@@ -247,19 +251,19 @@ internal static class FrameProbe
 
     public static async Task<int> RunAsync(string path, string[] args)
     {
-        var source = Cv2.ImRead(path, ImreadModes.Unchanged);
-        if (source.Empty())
+        var source = ImageFile.Read(path, ImreadModes.Unchanged);
+        if (source.IsEmpty)
         {
             Console.WriteLine($"could not read {path}");
             return 1;
         }
 
-        using var frame = source.Channels() == 4
+        using var frame = source.NumberOfChannels == 4
             ? source
             : new Mat();
 
-        if (source.Channels() != 4)
-            Cv2.CvtColor(source, frame, ColorConversionCodes.BGR2BGRA);
+        if (source.NumberOfChannels != 4)
+            CvInvoke.CvtColor(source, frame, ColorConversion.Bgr2Bgra);
 
         var settings = SettingsStore.Load(persistMigration: false);
         using var analyzer = new ScreenAnalyzer(settings, new OcrService());
@@ -413,7 +417,7 @@ internal static class FrameProbe
         string output = Path.Combine(
             Path.GetDirectoryName(Path.GetFullPath(path)) ?? ".",
             Path.GetFileNameWithoutExtension(path) + ".scan.png");
-        Cv2.ImWrite(output, annotated);
+        ImageFile.Write(output, annotated);
         Console.WriteLine($"annotated: {output}");
 
         int cropIndex = Array.IndexOf(args, "--crop");
@@ -422,7 +426,7 @@ internal static class FrameProbe
             int.TryParse(args[cropIndex + 3], out int cw) && int.TryParse(args[cropIndex + 4], out int ch))
         {
             double zoom = cropIndex + 5 < args.Length && double.TryParse(args[cropIndex + 5], out double z) ? z : 3;
-            var rect = new Rect(
+            var rect = new Rectangle(
                 Math.Clamp(cx, 0, frame.Width - 1),
                 Math.Clamp(cy, 0, frame.Height - 1),
                 Math.Clamp(cw, 1, frame.Width - cx),
@@ -430,12 +434,12 @@ internal static class FrameProbe
 
             using var crop = new Mat(annotated, rect);
             using var zoomed = new Mat();
-            Cv2.Resize(crop, zoomed, new Size(rect.Width * (int)zoom, rect.Height * (int)zoom), 0, 0, InterpolationFlags.Nearest);
+            CvInvoke.Resize(crop, zoomed, new Size(rect.Width * (int)zoom, rect.Height * (int)zoom), 0, 0, Inter.Nearest);
 
             string cropPath = Path.Combine(
                 Path.GetDirectoryName(Path.GetFullPath(path)) ?? ".",
                 $"{Path.GetFileNameWithoutExtension(path)}.crop.png");
-            Cv2.ImWrite(cropPath, zoomed);
+            ImageFile.Write(cropPath, zoomed);
             Console.WriteLine($"crop: {cropPath} ({rect.Width}x{rect.Height} at {rect.X},{rect.Y} x{zoom:0})");
         }
 

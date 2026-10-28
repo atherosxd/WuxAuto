@@ -1,6 +1,9 @@
-using OpenCvSharp;
+using System.Drawing;
+using Emgu.CV;
+using Emgu.CV.Structure;
 using WuxAuto.Automation;
 using WuxAuto.Core;
+using WuxAuto.Vision;
 
 namespace WuxAuto.Core.Tests;
 
@@ -96,8 +99,8 @@ public class LodRingCheckTests
             if (!swapped && CtrlClicks(input) >= 1)
             {
                 swapped = true;
-                frame.SetTo(Scalar.All(0));
-                Cv2.Rectangle(frame, new Rect(300, 300, 20, 200), new Scalar(255, 255, 0, 255), -1);
+                frame.SetTo(new MCvScalar(0, 0, 0, 0));
+                CvHelpers.DrawRectangle(frame, new Rectangle(300, 300, 20, 200), new MCvScalar(255, 255, 0, 255), -1);
             }
 
             return lines.Any(l => l.Contains("attacking again", StringComparison.Ordinal));
@@ -120,8 +123,8 @@ public class LodRingCheckTests
             if (resumedAt == 0 && lines.Any(l => l.Contains("attacking again", StringComparison.Ordinal)))
             {
                 resumedAt = Environment.TickCount64;
-                frame.SetTo(Scalar.All(0));
-                Cv2.Rectangle(frame, new Rect(300, 300, 20, 200), new Scalar(255, 255, 0, 255), -1); // a tall cyan "belt" far left
+                frame.SetTo(new MCvScalar(0, 0, 0, 0));
+                CvHelpers.DrawRectangle(frame, new Rectangle(300, 300, 20, 200), new MCvScalar(255, 255, 0, 255), -1); // a tall cyan "belt" far left
             }
 
             return resumedAt > 0 && Environment.TickCount64 - resumedAt > 1500;
@@ -137,8 +140,8 @@ public class LodRingCheckTests
     /// <summary>Black frame with a pink ring (H 155, S 135, V 255 - inside FindBossRing's band) round <paramref name="centre"/>.</summary>
     private static Mat Frame(Point centre)
     {
-        var frame = new Mat(Height, Width, MatType.CV_8UC4, Scalar.All(0));
-        Cv2.Ellipse(frame, centre, new Size(110, 40), 0, 0, 360, new Scalar(230, 120, 255, 255), 8);
+        var frame = Blank.Bgra(Height, Width);
+        CvInvoke.Ellipse(frame, centre, new Size(110, 40), 0, 0, 360, new MCvScalar(230, 120, 255, 255), 8);
         return frame;
     }
 

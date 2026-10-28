@@ -1,5 +1,9 @@
+using System.Drawing;
 using System.IO;
-using OpenCvSharp;
+using System.Text.RegularExpressions;
+using Emgu.CV;
+using Emgu.CV.CvEnum;
+using Emgu.CV.Structure;
 using WuxAuto.Automation;
 using WuxAuto.Core;
 using WuxAuto.SelfTest;
@@ -118,6 +122,18 @@ int lodPartsIndex = Array.IndexOf(args, "--lodparts");
 if (lodPartsIndex >= 0 && lodPartsIndex + 1 < args.Length)
     return FrameProbe.LodParts(args[lodPartsIndex + 1]);
 
+int parityIndex = Array.IndexOf(args, "--parity");
+if (parityIndex >= 0)
+{
+    if (parityIndex + 1 >= args.Length)
+    {
+        Console.WriteLine("usage: --parity <folder of frames>");
+        return 1;
+    }
+
+    return await ParityProbe.RunAsync(args[parityIndex + 1]);
+}
+
 int titlesIndex = Array.IndexOf(args, "--titles");
 if (titlesIndex >= 0 && titlesIndex + 1 < args.Length)
     return await FrameProbe.TitlesAsync(args[titlesIndex + 1]);
@@ -141,7 +157,7 @@ string assets = assetsArg ?? Path.GetFullPath(Path.Combine(
 bool verbose = args.Contains("--verbose");
 
 Console.WriteLine($"assets: {assets}");
-Console.WriteLine($"OpenCV: {Cv2.GetVersionString()}");
+Console.WriteLine($"OpenCV: {Regex.Match(CvInvoke.BuildInformation, @"OpenCV (\S+)").Groups[1].Value}");
 
 using var library = new TemplateLibrary(assets);
 using var matcher = new TemplateMatcher(library);
@@ -161,14 +177,15 @@ void Check(string name, bool ok, string detail)
 double AngleError(double a, double b) => Math.Abs((a - b + 540) % 360 - 180);
 
 // ---------------------------------------------------------------- synthetic frame
-using var frame = new Mat(1080, 1920, MatType.CV_8UC4, new Scalar(22, 20, 18, 255));
+using var frame = new Mat(1080, 1920, DepthType.Cv8U, 4);
+frame.SetTo(new MCvScalar(22, 20, 18, 255));
 
 void PasteGray(string template, int x, int y)
 {
     var image = library.Get(template) ?? throw new InvalidOperationException($"missing {template}");
     using var color = new Mat();
-    Cv2.CvtColor(image.Gray, color, ColorConversionCodes.GRAY2BGRA);
-    using var roi = new Mat(frame, new Rect(x, y, color.Width, color.Height));
+    CvInvoke.CvtColor(image.Gray, color, ColorConversion.Gray2Bgra);
+    using var roi = new Mat(frame, new Rectangle(x, y, color.Width, color.Height));
     color.CopyTo(roi);
 }
 
@@ -209,8 +226,8 @@ foreach (var (name, expectedX, expectedY) in new[]
 }
 
 // ---------------------------------------------------------------- OCR
-Cv2.PutText(frame, "Labyrinth", new Point(700, 520), HersheyFonts.HersheySimplex, 1.1,
-    new Scalar(245, 245, 245, 255), 2, LineTypes.AntiAlias);
+CvInvoke.PutText(frame, "Labyrinth", new Point(700, 520), HersheyFonts.Simplex, 1.1,
+    new MCvScalar(245, 245, 245, 255), 2, LineType.AntiAlias);
 var ocrArea = new PixelRect(650, 460, 520, 110);
 var words = await ocr.RecognizeAsync(frame, ocrArea, 1.5);
 var hit = TextMatcher.FindBest(words, "Labyrinth", 0.7);
@@ -223,27 +240,30 @@ Check("ocr Labyrinth", hit != null,
 foreach (int visualAngle in new[] { 0, 40, 135, 200, 330 })
 {
     const int side = 420;
-    using var scene = new Mat(side, side, MatType.CV_8UC4, new Scalar(0, 0, 0, 255));
+    using var scene = new Mat(side, side, DepthType.Cv8U, 4);
+    scene.SetTo(new MCvScalar(0, 0, 0, 255));
 
     var flash = library.Get("flashlight")!;
     int padSize = (int)Math.Ceiling(Math.Sqrt(flash.Width * (double)flash.Width + flash.Height * (double)flash.Height)) + 2;
     if (padSize % 2 != 0)
         padSize++;
 
-    using var padded = new Mat(padSize, padSize, MatType.CV_8UC1, Scalar.Black);
+    using var padded = new Mat(padSize, padSize, DepthType.Cv8U, 1);
+    padded.SetTo(new MCvScalar(0, 0, 0));
     int left = (padSize - flash.Width) / 2;
     int top = (padSize - flash.Height) / 2;
-    using (var inner = new Mat(padded, new Rect(left, top, flash.Width, flash.Height)))
+    using (var inner = new Mat(padded, new Rectangle(left, top, flash.Width, flash.Height)))
         flash.Gray.CopyTo(inner);
 
-    using var rotation = Cv2.GetRotationMatrix2D(new Point2f(padSize / 2f, padSize / 2f), visualAngle, 1.0);
+    using var rotation = new Mat();
+    CvInvoke.GetRotationMatrix2D(new PointF(padSize / 2f, padSize / 2f), visualAngle, 1.0, rotation);
     using var rotated = new Mat();
-    Cv2.WarpAffine(padded, rotated, rotation, new Size(padSize, padSize), InterpolationFlags.Linear, BorderTypes.Constant, Scalar.Black);
+    CvInvoke.WarpAffine(padded, rotated, rotation, new Size(padSize, padSize), Inter.Linear, Warp.Default, BorderType.Constant, new MCvScalar(0, 0, 0));
 
     using var rotatedColor = new Mat();
-    Cv2.CvtColor(rotated, rotatedColor, ColorConversionCodes.GRAY2BGRA);
+    CvInvoke.CvtColor(rotated, rotatedColor, ColorConversion.Gray2Bgra);
     int offset = (side - padSize) / 2;
-    using (var roi = new Mat(scene, new Rect(offset, offset, padSize, padSize)))
+    using (var roi = new Mat(scene, new Rectangle(offset, offset, padSize, padSize)))
         rotatedColor.CopyTo(roi);
 
     if (verbose)
@@ -285,18 +305,19 @@ if (verbose)
 // The pale pink ring round the boss's feet (live: H ~150, S 50-80, V 255), cut into three arcs by the
 // boss's legs and the character, plus a pink speck elsewhere; four cyan circles stacked as the belt,
 // plus two side by side (the boss's eyes) that are not a belt.
-using (var lodFrame = new Mat(1080, 1920, MatType.CV_8UC4, new Scalar(22, 20, 18, 255)))
+using (var lodFrame = new Mat(1080, 1920, DepthType.Cv8U, 4))
 {
-    var lavender = new Scalar(250, 170, 235, 255);
+    lodFrame.SetTo(new MCvScalar(22, 20, 18, 255));
+    var lavender = new MCvScalar(250, 170, 235, 255);
     foreach (var (from, to) in new[] { (10, 80), (100, 170), (190, 350) })
-        Cv2.Ellipse(lodFrame, new Point(1000, 450), new Size(130, 55), 0, from, to, lavender, 6, LineTypes.AntiAlias);
-    Cv2.Rectangle(lodFrame, new Rect(500, 800, 10, 10), lavender, -1);
+        CvInvoke.Ellipse(lodFrame, new Point(1000, 450), new Size(130, 55), 0, from, to, lavender, 6, LineType.AntiAlias);
+    CvHelpers.DrawRectangle(lodFrame, new Rectangle(500, 800, 10, 10), lavender, -1);
 
-    var cyan = new Scalar(230, 230, 0, 255);
+    var cyan = new MCvScalar(230, 230, 0, 255);
     foreach (int y in new[] { 230, 270, 310, 350 })
-        Cv2.Circle(lodFrame, new Point(990, y), 14, cyan, -1, LineTypes.AntiAlias);
-    Cv2.Circle(lodFrame, new Point(900, 150), 10, cyan, -1);
-    Cv2.Circle(lodFrame, new Point(940, 150), 10, cyan, -1);
+        CvInvoke.Circle(lodFrame, new Point(990, y), 14, cyan, -1, LineType.AntiAlias);
+    CvInvoke.Circle(lodFrame, new Point(900, 150), 10, cyan, -1);
+    CvInvoke.Circle(lodFrame, new Point(940, 150), 10, cyan, -1);
 
     var bossRing = analyzer.FindBossRing(lodFrame);
     Check("lod boss ring",
@@ -317,11 +338,11 @@ try
 {
     string[] saved = new[] { "a_first", "b_second", "c_third" }.Select(tag => KillScreenshots.Save(frame, tag, killsFolder, maxFiles: 2)).ToArray();
     var left = Directory.GetFiles(killsFolder).Select(Path.GetFileName).Order(StringComparer.Ordinal).ToArray();
-    using var reread = Cv2.ImRead(saved[^1]);
+    using var reread = ImageFile.Read(saved[^1], ImreadModes.ColorBgr);
     Check("kill screenshots",
         saved.All(f => f.Length > 0) && left.Length == 2 && left[0]!.EndsWith("_b_second.jpg") && left[1]!.EndsWith("_c_third.jpg")
-        && reread.Width == frame.Width && reread.Height == frame.Height && reread.Channels() == 3,
-        $"kept {string.Join(", ", left)}; reread {reread.Width}x{reread.Height}x{reread.Channels()}");
+        && reread.Width == frame.Width && reread.Height == frame.Height && reread.NumberOfChannels == 3,
+        $"kept {string.Join(", ", left)}; reread {reread.Width}x{reread.Height}x{reread.NumberOfChannels}");
 }
 finally
 {

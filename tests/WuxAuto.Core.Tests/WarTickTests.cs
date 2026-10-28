@@ -1,4 +1,7 @@
-using OpenCvSharp;
+using System.Drawing;
+using Emgu.CV;
+using Emgu.CV.CvEnum;
+using Emgu.CV.Structure;
 using WuxAuto.Automation;
 using WuxAuto.Core;
 using WuxAuto.Vision;
@@ -71,25 +74,25 @@ public class WarTickTests
     private static async Task<(PilotPhase Phase, List<string> Lines)> RunMapPickAsync(AppSettings settings, FakeGameInput input,
         FakeOcrEngine ocr, Func<bool> done)
     {
-        using var frame = new Mat(Height, Width, MatType.CV_8UC4, Scalar.All(0));
+        using var frame = Blank.Bgra(Height, Width);
         for (int i = 0; i < 3; i++)
             DrawChevron(frame, 1800, 300 + 40 * i);
 
         return await PilotRun.RunAsync(settings, input, ocr, frame, PilotPhase.ReadStage, (_, _) => done(),
             assets: folder =>
             {
-                using var chevron = new Mat(18, 14, MatType.CV_8UC1, Scalar.All(0));
+                using var chevron = Blank.Gray(18, 14);
                 DrawChevron(chevron, 0, 0);
-                Cv2.ImWrite(Path.Combine(folder, "rightchevron.png"), chevron);
+                CvInvoke.Imwrite(Path.Combine(folder, "rightchevron.png"), chevron);
             });
     }
 
     /// <summary>A white '&gt;' in a 14x18 box at (x, y).</summary>
     private static void DrawChevron(Mat image, int x, int y)
     {
-        var white = Scalar.All(255);
-        Cv2.Line(image, new Point(x + 3, y + 3), new Point(x + 10, y + 9), white, 2);
-        Cv2.Line(image, new Point(x + 10, y + 9), new Point(x + 3, y + 15), white, 2);
+        var white = new MCvScalar(255, 255, 255, 255);
+        CvInvoke.Line(image, new Point(x + 3, y + 3), new Point(x + 10, y + 9), white, 2);
+        CvInvoke.Line(image, new Point(x + 10, y + 9), new Point(x + 3, y + 15), white, 2);
     }
 
     // ---------------------------------------------------------------- joining the war
@@ -115,7 +118,7 @@ public class WarTickTests
             return words;
         };
 
-        using var frame = new Mat(Height, Width, MatType.CV_8UC4, Scalar.All(0));
+        using var frame = Blank.Bgra(Height, Width);
         long start = Environment.TickCount64;
         int readsBehind = -1, inputsBehind = -1;
         var run = await PilotRun.RunAsync(settings, input, ocr, frame, PilotPhase.WarWait, (pilot, _) =>
@@ -154,7 +157,7 @@ public class WarTickTests
         var input = new FakeGameInput();
         var ocr = new FakeOcrEngine { Scene = () => [FakeOcrEngine.Line(Cave, 1500, 10, 300, 16)] };
 
-        using var frame = new Mat(Height, Width, MatType.CV_8UC4, Scalar.All(0));
+        using var frame = Blank.Bgra(Height, Width);
         var run = await PilotRun.RunAsync(settings, input, ocr, frame, PilotPhase.CheckZone,
             (pilot, _) => pilot.Phase == PilotPhase.OpenInventory);
 
@@ -178,7 +181,7 @@ public class WarTickTests
         var input = new FakeGameInput();
         var ocr = new FakeOcrEngine { Scene = () => [FakeOcrEngine.Line(Cave, 1500, 10, 300, 16)] };
 
-        using var frame = new Mat(Height, Width, MatType.CV_8UC4, Scalar.All(0));
+        using var frame = Blank.Bgra(Height, Width);
         var run = await PilotRun.RunAsync(settings, input, ocr, frame, PilotPhase.CheckZone,
             (pilot, _) => pilot.Phase == PilotPhase.OpenInventory);
 
@@ -197,7 +200,7 @@ public class WarTickTests
         var input = new FakeGameInput();
         var ocr = new FakeOcrEngine();      // nothing reads
 
-        using var frame = new Mat(Height, Width, MatType.CV_8UC4, Scalar.All(0));
+        using var frame = Blank.Bgra(Height, Width);
         var run = await PilotRun.RunAsync(settings, input, ocr, frame, PilotPhase.CheckZone, (pilot, _) => false);
 
         string log = "\nlog:\n" + string.Join("\n", run.Lines);
@@ -215,7 +218,7 @@ public class WarTickTests
         var input = new FakeGameInput();
         var ocr = new FakeOcrEngine { Scene = () => [FakeOcrEngine.Line(Bohai, 1500, 10, 300, 16)] };
 
-        using var frame = new Mat(Height, Width, MatType.CV_8UC4, Scalar.All(0));
+        using var frame = Blank.Bgra(Height, Width);
         var run = await PilotRun.RunAsync(settings, input, ocr, frame, PilotPhase.CheckZone,
             (pilot, _) => pilot.Phase == PilotPhase.WarEnter);
 
@@ -359,7 +362,7 @@ public class WarTickTests
             return words;
         };
 
-        using var frame = new Mat(Height, Width, MatType.CV_8UC4, Scalar.All(0));
+        using var frame = Blank.Bgra(Height, Width);
         using var xBuff = Noise(seed: 4);
         using var item = Noise(seed: 7);
         using var item2 = Noise(seed: 11);
@@ -372,7 +375,7 @@ public class WarTickTests
             // Half the X buff, half other noise (like a cooldown overlay): a best score well under the 0.90 gate.
             using var other = Noise(seed: 99);
             using var faded = new Mat();
-            Cv2.AddWeighted(xBuff, 0.5, other, 0.5, 0, faded);
+            CvInvoke.AddWeighted(xBuff, 0.5, other, 0.5, 0, faded);
             Paste(frame, faded, XBuffX, IconY);
         }
         Paste(frame, item, ItemX, IconY);
@@ -388,10 +391,10 @@ public class WarTickTests
             assets: folder =>
             {
                 if (xBuffPng)
-                    Cv2.ImWrite(Path.Combine(folder, "warbuff4.png"), xBuff);
-                Cv2.ImWrite(Path.Combine(folder, "waritem1.png"), item);
+                    CvInvoke.Imwrite(Path.Combine(folder, "warbuff4.png"), xBuff);
+                CvInvoke.Imwrite(Path.Combine(folder, "waritem1.png"), item);
                 if (waritem2Png)
-                    Cv2.ImWrite(Path.Combine(folder, "waritem2.png"), item2);
+                    CvInvoke.Imwrite(Path.Combine(folder, "waritem2.png"), item2);
             });
         return (input, run);
     }
@@ -400,19 +403,28 @@ public class WarTickTests
     private static Mat Noise(int seed)
     {
         var random = new Random(seed);
-        var icon = new Mat(IconSide, IconSide, MatType.CV_8UC1);
-        for (int y = 0; y < IconSide; y++)
-            for (int x = 0; x < IconSide; x++)
-                icon.Set(y, x, (byte)random.Next(256));
-        return icon;
+        var pixels = new byte[IconSide * IconSide];
+        for (int i = 0; i < pixels.Length; i++)
+            pixels[i] = (byte)random.Next(256);   // row by row, as before
+        // A Mat header over the pinned array, cloned: OpenCV copies the pixels (CLAUDE.md §10).
+        var handle = System.Runtime.InteropServices.GCHandle.Alloc(pixels, System.Runtime.InteropServices.GCHandleType.Pinned);
+        try
+        {
+            using var view = new Mat(IconSide, IconSide, DepthType.Cv8U, 1, handle.AddrOfPinnedObject(), IconSide);
+            return view.Clone();
+        }
+        finally
+        {
+            handle.Free();
+        }
     }
 
     /// <summary>A grey image copied into the BGRA frame at (x, y).</summary>
     private static void Paste(Mat frame, Mat gray, int x, int y)
     {
         using var color = new Mat();
-        Cv2.CvtColor(gray, color, ColorConversionCodes.GRAY2BGRA);
-        using var roi = new Mat(frame, new Rect(x, y, gray.Width, gray.Height));
+        CvInvoke.CvtColor(gray, color, ColorConversion.Gray2Bgra);
+        using var roi = new Mat(frame, new Rectangle(x, y, gray.Width, gray.Height));
         color.CopyTo(roi);
     }
 

@@ -1,5 +1,7 @@
+using System.Drawing;
 using System.IO;
-using OpenCvSharp;
+using Emgu.CV;
+using Emgu.CV.CvEnum;
 using WuxAuto.Core;
 
 namespace WuxAuto.Vision;
@@ -81,15 +83,15 @@ public sealed class TemplateLibrary : IDisposable
         // right chevron, just rotated. Generating them from rightchevron.png means there is no
         // extra image to keep in sync (a real upchevron.png / downchevron.png still wins if present).
         AddRotatedVariant("rightchevron", "downchevron", RotateFlags.Rotate90Clockwise);
-        AddRotatedVariant("rightchevron", "upchevron", RotateFlags.Rotate90Counterclockwise);
+        AddRotatedVariant("rightchevron", "upchevron", RotateFlags.Rotate90CounterClockwise);
 
         // The teleport list's "previous page" arrow: the right chevron mirrored.
-        AddFlippedVariant("rightchevron", "leftchevron", FlipMode.Y);
+        AddFlippedVariant("rightchevron", "leftchevron", FlipType.Horizontal);
 
         // "Facing west" searchlights: the straight-up beams turned a quarter to the left.
         foreach (string beam in new[] { "flashlight", "flashlight2", "flashlight3", "flashlightLOD" })
         {
-            AddRotatedVariant(beam, beam + "west", RotateFlags.Rotate90Counterclockwise);
+            AddRotatedVariant(beam, beam + "west", RotateFlags.Rotate90CounterClockwise);
             AddRotatedVariant(beam, beam + "south", RotateFlags.Rotate180);
         }
     }
@@ -101,33 +103,38 @@ public sealed class TemplateLibrary : IDisposable
     /// </summary>
     private static Mat? LoadGray(string file)
     {
-        using var raw = Cv2.ImRead(file, ImreadModes.Unchanged);
-        if (raw.Empty())
+        using var raw = ImageFile.Read(file, ImreadModes.Unchanged);
+        if (raw.IsEmpty)
             return null;
 
-        if (raw.Channels() == 1)
+        if (raw.NumberOfChannels == 1)
             return raw.Clone();
 
         var gray = new Mat();
-        Cv2.CvtColor(raw, gray, raw.Channels() == 4 ? ColorConversionCodes.BGRA2GRAY : ColorConversionCodes.BGR2GRAY);
-        if (raw.Channels() != 4)
+        CvInvoke.CvtColor(raw, gray, raw.NumberOfChannels == 4 ? ColorConversion.Bgra2Gray : ColorConversion.Bgr2Gray);
+        if (raw.NumberOfChannels != 4)
             return gray;
 
         using var alpha = new Mat();
-        Cv2.ExtractChannel(raw, alpha, 3);
+        CvInvoke.ExtractChannel(raw, alpha, 3);
         using var opaque = new Mat();
-        Cv2.Threshold(alpha, opaque, 0, 255, ThresholdTypes.Binary);
-        if (Cv2.CountNonZero(opaque) == opaque.Rows * opaque.Cols)
+        CvInvoke.Threshold(alpha, opaque, 0, 255, ThresholdType.Binary);
+        if (CvInvoke.CountNonZero(opaque) == opaque.Rows * opaque.Cols)
             return gray;
 
         using var labels = new Mat();
         using var stats = new Mat();
         using var centroids = new Mat();
-        int count = Cv2.ConnectedComponentsWithStats(opaque, labels, stats, centroids);
+        int count = CvInvoke.ConnectedComponentsWithStats(opaque, labels, stats, centroids);
+        // One row per label: left, top, width, height, area.
+        int[] table = CvHelpers.Int32s(stats);
+        int columns = stats.Cols;
+        int Stat(int label, ConnectedComponentsTypes column) => table[label * columns + (int)column];
+
         int best = 0, bestArea = 0;
         for (int i = 1; i < count; i++)
         {
-            int area = stats.At<int>(i, (int)ConnectedComponentsTypes.Area);
+            int area = Stat(i, ConnectedComponentsTypes.Area);
             if (area > bestArea)
             {
                 bestArea = area;
@@ -141,23 +148,25 @@ public sealed class TemplateLibrary : IDisposable
             return null;
         }
 
-        var box = new Rect(
-            stats.At<int>(best, (int)ConnectedComponentsTypes.Left),
-            stats.At<int>(best, (int)ConnectedComponentsTypes.Top),
-            stats.At<int>(best, (int)ConnectedComponentsTypes.Width),
-            stats.At<int>(best, (int)ConnectedComponentsTypes.Height));
-        var cropped = new Mat(gray, box).Clone();
+        var box = new Rectangle(
+            Stat(best, ConnectedComponentsTypes.Left),
+            Stat(best, ConnectedComponentsTypes.Top),
+            Stat(best, ConnectedComponentsTypes.Width),
+            Stat(best, ConnectedComponentsTypes.Height));
+        Mat cropped;
+        using (var patch = new Mat(gray, box))
+            cropped = patch.Clone();
         gray.Dispose();
         return cropped;
     }
 
-    private void AddFlippedVariant(string sourceName, string targetName, FlipMode mode)
+    private void AddFlippedVariant(string sourceName, string targetName, FlipType mode)
     {
         if (_templates.ContainsKey(targetName) || !_templates.TryGetValue(sourceName, out var source))
             return;
 
         var flipped = new Mat();
-        Cv2.Flip(source.Gray, flipped, mode);
+        CvInvoke.Flip(source.Gray, flipped, mode);
         _templates[targetName] = new TemplateImage(targetName, source.Path, flipped);
     }
 
@@ -170,7 +179,7 @@ public sealed class TemplateLibrary : IDisposable
             return;
 
         var rotated = new Mat();
-        Cv2.Rotate(source.Gray, rotated, flags);
+        CvInvoke.Rotate(source.Gray, rotated, flags);
         _templates[targetName] = new TemplateImage(targetName, source.Path, rotated);
     }
 

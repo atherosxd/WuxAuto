@@ -1,5 +1,6 @@
 using System.IO;
-using OpenCvSharp;
+using Emgu.CV;
+using Emgu.CV.CvEnum;
 using WuxAuto.Core;
 
 namespace WuxAuto.Vision;
@@ -22,17 +23,16 @@ public static class KillScreenshots
             Directory.CreateDirectory(folder);
 
             using var bgr = new Mat();
-            if (frameBgra.Channels() == 4)
-                Cv2.CvtColor(frameBgra, bgr, ColorConversionCodes.BGRA2BGR);
+            if (frameBgra.NumberOfChannels == 4)
+                CvInvoke.CvtColor(frameBgra, bgr, ColorConversion.Bgra2Bgr);
             else
                 frameBgra.CopyTo(bgr);
 
-            // Encoded in memory and written by .NET: Cv2.ImWrite cannot open paths with
-            // non-ASCII characters (a user name in the profile path) on Windows.
-            Cv2.ImEncode(".jpg", bgr, out byte[] jpeg, new ImageEncodingParam(ImwriteFlags.JpegQuality, 90));
+            // Encoded in memory and written by .NET (ImageFile), so a non-ASCII user name in the
+            // profile path does not depend on the OpenCV wrapper's path handling.
             string safeTag = string.Concat(tag.Select(c => char.IsLetterOrDigit(c) || c is '-' or '_' ? c : '_'));
             string file = Path.Combine(folder, $"{DateTime.Now:yyyyMMdd_HHmmss_fff}_{safeTag}.jpg");
-            File.WriteAllBytes(file, jpeg);
+            ImageFile.Write(file, bgr, new KeyValuePair<ImwriteFlags, int>(ImwriteFlags.JpegQuality, 90));
 
             Prune(folder, maxFiles);
             return file;

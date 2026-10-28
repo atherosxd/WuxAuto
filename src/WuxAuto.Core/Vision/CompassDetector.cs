@@ -1,5 +1,8 @@
 using System.Diagnostics;
-using OpenCvSharp;
+using System.Drawing;
+using Emgu.CV;
+using Emgu.CV.CvEnum;
+using Emgu.CV.Structure;
 using WuxAuto.Core;
 
 namespace WuxAuto.Vision;
@@ -86,7 +89,7 @@ public sealed class CompassDetector : IDisposable
 
         // Compare shapes, not brightness levels: the beam sits on scenery we know nothing about.
         using var scene = new Mat();
-        Cv2.Threshold(gray, scene, 0, 255, ThresholdTypes.Binary | ThresholdTypes.Otsu);
+        CvInvoke.Threshold(gray, scene, 0, 255, ThresholdType.Binary | ThresholdType.Otsu);
 
         int coarse = Math.Clamp(settings.CompassSearchStepDeg, 2, 30);
         int refinement = Math.Max(1, coarse / 3);
@@ -99,8 +102,8 @@ public sealed class CompassDetector : IDisposable
         double searchScale = scale;
         if (coarseFactor > 1)
         {
-            Cv2.Resize(scene, halfScene, new Size(scene.Width / coarseFactor, scene.Height / coarseFactor), 0, 0, InterpolationFlags.Area);
-            Cv2.Threshold(halfScene, halfScene, 127, 255, ThresholdTypes.Binary);
+            CvInvoke.Resize(scene, halfScene, new Size(scene.Width / coarseFactor, scene.Height / coarseFactor), 0, 0, Inter.Area);
+            CvInvoke.Threshold(halfScene, halfScene, 127, 255, ThresholdType.Binary);
             searchScene = halfScene;
             searchScale = scale / coarseFactor;
         }
@@ -148,9 +151,9 @@ public sealed class CompassDetector : IDisposable
             return (double.MinValue, default);
 
         using var result = new Mat();
-        Cv2.MatchTemplate(scene, rotated, result, TemplateMatchModes.CCorrNormed);
-        Cv2.PatchNaNs(result, 0);
-        Cv2.MinMaxLoc(result, out _, out double max, out _, out var location);
+        CvInvoke.MatchTemplate(scene, rotated, result, TemplateMatchingType.CcorrNormed);
+        CvInvoke.PatchNaNs(result, 0);
+        var (max, location) = CvHelpers.MaxLoc(result);
 
         TraceScores?.Invoke(angle, max);
         if (!double.IsFinite(max))
@@ -175,18 +178,18 @@ public sealed class CompassDetector : IDisposable
         int height = Math.Max(4, (int)Math.Round(template.Height * scale));
 
         using var resized = new Mat();
-        Cv2.Resize(template.Gray, resized, new Size(width, height), 0, 0,
-            scale < 1 ? InterpolationFlags.Area : InterpolationFlags.Cubic);
+        CvInvoke.Resize(template.Gray, resized, new Size(width, height), 0, 0,
+            scale < 1 ? Inter.Area : Inter.Cubic);
 
         using var icon = new Mat();
-        Cv2.Threshold(resized, icon, 0, 255, ThresholdTypes.Binary | ThresholdTypes.Otsu);
-        if (Cv2.CountNonZero(icon) < resized.Total() * 0.005)
-            icon.SetTo(Scalar.White);
+        CvInvoke.Threshold(resized, icon, 0, 255, ThresholdType.Binary | ThresholdType.Otsu);
+        if (CvInvoke.CountNonZero(icon) < resized.Total.ToInt64() * 0.005)
+            icon.SetTo(new MCvScalar(255, 255, 255));
         else
         {
             // Slightly fatten the icon so a soft-edged beam in the game still overlaps it.
-            using var kernel = Cv2.GetStructuringElement(MorphShapes.Ellipse, new Size(3, 3));
-            Cv2.Dilate(icon, icon, kernel);
+            using var kernel = CvHelpers.StructuringElement(MorphShapes.Ellipse, new Size(3, 3));
+            CvHelpers.Dilate(icon, icon, kernel);
         }
 
         int side = (int)Math.Ceiling(Math.Sqrt(width * (double)width + height * (double)height)) + 2;
@@ -197,8 +200,8 @@ public sealed class CompassDetector : IDisposable
         int padLeft = (side - width) / 2;
 
         using var padded = new Mat();
-        Cv2.CopyMakeBorder(icon, padded, padTop, side - height - padTop, padLeft, side - width - padLeft,
-            BorderTypes.Constant, Scalar.Black);
+        CvInvoke.CopyMakeBorder(icon, padded, padTop, side - height - padTop, padLeft, side - width - padLeft,
+            BorderType.Constant, new MCvScalar(0, 0, 0));
 
         var rotated = new Mat();
         if (normalizedAngle == 0)
@@ -207,11 +210,12 @@ public sealed class CompassDetector : IDisposable
         }
         else
         {
-            var center = new Point2f(side / 2f, side / 2f);
-            using var rotation = Cv2.GetRotationMatrix2D(center, normalizedAngle, 1.0);
-            Cv2.WarpAffine(padded, rotated, rotation, new Size(side, side), InterpolationFlags.Nearest,
-                BorderTypes.Constant, Scalar.Black);
-            Cv2.Threshold(rotated, rotated, 127, 255, ThresholdTypes.Binary);
+            var center = new PointF(side / 2f, side / 2f);
+            using var rotation = new Mat();
+            CvInvoke.GetRotationMatrix2D(center, normalizedAngle, 1.0, rotation);
+            CvInvoke.WarpAffine(padded, rotated, rotation, new Size(side, side), Inter.Nearest, Warp.Default,
+                BorderType.Constant, new MCvScalar(0, 0, 0));
+            CvInvoke.Threshold(rotated, rotated, 127, 255, ThresholdType.Binary);
         }
 
         _rotations[key] = rotated;
@@ -227,9 +231,9 @@ public sealed class CompassDetector : IDisposable
     {
         var stopwatch = Stopwatch.StartNew();
         using var mask = new Mat();
-        Cv2.Threshold(gray, mask, 0, 255, ThresholdTypes.Binary | ThresholdTypes.Otsu);
+        CvInvoke.Threshold(gray, mask, 0, 255, ThresholdType.Binary | ThresholdType.Otsu);
 
-        var moments = Cv2.Moments(mask, binaryImage: true);
+        using var moments = CvInvoke.Moments(mask, binaryImage: true);
         if (moments.M00 < 25)
             return null;
 
@@ -245,14 +249,14 @@ public sealed class CompassDetector : IDisposable
         double elongation = Math.Sqrt(Math.Max(0, major) / minor);
 
         // The light source is the brightest blob; the beam opens away from it.
-        Cv2.MinMaxLoc(gray, out _, out double maxValue, out _, out var maxLocation);
+        var (maxValue, maxLocation) = CvHelpers.MaxLoc(gray);
         double coreX = maxLocation.X;
         double coreY = maxLocation.Y;
         if (maxValue > 0)
         {
             using var coreMask = new Mat();
-            Cv2.Threshold(gray, coreMask, maxValue * 0.92, 255, ThresholdTypes.Binary);
-            var coreMoments = Cv2.Moments(coreMask, binaryImage: true);
+            CvInvoke.Threshold(gray, coreMask, maxValue * 0.92, 255, ThresholdType.Binary);
+            using var coreMoments = CvInvoke.Moments(coreMask, binaryImage: true);
             if (coreMoments.M00 > 4)
             {
                 coreX = coreMoments.M10 / coreMoments.M00;

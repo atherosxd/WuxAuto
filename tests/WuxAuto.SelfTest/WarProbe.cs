@@ -1,6 +1,9 @@
 using System.Diagnostics;
+using System.Drawing;
 using System.IO;
-using OpenCvSharp;
+using Emgu.CV;
+using Emgu.CV.CvEnum;
+using Emgu.CV.Structure;
 using WuxAuto.Automation;
 using WuxAuto.Core;
 using WuxAuto.Vision;
@@ -21,15 +24,31 @@ internal static class WarProbe
     /// <summary>A saved frame as BGRA (what the capture hands the pilot); null when it cannot be read.</summary>
     private static Mat? Load(string path)
     {
-        using var source = Cv2.ImRead(path, ImreadModes.Color);
-        if (source.Empty())
+        using var source = ImageFile.Read(path, ImreadModes.ColorBgr);
+        if (source.IsEmpty)
             return null;
         var frame = new Mat();
-        Cv2.CvtColor(source, frame, ColorConversionCodes.BGR2BGRA);
+        CvInvoke.CvtColor(source, frame, ColorConversion.Bgr2Bgra);
         return frame;
     }
 
     private static string Box(PixelRect r) => $"{r.X},{r.Y} {r.Width}x{r.Height}";
+
+    /// <summary>
+    /// A synthetic BGRA image: <paramref name="colour"/>, white text drawn by <paramref name="draw"/>, opaque. The text
+    /// goes on a BGR canvas first: Emgu CV 5's OpenCV 5.0 putText (its own fonts, not 4.x's Hershey strokes) blends
+    /// the alpha channel of a BGRA image, so anti-aliased text drawn there straight is nearly transparent and Windows
+    /// OCR reads garbage (2026-10-28: "Bohai Outpost (Adept)" read as "OBchEi OL8]l").
+    /// </summary>
+    private static Mat Synthetic(int rows, int cols, MCvScalar colour, Action<Mat> draw)
+    {
+        using var canvas = new Mat(rows, cols, DepthType.Cv8U, 3);
+        canvas.SetTo(colour);
+        draw(canvas);
+        var image = new Mat();
+        CvInvoke.CvtColor(canvas, image, ColorConversion.Bgr2Bgra);
+        return image;
+    }
 
     /// <summary>
     /// --hp &lt;dir&gt;: the player's HP as ScreenAnalyzer.ReadPlayerHpAsync reads it and which read gave it (the
@@ -257,8 +276,8 @@ internal static class WarProbe
         var synthetic = new List<string>();
         foreach (string sample in new[] { "00:04:25", "00: 04: 25" })
         {
-            using var image = new Mat(60, 300, MatType.CV_8UC4, new Scalar(25, 25, 25, 255));
-            Cv2.PutText(image, sample, new Point(10, 40), HersheyFonts.HersheySimplex, 1.0, new Scalar(240, 240, 240, 255), 2, LineTypes.AntiAlias);
+            using var image = Synthetic(60, 300, new MCvScalar(25, 25, 25, 255),
+                canvas => CvInvoke.PutText(canvas, sample, new Point(10, 40), HersheyFonts.Simplex, 1.0, new MCvScalar(240, 240, 240, 255), 2, LineType.AntiAlias));
             var read = ScreenAnalyzer.ToLines(await analyzer.Ocr.RecognizeAsync(image, new PixelRect(0, 0, image.Width, image.Height), 2.0));
             synthetic.Add($"'{sample}' -> '{string.Join(" | ", read.Select(l => l.Text))}'");
         }
@@ -267,15 +286,22 @@ internal static class WarProbe
 
         // A synthetic Tribe Status row under a notice naming the war and a stray bare row line with no time
         // (both tried before it, neither decides), and another war's row below it.
-        using (var image = new Mat(240, 700, MatType.CV_8UC4, new Scalar(25, 25, 25, 255)))
+        var white = new MCvScalar(240, 240, 240, 255);
+        // The time column: 8 text heights right of the row name's end, as in the screenshot (~5.6 heights there) and
+        // inside the 20-height band the pilot reads; measured, so OpenCV's font metrics cannot push it out of the band.
+        int baseline = 0;
+        var rowSize = CvInvoke.GetTextSize(rowText, HersheyFonts.Simplex, 0.6, 1, ref baseline);
+        int timeX = 10 + rowSize.Width + 8 * rowSize.Height;
+        using (var image = Synthetic(240, 700, new MCvScalar(25, 25, 25, 255), canvas =>
+               {
+                   CvInvoke.PutText(canvas, $"[{rowText}] [10] minute(s) to opening", new Point(10, 40), HersheyFonts.Simplex, 0.6, white, 1, LineType.AntiAlias);
+                   CvInvoke.PutText(canvas, rowText, new Point(10, 90), HersheyFonts.Simplex, 0.6, white, 1, LineType.AntiAlias);
+                   CvInvoke.PutText(canvas, rowText, new Point(10, 140), HersheyFonts.Simplex, 0.6, white, 1, LineType.AntiAlias);
+                   CvInvoke.PutText(canvas, "00:04:25", new Point(timeX, 140), HersheyFonts.Simplex, 0.6, white, 1, LineType.AntiAlias);
+                   CvInvoke.PutText(canvas, "Dragonfall Outpost", new Point(10, 190), HersheyFonts.Simplex, 0.6, white, 1, LineType.AntiAlias);
+                   CvInvoke.PutText(canvas, "In progress", new Point(timeX, 190), HersheyFonts.Simplex, 0.6, white, 1, LineType.AntiAlias);
+               }))
         {
-            var white = new Scalar(240, 240, 240, 255);
-            Cv2.PutText(image, $"[{rowText}] [10] minute(s) to opening", new Point(10, 40), HersheyFonts.HersheySimplex, 0.6, white, 1, LineTypes.AntiAlias);
-            Cv2.PutText(image, rowText, new Point(10, 90), HersheyFonts.HersheySimplex, 0.6, white, 1, LineTypes.AntiAlias);
-            Cv2.PutText(image, rowText, new Point(10, 140), HersheyFonts.HersheySimplex, 0.6, white, 1, LineTypes.AntiAlias);
-            Cv2.PutText(image, "00:04:25", new Point(520, 140), HersheyFonts.HersheySimplex, 0.6, white, 1, LineTypes.AntiAlias);
-            Cv2.PutText(image, "Dragonfall Outpost", new Point(10, 190), HersheyFonts.HersheySimplex, 0.6, white, 1, LineTypes.AntiAlias);
-            Cv2.PutText(image, "In progress", new Point(520, 190), HersheyFonts.HersheySimplex, 0.6, white, 1, LineTypes.AntiAlias);
             var trace = new List<string>();
             var lines = ScreenAnalyzer.ToLines(await analyzer.Ocr.RecognizeAsync(image, new PixelRect(0, 0, image.Width, image.Height), 1.0));
             var row = await analyzer.ReadWarCountdownAsync(image, lines, rowText, trace);

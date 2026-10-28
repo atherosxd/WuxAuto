@@ -1,4 +1,4 @@
-using OpenCvSharp;
+using Emgu.CV;
 using WuxAuto.Vision;
 
 namespace WuxAuto.Core;

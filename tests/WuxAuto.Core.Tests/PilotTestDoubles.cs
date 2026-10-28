@@ -1,4 +1,6 @@
-using OpenCvSharp;
+using Emgu.CV;
+using Emgu.CV.CvEnum;
+using Emgu.CV.Structure;
 using WuxAuto.Automation;
 using WuxAuto.Core;
 using WuxAuto.Input;
@@ -136,5 +138,20 @@ static class PilotRun
             if (Directory.Exists(root))
                 Directory.Delete(root, true);
         }
+    }
+}
+
+/// <summary>Black test frames: cv::Mat(rows, cols, type, Scalar::all(0)), allocated and filled by OpenCV.</summary>
+static class Blank
+{
+    public static Mat Bgra(int rows, int cols) => Filled(rows, cols, 4);
+
+    public static Mat Gray(int rows, int cols) => Filled(rows, cols, 1);
+
+    private static Mat Filled(int rows, int cols, int channels)
+    {
+        var mat = new Mat(rows, cols, DepthType.Cv8U, channels);
+        mat.SetTo(new MCvScalar(0, 0, 0, 0));
+        return mat;
     }
 }
