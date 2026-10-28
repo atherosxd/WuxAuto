@@ -46,11 +46,38 @@ public sealed class KeyboardMouseControlsTests
     }));
 
     [Fact]
+    public void ActionUp_ReleasesTheKeyActionDownPressed_EvenAfterTheSettingChanged()
+    {
+        var (settings, input, controls) = Harness();
+        controls.ActionDown(GameAction.ShuraKey);
+        settings.Lod.ShuraKey = "R";
+        controls.ActionUp(GameAction.ShuraKey);
+        Assert.Equal(["KeyDown:E", "KeyUp:E"], input.Calls);
+    }
+
+    [Fact]
+    public void ActionUp_WithoutActionDown_SendsNothing()
+    {
+        var (_, input, controls) = Harness();
+        controls.ActionUp(GameAction.ShuraKey);
+        Assert.Empty(input.Calls);
+    }
+
+    [Fact]
+    public void ActionUp_SecondCall_SendsNothing() => Assert.Equal(["KeyDown:E", "KeyUp:E"], Run(c =>
+    {
+        c.ActionDown(GameAction.ShuraKey);
+        c.ActionUp(GameAction.ShuraKey);
+        c.ActionUp(GameAction.ShuraKey);
+    }));
+
+    [Fact]
     public void ActionDown_ReturnsTheInputResult()
     {
         var (_, input, controls) = Harness();
         input.Result = false;
         Assert.False(controls.ActionDown(GameAction.ShuraKey));
+        controls.ActionUp(GameAction.ShuraKey); // nothing went down - nothing to let go
         Assert.Equal(["KeyDown:E"], input.Calls);
     }
 

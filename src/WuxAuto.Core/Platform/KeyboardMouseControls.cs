@@ -19,8 +19,32 @@ public sealed class KeyboardMouseControls(AppSettings settings, IGameInput input
     public bool IsKnownKey(string keyName) => input.IsKnownKey(keyName);
 
     public bool Press(GameAction action) => input.KeyTap(KeyOf(action));
-    public bool ActionDown(GameAction action) => input.KeyDown(KeyOf(action));
-    public void ActionUp(GameAction action) => input.KeyUp(KeyOf(action));
+    public bool ActionDown(GameAction action)
+    {
+        string key = KeyOf(action);
+        if (!input.KeyDown(key))
+            return false;
+
+        lock (_held)
+            _held[action] = key;
+        return true;
+    }
+
+    /// <summary>Lets go of exactly the key <see cref="ActionDown"/> pressed (a setting changed mid-hold must not leave it stuck); nothing held, nothing sent.</summary>
+    public void ActionUp(GameAction action)
+    {
+        string? key;
+        lock (_held)
+        {
+            if (!_held.Remove(action, out key))
+                return;
+        }
+
+        input.KeyUp(key);
+    }
+
+    // The key each held action went down with. Locked: Stop / F10 can let go from the UI thread.
+    private readonly Dictionary<GameAction, string> _held = [];
 
     public bool Tap(int x, int y) => input.Click(x, y);
     public bool UseItem(int x, int y) => input.Click(x, y, MouseButton.Right);

@@ -41,7 +41,7 @@ public interface IGameControls
 
     bool Press(GameAction action);
 
-    /// <summary>Holds an action down until <see cref="ActionUp"/> (Auto War's Shura hold).</summary>
+    /// <summary>Holds an action down until <see cref="ActionUp"/> (Auto War's Shura hold); <see cref="ActionUp"/> lets go of what went down, not of what the setting says now.</summary>
     bool ActionDown(GameAction action);
     void ActionUp(GameAction action);
 

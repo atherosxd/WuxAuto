@@ -3787,7 +3787,7 @@ public sealed partial class AutomationPilot
     /// A held skill's release waits this long before its Ctrl + skill tap, as <see cref="IGameControls.SkillTap"/> does
     /// between its plain and Ctrl taps (CtrlSkill, user 2026-10-26: "when manually attacking couple it with ctrl + skill key").
     /// </summary>
-    private const int CtrlSkillGapMs = 60;
+    private const int CtrlSkillGapMs = KeyboardMouseControls.CtrlSkillGapMs;
 
     /// <summary>A skill press for the log: '1', or '1' + Ctrl+1 with CtrlSkill.</summary>
     private string SkillText(string key) => _settings.Dungeon.CtrlSkill ? $"'{key}' + Ctrl+{key}" : $"'{key}'";
