@@ -349,6 +349,9 @@ public sealed class MobileEngine : IDisposable
                     _gate.TitleChecked(now, await TitleReadsAsync(frame));
             }
 
+            // Read the clock after the frame: a frame stamped between an earlier reading and the copy would look like it
+            // came from the future (FrameGate: not fresh) - seen on MuMu as a stray "no recent frame" pause.
+            now = FrameGate.NowTicks();
             var decision = _gate.Decide(now, alive, frameTicks, front, PanelOpen, _pilot.Phase);
             SetPause(decision.Tick ? string.Empty : decision.Reason);
             if (!decision.Tick || frame == null)
@@ -396,6 +399,10 @@ public sealed class MobileEngine : IDisposable
         _pause = string.Empty;
         _regionsSize = default;
         _shortcuts.Invalidate();
+        // The pilot's Focus phase would bring the game back, but the loop gate holds every tick while another app is
+        // in front (a Start from the launcher or this app's page): bring it here, before the first tick.
+        if (!_touch.IsGameInFront && !_touch.BringGameToFront())
+            Emit(LogLevel.Warning, "Could not bring the game to the front - open it; the pilot waits until it is in front.");
         Emit(LogLevel.Info, $"Capture {capture.Width}x{capture.Height}; starting {_settings.Sequence.Mode}.");
         _pilot.Start();
         // A Stop that came in between the check above and this Start found nothing running to stop: undo it here.

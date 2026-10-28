@@ -206,6 +206,7 @@ public sealed class FloatingControl
         engine.Settings.Phone.FloatingY = fy;
         Place();
         try { _wm.UpdateViewLayout(_bubble, _bubbleParams); } catch (Exception) { }
+        Log.Info(MainApplication.Tag, $"floating control moved to {fx:0.000},{fy:0.000} ({_bubbleParams.X},{_bubbleParams.Y})");
         _ = Task.Run(engine.Save);
     }
 
@@ -236,7 +237,7 @@ public sealed class FloatingControl
         var panel = new LinearLayout(ctx) { Orientation = Orientation.Vertical };
         panel.SetPadding(pad, pad, pad, pad);
         var bg = new GradientDrawable();
-        bg.SetColor(Color.Argb(0xEE, 0x1E, 0x23, 0x2D));
+        bg.SetColor(Color.Rgb(0x1E, 0x23, 0x2D));
         bg.SetCornerRadius(12 * dp);
         bg.SetStroke((int)Math.Max(1, dp), Color.Rgb(0x3A, 0x44, 0x58));
         panel.Background = bg;
@@ -461,12 +462,23 @@ public sealed class FloatingControl
                         _owner.MoveTo(_downLeft + (int)dx, _downTop + (int)dy);
                     return true;
                 case MotionEventActions.Up:
+                {
                     _owner._main.RemoveCallbacks(_longPress);
-                    if (_dragging)
+                    // The lift's own position counts: the last Move can lag behind it (a fast drag, adb's swipe).
+                    float ux = e.RawX - _downRawX, uy = e.RawY - _downRawY;
+                    if (!_longPressed && (_dragging || ux * ux + uy * uy > _slop * _slop))
+                    {
+                        _dragging = true;
+                        _owner.MoveTo(_downLeft + (int)ux, _downTop + (int)uy);
                         _owner.Dropped();
+                    }
                     else if (!_longPressed)
+                    {
                         _owner.Tapped();
+                    }
+
                     return true;
+                }
                 case MotionEventActions.Cancel:
                     _owner._main.RemoveCallbacks(_longPress);
                     if (_dragging)

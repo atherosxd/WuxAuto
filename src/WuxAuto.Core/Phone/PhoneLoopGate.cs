@@ -22,11 +22,13 @@ public sealed class PhoneLoopGate
 {
     /// <summary>
     /// The newest frame may be this old. MediaProjection hands over a frame only when the screen changes, so a still
-    /// screen is not stale - its last frame is the screen. The game's own HUD never stands still for long (the ping /
-    /// FPS counter at the top refreshes every second or so, the world animates at 15 fps), so 30 s without any frame
-    /// while the capture claims to run means the pipeline is stuck (or the screen is off): wait rather than act on it.
+    /// screen is not stale - its last frame is the screen; "the capture runs" is the real check, the age only a
+    /// backstop for a stuck pipeline. In town and in the dungeons the HUD's ping / FPS counter and the world change all
+    /// the time, but the game's own dialogs can stand still: MuMu's "Update available" screen sent no frame for over
+    /// 30 s (2026-10-28; a first 30 s limit paused the pilot there). 5 minutes without a single frame while the capture
+    /// claims to run = stuck or the screen is off: wait rather than act on it.
     /// </summary>
-    public const int StaleMs = 30_000;
+    public const int StaleMs = 300_000;
 
     /// <summary>How often the engine reads the minimap's zone title (an OCR of the small minimap crop).</summary>
     public const int TitleCheckEveryMs = 1_000;

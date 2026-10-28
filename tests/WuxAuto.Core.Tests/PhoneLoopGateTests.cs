@@ -41,9 +41,10 @@ public class PhoneLoopGateTests
     public void StaticScreen_IsNotStale()
     {
         // MediaProjection only delivers a frame when the screen changes: a still screen keeps the last one current.
-        var gate = GateWithTitleAt(T0 + Ms(9_000));
+        // A game dialog that stood still for over 30 s (MuMu, 2026-10-28) still counts.
+        var gate = GateWithTitleAt(T0 + Ms(119_000));
 
-        var d = gate.Decide(T0 + Ms(9_500), captureAlive: true, frameTicks: T0, gameInFront: true, panelOpen: false, PilotPhase.LodAttack);
+        var d = gate.Decide(T0 + Ms(120_000), captureAlive: true, frameTicks: T0, gameInFront: true, panelOpen: false, PilotPhase.LodAttack);
 
         Assert.True(d.Tick);
     }
