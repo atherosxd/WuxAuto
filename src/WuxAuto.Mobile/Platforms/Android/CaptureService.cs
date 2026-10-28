@@ -45,7 +45,8 @@ public static class DisplaySize
 /// game back to the front. Consent is once per capture session; from Android 14 a grant works for one projection only.
 /// </summary>
 [Activity(Name = "io.github.atherosxd.wuxauto.ConsentActivity", Exported = false,
-    Theme = "@android:style/Theme.Translucent.NoTitleBar", ExcludeFromRecents = true)]
+    Theme = "@android:style/Theme.Translucent.NoTitleBar", ExcludeFromRecents = true,
+    ScreenOrientation = Android.Content.PM.ScreenOrientation.SensorLandscape)]   // stay landscape over the game
 public class ConsentActivity : Activity
 {
     /// <summary>Intent extra (bool, default true): launch the game after the grant.</summary>
