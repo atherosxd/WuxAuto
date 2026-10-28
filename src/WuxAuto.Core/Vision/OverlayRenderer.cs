@@ -52,17 +52,37 @@ public static class FrameSignature
 
 public static class OverlayRenderer
 {
+    // Alpha 255 on purpose: the frames are BGRA and a 3-value scalar leaves the 4th channel 0, so every
+    // drawn pixel came out fully transparent (a PNG viewer showed the label boxes white, the preview
+    // bitmap is Bgra32). OpenCvSharp 4.13 did the same; opaque is what was always meant.
     public static MCvScalar Color(OverlayColor color) => color switch
     {
-        OverlayColor.Green => new MCvScalar(80, 220, 90),
-        OverlayColor.Orange => new MCvScalar(60, 170, 255),
-        OverlayColor.Blue => new MCvScalar(255, 170, 70),
-        OverlayColor.Red => new MCvScalar(70, 70, 240),
-        OverlayColor.Yellow => new MCvScalar(60, 215, 245),
-        _ => new MCvScalar(180, 180, 180),
+        OverlayColor.Green => new MCvScalar(80, 220, 90, 255),
+        OverlayColor.Orange => new MCvScalar(60, 170, 255, 255),
+        OverlayColor.Blue => new MCvScalar(255, 170, 70, 255),
+        OverlayColor.Red => new MCvScalar(70, 70, 240, 255),
+        OverlayColor.Yellow => new MCvScalar(60, 215, 245, 255),
+        _ => new MCvScalar(180, 180, 180, 255),
     };
 
     public static void Draw(Mat bgra, IEnumerable<OverlayItem> overlays, (int X, int Y)? click = null, double scale = 1.0)
+    {
+        if (bgra.NumberOfChannels != 4)
+        {
+            DrawOn(bgra, overlays, click, scale);
+            return;
+        }
+
+        // OpenCV 5 blends antialiased text/lines into a 4-channel image per channel, alpha included, so the
+        // edge pixels came out half transparent. Draw on a 3-channel copy and convert back: alpha 255 throughout
+        // (the frames are opaque screen captures).
+        using var bgr = new Mat();
+        CvInvoke.CvtColor(bgra, bgr, ColorConversion.Bgra2Bgr);
+        DrawOn(bgr, overlays, click, scale);
+        CvInvoke.CvtColor(bgr, bgra, ColorConversion.Bgr2Bgra);
+    }
+
+    private static void DrawOn(Mat bgra, IEnumerable<OverlayItem> overlays, (int X, int Y)? click, double scale)
     {
         foreach (var overlay in overlays)
         {
@@ -93,7 +113,7 @@ public static class OverlayRenderer
                 int textY = Math.Max(size.Height + 4, rect.Y - 4);
                 var boxRect = new Rectangle(rect.X, textY - size.Height - 4, size.Width + 8, size.Height + 6);
                 using var roi = new Mat(bgra, ClampRect(boxRect, bgra.Width, bgra.Height));
-                roi.SetTo(new MCvScalar(20, 20, 20));
+                roi.SetTo(new MCvScalar(20, 20, 20, 255));
                 CvInvoke.PutText(bgra, overlay.Label, new Point(rect.X + 4, textY - 3), HersheyFonts.Simplex, fontScale, color, 1, LineType.AntiAlias);
             }
         }
