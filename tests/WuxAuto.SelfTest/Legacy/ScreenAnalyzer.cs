@@ -16,7 +16,7 @@ public sealed record GameCoordinates(int X, int Y, PixelRect Bounds, string Raw)
 }
 
 /// <summary>High level "what is on screen right now" queries used by the pilot and by the test scan.</summary>
-public sealed class ScreenAnalyzer : IDisposable
+public sealed partial class ScreenAnalyzer : IDisposable
 {
     private readonly AppSettings _settings;
 
