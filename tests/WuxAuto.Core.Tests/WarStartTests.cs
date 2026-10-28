@@ -12,6 +12,12 @@ public class WarStartTests
             AutomationPilot.DescribeMissingIcons([("warbuff2", 0.8412), ("shura", null)]));
 
     [Fact]
+    public void MissingIcons_NoPngAtAll_IsSaid_NotNotSeen()
+        => Assert.Equal("warbuff2 (best 0.84), shura (not seen), warweapon2 (no warweapon2.png in templates/Assets)",
+            AutomationPilot.DescribeMissingIcons([("warbuff2", 0.8412), ("shura", null), ("warweapon2", null)],
+                hasTemplate: name => name != "warweapon2"));
+
+    [Fact]
     public void MissingIcons_ScoresRoundDown_InvariantCulture()
     {
         // 0.8996 missed a 0.90 threshold, so it must not read as "0.90".
@@ -25,6 +31,39 @@ public class WarStartTests
         {
             System.Globalization.CultureInfo.CurrentCulture = culture;
         }
+    }
+
+    // ---------------------------------------------------------------- what Start looks for on the skill bar
+
+    [Fact]
+    public void BarIcons_EveryBuffTickedOn_ThenShura_WhenItsKeyIsSet()
+        => Assert.Equal(
+            ["warbuff1", "warbuff3", "warbuff4", "warbuff5", "warbuff6", "warbuff2", "warweapon1", "warweapon2", "waritem1", "waritem2", "shura"],
+            AutomationPilot.WarBarIcons(new WarSettings(), "shura", shuraKey: "E"));
+
+    [Fact]
+    public void BarIcons_NoShuraKey_NoShura()
+        => Assert.DoesNotContain("shura", AutomationPilot.WarBarIcons(new WarSettings(), "shura", shuraKey: " "));
+
+    [Fact]
+    public void BarIcons_UntickedBuffs_AreNotLookedFor()
+    {
+        var war = new WarSettings();
+        war.SetBuffOn("warweapon2", false);
+        war.SetBuffOn("waritem1", false);
+        var icons = AutomationPilot.WarBarIcons(war, "shura", shuraKey: "E");
+        Assert.DoesNotContain("warweapon2", icons);
+        Assert.DoesNotContain("waritem1", icons);
+        Assert.Contains("warweapon1", icons);
+        Assert.Contains("waritem2", icons);
+    }
+
+    [Fact]
+    public void BarIcons_EachOnce_BlanksAndAnEmptyShuraTemplateLeftOut()
+    {
+        var war = new WarSettings { BuffIcons = ["warbuff1", "", "SHURA"], WeaponBuffIcons = [" ", "WARBUFF1"], ItemBuffIcons = ["warbuff1", " "] };
+        Assert.Equal(["warbuff1", "SHURA"], AutomationPilot.WarBarIcons(war, "shura", shuraKey: "E"));
+        Assert.Equal(["warbuff1", "SHURA"], AutomationPilot.WarBarIcons(war, "", shuraKey: "E"));
     }
 
     // ---------------------------------------------------------------- combining the reads of one list page

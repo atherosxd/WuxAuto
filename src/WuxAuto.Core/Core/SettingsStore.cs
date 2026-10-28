@@ -42,7 +42,7 @@ public static class AppPaths
 public static class SettingsStore
 {
     /// <summary>Bump when an existing settings.json must be migrated (see <see cref="Migrate"/>).</summary>
-    private const int CurrentVersion = 22;
+    private const int CurrentVersion = 23;
 
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
@@ -51,7 +51,11 @@ public static class SettingsStore
         Converters = { new JsonStringEnumConverter() },
     };
 
-    public static AppSettings Load()
+    /// <summary>
+    /// The saved settings, migrated and normalised. <paramref name="persistMigration"/> false (the offline probes): a
+    /// migration stays in memory - a newer build must not rewrite the settings.json an older running copy shares.
+    /// </summary>
+    public static AppSettings Load(bool persistMigration = true)
     {
         try
         {
@@ -61,7 +65,7 @@ public static class SettingsStore
 
             string json = File.ReadAllText(AppPaths.SettingsFile);
             var settings = JsonSerializer.Deserialize<AppSettings>(json, JsonOptions) ?? new AppSettings();
-            if (Migrate(settings))
+            if (Migrate(settings) && persistMigration)
                 Save(settings);
             Normalize(settings);
             return settings;
@@ -187,6 +191,13 @@ public static class SettingsStore
             }
         }
 
+        // v23: warbuff2 is the sword's buff (user, 2026-10-28), one of the new WeaponBuffIcons (a new property, so it loads
+        // its default, warbuff2 included). A saved BuffIcons list (warbuff1-6 in v0.19.0) wins over the new default, so
+        // warbuff2 is taken out of it - the user's order and other entries stay. Removal only: the v0.19.0 copy sharing
+        // settings.json requires every BuffIcons entry at Start and then just checks five.
+        if (s.Version < 23 && s.War?.BuffIcons is { } buffs)
+            buffs.RemoveAll(b => string.Equals(b?.Trim(), "warbuff2", StringComparison.OrdinalIgnoreCase));
+
         s.Version = CurrentVersion;
         return true;
     }
@@ -225,6 +236,16 @@ public static class SettingsStore
             .Where(i => i.Length > 0)
             .ToList();
         w.BuffIcons = icons.Count > 0 ? icons : WarSettings.DefaultBuffIcons();
+        // No refill for these three: an empty weapon or item list is the user's choice, an empty disabled list means every
+        // buff on.
+        static List<string> Clean(List<string>? names) => (names ?? [])
+            .Select(n => (n ?? "").Trim())
+            .Where(n => n.Length > 0)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        w.WeaponBuffIcons = Clean(w.WeaponBuffIcons);
+        w.ItemBuffIcons = Clean(w.ItemBuffIcons);
+        w.DisabledBuffs = Clean(w.DisabledBuffs);
         w.LeadMs = Math.Clamp(w.LeadMs, 0, 120000);
         w.DialogWaitMs = Math.Clamp(w.DialogWaitMs, 10000, 600000);
         w.BuffClickGapMs = Math.Clamp(w.BuffClickGapMs, 100, 10000);
