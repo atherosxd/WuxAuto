@@ -244,8 +244,12 @@ public sealed partial class AutomationPilot
     private int _refineGained;
     private bool _refinePending;
 
-    public AutomationPilot(AppSettings settings, ScreenAnalyzer analyzer, IGameControls controls)
+    /// <summary>What differs on this platform (no profile given = <see cref="PlatformProfile.Desktop"/>).</summary>
+    public PlatformProfile Profile { get; }
+
+    public AutomationPilot(AppSettings settings, ScreenAnalyzer analyzer, IGameControls controls, PlatformProfile? profile = null)
     {
+        Profile = profile ?? PlatformProfile.Desktop;
         _settings = settings;
         _analyzer = analyzer;
         _controls = controls;

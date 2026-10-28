@@ -15,10 +15,11 @@ public sealed class KeyboardMouseControls(AppSettings settings, IGameInput input
     public bool IsGameInFront => input.IsTargetForeground;
     public bool TryBringGameToFront() => input.TryFocus();
 
-    public bool Has(GameAction action) => !string.IsNullOrWhiteSpace(KeyOf(action));
+    public bool Has(GameAction action) => action != GameAction.TeleportScroll && !string.IsNullOrWhiteSpace(KeyOf(action));
     public bool IsKnownKey(string keyName) => input.IsKnownKey(keyName);
 
-    public bool Press(GameAction action) => input.KeyTap(KeyOf(action));
+    /// <summary>The desktop has no teleport shortcut (it opens the inventory and right-clicks the scroll): <see cref="GameAction.TeleportScroll"/> sends nothing.</summary>
+    public bool Press(GameAction action) => action != GameAction.TeleportScroll && input.KeyTap(KeyOf(action));
     public bool ActionDown(GameAction action)
     {
         string key = KeyOf(action);

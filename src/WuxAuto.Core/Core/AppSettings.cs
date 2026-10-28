@@ -81,6 +81,9 @@ public sealed class AppSettings
     /// <summary>Auto War: the tribe war in Bohai Outpost (<see cref="RunMode.AutoWar"/>).</summary>
     public WarSettings War { get; set; } = new();
 
+    /// <summary>The phone app's touch timings (unused on the desktop).</summary>
+    public PhoneSettings Phone { get; set; } = new();
+
     public UiSettings Ui { get; set; } = new();
 
     /// <summary>Puts every screen position (regions and click fractions) back to the built-in defaults.</summary>

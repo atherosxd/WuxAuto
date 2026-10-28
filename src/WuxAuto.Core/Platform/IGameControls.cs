@@ -13,6 +13,7 @@ public enum GameAction
     RunSkillKey,
     ShuraKey,
     StopAttack,
+    TeleportScroll,
 }
 
 /// <summary>Which way the camera turns.</summary>

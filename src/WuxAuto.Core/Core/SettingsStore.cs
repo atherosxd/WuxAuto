@@ -307,6 +307,7 @@ public static class SettingsStore
         s.Dungeon.NorthRefineTapMs = Math.Clamp(s.Dungeon.NorthRefineTapMs, 0, 500);
         s.Sequence.FontSizePercent = s.Sequence.FontSizePercent == 0 ? 0 : Math.Clamp(s.Sequence.FontSizePercent, 50, 200);
         s.Sequence.FontSizeMaxPercent = Math.Clamp(s.Sequence.FontSizeMaxPercent, Math.Max(50, s.Sequence.FontSizePercent), 200);
+        s.Phone ??= new PhoneSettings();
         s.Lod ??= new LodSettings();
         s.Lod.Destination = string.IsNullOrWhiteSpace(s.Lod.Destination) ? "Ultimate Den of Rebirth" : s.Lod.Destination.Trim();
         s.Lod.TargetTolerance = Math.Clamp(s.Lod.TargetTolerance, 10, 500);

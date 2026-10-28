@@ -96,7 +96,8 @@ public sealed class KeyboardMouseControlsTests
     public void Has_TrueForEverySetKey()
     {
         var (_, input, controls) = Harness();
-        foreach (var action in Enum.GetValues<GameAction>())
+        // TeleportScroll is a phone-only shortcut: the desktop never has it (PlatformProfileTests).
+        foreach (var action in Enum.GetValues<GameAction>().Where(a => a != GameAction.TeleportScroll))
             Assert.True(controls.Has(action), action.ToString());
         Assert.Empty(input.Calls);
     }
