@@ -1,0 +1,184 @@
+using WuxAuto.Automation;
+using WuxAuto.Phone;
+
+namespace WuxAuto.Core.Tests;
+
+public class PhoneLoopGateTests
+{
+    static long Ms(long ms) => ms * TimeSpan.TicksPerMillisecond;
+
+    static readonly long T0 = Ms(1_000_000);
+
+    static PhoneLoopGate GateWithTitleAt(long at)
+    {
+        var gate = new PhoneLoopGate();
+        gate.TitleChecked(at, read: true);
+        return gate;
+    }
+
+    [Fact]
+    public void GameFrameWithTheTitle_Ticks()
+    {
+        var gate = GateWithTitleAt(T0);
+
+        var d = gate.Decide(T0 + Ms(100), captureAlive: true, frameTicks: T0, gameInFront: true, panelOpen: false, PilotPhase.LodAttack);
+
+        Assert.True(d.Tick);
+    }
+
+    [Fact]
+    public void CaptureOff_Waits()
+    {
+        var gate = GateWithTitleAt(T0);
+
+        var d = gate.Decide(T0 + Ms(100), captureAlive: false, frameTicks: T0, gameInFront: true, panelOpen: false, PilotPhase.LodAttack);
+
+        Assert.False(d.Tick);
+        Assert.Contains("capture", d.Reason);
+    }
+
+    [Fact]
+    public void StaticScreen_IsNotStale()
+    {
+        // MediaProjection only delivers a frame when the screen changes: a still screen keeps the last one current.
+        var gate = GateWithTitleAt(T0 + Ms(9_000));
+
+        var d = gate.Decide(T0 + Ms(9_500), captureAlive: true, frameTicks: T0, gameInFront: true, panelOpen: false, PilotPhase.LodAttack);
+
+        Assert.True(d.Tick);
+    }
+
+    [Fact]
+    public void NoFrameForLong_Waits()
+    {
+        var gate = GateWithTitleAt(T0 + Ms(PhoneLoopGate.StaleMs));
+
+        var d = gate.Decide(T0 + Ms(PhoneLoopGate.StaleMs + 1), captureAlive: true, frameTicks: T0, gameInFront: true, panelOpen: false, PilotPhase.LodAttack);
+
+        Assert.False(d.Tick);
+        Assert.Contains("frame", d.Reason);
+    }
+
+    [Fact]
+    public void NoFrameYet_Waits()
+    {
+        var gate = new PhoneLoopGate();
+
+        Assert.False(gate.Decide(T0, captureAlive: true, frameTicks: 0, gameInFront: true, panelOpen: false, PilotPhase.Focus).Tick);
+    }
+
+    [Fact]
+    public void LauncherOrOtherApp_Waits()
+    {
+        var gate = GateWithTitleAt(T0);
+
+        // Even in a phase that may run without the title, and with a title read a moment ago.
+        foreach (var phase in new[] { PilotPhase.LodAttack, PilotPhase.Focus, PilotPhase.Reconnect })
+        {
+            var d = gate.Decide(T0 + Ms(100), captureAlive: true, frameTicks: T0, gameInFront: false, panelOpen: false, phase);
+            Assert.False(d.Tick);
+            Assert.Contains("not in front", d.Reason);
+        }
+    }
+
+    [Fact]
+    public void PanelOpen_Waits()
+    {
+        var gate = GateWithTitleAt(T0);
+
+        var d = gate.Decide(T0 + Ms(100), captureAlive: true, frameTicks: T0, gameInFront: true, panelOpen: true, PilotPhase.LodAttack);
+
+        Assert.False(d.Tick);
+        Assert.Contains("panel", d.Reason);
+    }
+
+    [Fact]
+    public void TitleNotRead_WaitsInAWorldPhase()
+    {
+        var gate = GateWithTitleAt(T0);
+        gate.TitleChecked(T0 + Ms(1_000), read: false);
+        long now = T0 + Ms(PhoneLoopGate.TitleGraceMs + 1);
+
+        var d = gate.Decide(now, captureAlive: true, frameTicks: now, gameInFront: true, panelOpen: false, PilotPhase.LodAttack);
+
+        Assert.False(d.Tick);
+        Assert.Contains("zone title", d.Reason);
+    }
+
+    [Fact]
+    public void TitleNeverRead_Waits()
+    {
+        var gate = new PhoneLoopGate();
+
+        var d = gate.Decide(T0, captureAlive: true, frameTicks: T0, gameInFront: true, panelOpen: false, PilotPhase.LodRun);
+
+        Assert.False(d.Tick);
+    }
+
+    [Fact]
+    public void TitleReadRecently_StillTicks_WhileAWindowCoversIt()
+    {
+        var gate = GateWithTitleAt(T0);
+        gate.TitleChecked(T0 + Ms(2_000), read: false);   // the ☰ panel covers the minimap
+        long now = T0 + Ms(PhoneLoopGate.TitleGraceMs);
+
+        Assert.True(gate.Decide(now, captureAlive: true, frameTicks: now, gameInFront: true, panelOpen: false, PilotPhase.LodAttack).Tick);
+    }
+
+    [Theory]
+    [InlineData(PilotPhase.Focus)]
+    [InlineData(PilotPhase.WaitForLoad)]
+    [InlineData(PilotPhase.ZoomOut)]
+    [InlineData(PilotPhase.Reconnect)]
+    [InlineData(PilotPhase.FontSize)]
+    [InlineData(PilotPhase.FindDestination)]
+    public void PhasesWithoutTheMinimap_TickWithoutTheTitle(PilotPhase phase)
+    {
+        var gate = new PhoneLoopGate();
+
+        Assert.True(PhoneLoopGate.RunsWithoutTitle(phase));
+        Assert.True(gate.Decide(T0, captureAlive: true, frameTicks: T0, gameInFront: true, panelOpen: false, phase).Tick);
+    }
+
+    [Theory]
+    [InlineData(PilotPhase.LodRun)]
+    [InlineData(PilotPhase.LodAttack)]
+    [InlineData(PilotPhase.LodLoot)]
+    [InlineData(PilotPhase.WatchBoss)]
+    [InlineData(PilotPhase.RunToTarget)]
+    [InlineData(PilotPhase.CheckZone)]
+    public void WorldPhases_NeedTheTitle(PilotPhase phase) =>
+        Assert.False(PhoneLoopGate.RunsWithoutTitle(phase));
+
+    [Fact]
+    public void TitleCheck_DueOncePerInterval()
+    {
+        var gate = new PhoneLoopGate();
+
+        Assert.True(gate.TitleCheckDue(T0));
+        gate.TitleChecked(T0, read: true);
+        Assert.False(gate.TitleCheckDue(T0 + Ms(PhoneLoopGate.TitleCheckEveryMs - 1)));
+        Assert.True(gate.TitleCheckDue(T0 + Ms(PhoneLoopGate.TitleCheckEveryMs)));
+    }
+
+    [Fact]
+    public void Reset_ForgetsTheTitle()
+    {
+        var gate = GateWithTitleAt(T0);
+
+        gate.Reset();
+
+        Assert.True(gate.TitleCheckDue(T0 + Ms(1)));
+        Assert.False(gate.Decide(T0 + Ms(1), captureAlive: true, frameTicks: T0, gameInFront: true, panelOpen: false, PilotPhase.LodAttack).Tick);
+    }
+
+    [Theory]
+    [InlineData("[Piercing City]", true)]
+    [InlineData("[Piercing Cityl", true)]
+    [InlineData("[The Labyrinth (Adep", true)]
+    [InlineData("3592 , 7297", false)]
+    [InlineData("", false)]
+    [InlineData("Piercing", false)]
+    public void TitleReads_IsAZoneTitleLine(string line, bool expected) =>
+        Assert.Equal(expected, PhoneLoopGate.TitleReads([line]));
+}

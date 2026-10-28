@@ -37,7 +37,10 @@ public sealed class PhoneSettings
     /// <summary>Length of one 3-notch list-scroll swipe (measured on the Settings list: content follows the finger minus ~40 px; 170 px = 3 rows). Not for the map list, which does not scroll by swipe.</summary>
     public int ListSwipePx { get; set; } = 170;
 
-    /// <summary>The floating button's position as fractions of the screen (saved, so it stays where the player dragged it).</summary>
-    public double FloatingX { get; set; } = 0.02;
-    public double FloatingY { get; set; } = 0.4;
+    /// <summary>
+    /// The floating button's centre as fractions of the screen (saved, so it stays where the player dragged it). Default:
+    /// the top strip (0.40, 0.03) = 768,32 at 1920x1080, where nothing the pilot reads or taps sits (measured).
+    /// </summary>
+    public double FloatingX { get; set; } = 0.40;
+    public double FloatingY { get; set; } = 0.03;
 }

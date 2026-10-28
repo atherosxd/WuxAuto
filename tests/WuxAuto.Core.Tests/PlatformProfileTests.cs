@@ -60,8 +60,8 @@ public class PlatformProfileTests
             Assert.Equal(192, p.PinchToGap);
             Assert.Equal(400, p.PinchMs);
             Assert.Equal(170, p.ListSwipePx);
-            Assert.Equal(0.02, p.FloatingX);
-            Assert.Equal(0.4, p.FloatingY);
+            Assert.Equal(0.40, p.FloatingX);
+            Assert.Equal(0.03, p.FloatingY);
 
             var s = new AppSettings();
             s.Phone.FloatingX = 0.5;

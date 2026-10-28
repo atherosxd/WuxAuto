@@ -205,6 +205,27 @@ The app itself:
 | **Kill chime / Kill notification / Test alert** (user, 2026-10-26: friends run the pilot on a second PC next to their main one and LOD does not always loot everything - "a reminder to recheck"; "do the same for Laby") | `AutomationPilot.BossKilled` (string, loop thread) → `WuxEngine.BossKilled` → `MainViewModel.OnBossKilled` (UI thread) → `Core/KillAlert` (desktop project, `src/WuxAuto/Core/`). Raised in `OnLabyBossDead` (both `WatchBoss` kill paths, every stage incl. 5: "Stage 2: Spectral down") and at the **end** of `TickLodLoot` ("Bai Gu Great down" - after the loot, the reminder is to check what it left; both LOD kill paths go through it). Chime: `Sequence.KillSound` if set (**own sound, user 2026-10-27**: "Sound:" row under the check boxes, **Choose...** = `OpenFileDialog` *.mp3;*.wav;*.ogg → `KillAlert.ImportSoundAsync` copies it into `AppPaths.SoundsFolder` (`%LOCALAPPDATA%\WuxAuto\sounds`; same contents reused, same name with other contents → `name-2.ext`; **an .ogg is decoded to `name.wav`** by `Core/OggToWav` (user 2026-10-27 "also allow ogg"; NVorbis 0.10.5, MIT, managed - WPF `MediaPlayer` answers "Media file download failed" for OGG on this PC, Vorbis and Opus alike, and N / lite builds have even less): 16-bit PCM at the file's own rate and channels, decoded in `Task.Run` to `%TEMP%\wuxauto-ogg-*.wav`, then moved in; Ogg Opus ("OpusHead" in the first page), non-Ogg and damaged files and sounds over 5 min (`OggToWav.MaxLength`) are refused with a plain reason; a hand-edited `KillSound` pointing at an .ogg is not converted and falls back to the built-in chime), `ProbeAsync` must open it with sound within 5 s (else refused, the copy deleted), saved at once, played once; **Default** clears it; a set but missing / failing file → built-in + warning, the label shows "(missing)"), else `templates\chime.wav` if present (a bad file → built-in + warning), else `KillAlert.GenerateChime` (A5-C#6-E6, 1.6 s, 16-bit mono) written to `%LOCALAPPDATA%\WuxAuto\chime-builtin.wav` - **played from a file on purpose**: `SoundPlayer` from a stream hands a managed buffer to async `PlaySound` (pinned only during the call). Sound files (KillSound, chime.wav) play through WPF `MediaPlayer` (MP3 and every WAV kind; `SoundPlayer` only takes PCM WAV), kept open between kills, `Volume` 1.0 (it starts at 0.5), UI thread only (`PlayChimeAsync` waits for `MediaOpened` / `MediaFailed`; the SelfTest runs it on an STA thread with its own dispatcher); the built-in chime stays on `SoundPlayer`, so the fallback needs nothing from Windows Media. MP3, float WAV and names with `#` / `%20` verified with ffmpeg-made files (`--alert <file>`: opens, position moves, copy plays); OGG: mono 44.1 kHz, stereo 48 kHz and 5.1 convert and play, Opus and a 6 min file are refused; the SelfTest decodes `tests/WuxAuto.SelfTest/Sounds/tone.ogg` (1 s, 440 Hz left / 880 Hz right) and checks rate, channels and per-channel pitch; the **Choose...** dialog itself was not clicked in the real app. Notification: WinRT toast, silent, 2 h expiry, AUMID `atherosxd.WuxAuto` registered under `HKCU\Software\Classes\AppUserModelId` (DisplayName + `notify-icon.png` from the window icon) - an unpackaged app needs that; `ToastNotifier.Setting` throws "Element not found" here, so it is only read best-effort. `Sequence.KillChime` / `KillNotification` (on; check boxes under Loop). Status box + Mini window bottom row show `LastKillText`. A failure logs once per app start; **Test alert** always reports. Verified 2026-10-26 on this PC: chime plays, notification centre count for the AUMID 0 → 1, the button in the real app logs "chime OK" / "notification OK". Not yet seen during a live kill |
 | checkboxes | `Loop`, `Focus on start`, `Only while game is focused`, `Restore cursor` |
 
+**Phone app (M4, `src/WuxAuto.Mobile`, Android):** build **from `src\WuxAuto.Mobile`** — its `global.json` pins
+SDK 10.0.402 (maui-android workload); the repo root resolves SDK 11 rc, which has no android workload:
+
+```powershell
+cd src\WuxAuto.Mobile; dotnet build ..\..\WuxAuto.Mobile.slnx -c Debug   # -> bin\Debug\net10.0-android\io.github.atherosxd.wuxauto-Signed.apk
+$adb = 'C:\Program Files\Netease\MuMuPlayerARM\shell\adb.exe'; $dev = '10.0.2.80:5555'   # MuMu's IP changes on restart: Get-NetNeighbor -InterfaceAlias 'vEthernet (MuMuProVNet)'
+& $adb connect $dev; & $adb -s $dev install -r bin\Debug\net10.0-android\io.github.atherosxd.wuxauto-Signed.apk
+# enable the accessibility service (append to the existing list, never replace it)
+$svc = 'io.github.atherosxd.wuxauto/io.github.atherosxd.wuxauto.PilotAccessibilityService'
+$cur = ((& $adb -s $dev shell settings get secure enabled_accessibility_services) | Out-String).Trim(); if ($cur -eq 'null') { $cur = '' }
+if (($cur -split ':') -notcontains $svc) { & $adb -s $dev shell settings put secure enabled_accessibility_services ($(if ($cur) { "${cur}:$svc" } else { $svc })) }
+& $adb -s $dev shell settings put secure accessibility_enabled 1
+& $adb -s $dev logcat -s WuxAuto                                           # every log line also goes to logcat
+```
+
+On a real phone the service is switched on by hand (Setup page; Android 13+: App info → ⋮ → Allow restricted
+settings first). Data (settings.json, logs, debug, templates) lives in `/sdcard/Android/data/io.github.atherosxd.wuxauto/files`.
+The round **W** button (accessibility overlay, default spot top strip 0.40/0.03) is the in-game control: tap =
+panel, long-press = Panic; the notification's Stop and the Pilot page also stop. Debug builds take adb probes
+(`DebugReceiver`, `am broadcast -a io.github.atherosxd.wuxauto.<PING|FRONT|SHOT|OCR|TAP|...> -p io.github.atherosxd.wuxauto`).
+
 ---
 
 ## 3. Repository map
@@ -232,8 +253,18 @@ src/WuxAuto.Core            net10.0 class library, platform-free (M1, 2026-10-27
                        references only the managed `Emgu.CV`; each host adds the native runtime (desktop:
                        `Emgu.CV.runtime.mini.windows`). CvHelpers supplies the OpenCV default
                        arguments that Emgu leaves to the caller
+  Phone/               the phone side's pure parts: TouchControls (IGameControls over ITouchInput), ShortcutMap
+                       (on-screen buttons by phone_* template), PhoneRegions, FrameGate, PhoneLoopGate (per-pass
+                       "tick or wait": capture, frame age, game in front, panel, zone title), FloatingSpot (W button
+                       spot + edge snap), DebugBundleContents (what the debug zip packs)
   RULE: Core must stay OS-free - no WPF, WinRT, Win32/P-Invoke, System.Windows.*, registry. Anything
   that touches the OS goes behind a Platform/ interface and is implemented in the desktop project.
+src/WuxAuto.Mobile          Android (MAUI, net10.0-android, minSdk 31), references Core; NOT in WuxAuto.slnx
+                            (WuxAuto.Mobile.slnx, built from src\WuxAuto.Mobile - §2). Engine/MobileEngine (loop:
+                            frame → PhoneLoopGate → ShortcutMap.Refresh → pilot.TickAsync, PlatformProfile.Phone),
+                            EngineHost; Pages/ (Pilot, Setup, Settings, Log); Platforms/Android: CaptureService
+                            (MediaProjection), PilotAccessibilityService + AndroidTouchInput (gestures), MlKitOcrEngine,
+                            FloatingControl, PilotNotification, DebugBundle, AssetInstaller, DebugReceiver (Debug only)
 src/WuxAuto                 WPF desktop app, references Core
   Assets/              shipped templates: teleportscroll, rightchevron, rightchevronfoc,
                        mapicon, flashlight, dungeongateopen, monstericon (.png)

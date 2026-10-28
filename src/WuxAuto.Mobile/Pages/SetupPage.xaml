@@ -1,0 +1,51 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<ContentPage xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
+             x:Class="WuxAuto.Mobile.Pages.SetupPage"
+             Title="Setup">
+    <ScrollView>
+        <VerticalStackLayout Padding="16" Spacing="14">
+            <Label Text="Setup checklist" FontSize="20" FontAttributes="Bold" />
+
+            <VerticalStackLayout Spacing="4">
+                <Label x:Name="AccessibilityState" FontAttributes="Bold" />
+                <Label FontSize="13"
+                       Text="WuxAuto touches the game through its accessibility service. Settings → Accessibility → Installed apps (or Downloaded apps) → WuxAuto → On." />
+                <Label FontSize="13" TextColor="#E65100"
+                       Text="Android 13 and later: if the switch is greyed out, open App info → ⋮ (top right) → Allow restricted settings, then try again. Android 12 does not need this." />
+                <Grid ColumnDefinitions="*,*" ColumnSpacing="8">
+                    <Button Text="Accessibility settings" Clicked="OnAccessibility" />
+                    <Button Grid.Column="1" Text="App info" Clicked="OnAppInfo" />
+                </Grid>
+            </VerticalStackLayout>
+
+            <VerticalStackLayout Spacing="4">
+                <Label x:Name="NotificationState" FontAttributes="Bold" />
+                <Label FontSize="13"
+                       Text="While the pilot runs a notification shows its status and a Stop button." />
+                <Button x:Name="NotificationButton" Text="Allow notifications" Clicked="OnNotifications" />
+            </VerticalStackLayout>
+
+            <VerticalStackLayout Spacing="4">
+                <Label x:Name="BatteryState" FontAttributes="Bold" />
+                <Label FontSize="13"
+                       Text="Battery optimisation can stop the pilot when the screen is off or after a while. Allow WuxAuto to run without it." />
+                <Button Text="Battery exemption" Clicked="OnBattery" />
+            </VerticalStackLayout>
+
+            <VerticalStackLayout Spacing="4">
+                <Label Text="Xiaomi / HyperOS" FontAttributes="Bold" />
+                <Label FontSize="13"
+                       Text="HyperOS also closes background apps on its own: App info → Autostart → On, and Battery saver → No restrictions. Lock WuxAuto in the recent-apps screen (long-press its card → lock)." />
+            </VerticalStackLayout>
+
+            <VerticalStackLayout Spacing="4">
+                <Label x:Name="CaptureState" FontAttributes="Bold" />
+                <Label FontSize="13"
+                       Text="Start asks for screen capture (&quot;Start now&quot;) once per session and then brings the game back. The capture runs until you stop it on the Pilot page." />
+            </VerticalStackLayout>
+
+            <Button Text="Check again" Clicked="OnRefresh" />
+        </VerticalStackLayout>
+    </ScrollView>
+</ContentPage>

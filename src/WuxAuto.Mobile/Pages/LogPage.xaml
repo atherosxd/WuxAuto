@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<ContentPage xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
+             x:Class="WuxAuto.Mobile.Pages.LogPage"
+             Title="Log">
+    <Grid RowDefinitions="Auto,*" Padding="12" RowSpacing="8">
+        <Label x:Name="LogFile" FontSize="12" TextColor="Gray" />
+        <ScrollView x:Name="Scroller" Grid.Row="1">
+            <Label x:Name="Lines" FontFamily="monospace" FontSize="11" />
+        </ScrollView>
+    </Grid>
+</ContentPage>

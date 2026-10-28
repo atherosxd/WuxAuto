@@ -49,6 +49,7 @@ public class PilotAccessibilityService : AccessibilityService
 #if DEBUG
         _debug = DebugReceiver.Register(this);
 #endif
+        FloatingControl.Attach(this);
         Log.Info(MainApplication.Tag, "accessibility service connected");
     }
 
@@ -59,6 +60,13 @@ public class PilotAccessibilityService : AccessibilityService
     }
 
     public override void OnInterrupt() { }
+
+    /// <summary>The screen turned: the floating control lays its saved spot out on the new size.</summary>
+    public override void OnConfigurationChanged(Android.Content.Res.Configuration? newConfig)
+    {
+        base.OnConfigurationChanged(newConfig!);
+        FloatingControl.Current?.OnConfigurationChanged();
+    }
 
     public override bool OnUnbind(Intent? intent)
     {
@@ -77,6 +85,7 @@ public class PilotAccessibilityService : AccessibilityService
         if (_instance != this)
             return;
 
+        FloatingControl.Detach();
         // Lift any held finger while dispatching still works, then stop dispatching.
         Touch.Release();
         _instance = null;
