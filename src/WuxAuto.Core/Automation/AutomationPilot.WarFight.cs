@@ -1150,7 +1150,10 @@ public sealed partial class AutomationPilot
             _warEmptyLooks = 0;
             _warLastWalkGoal = null;
             _warWalkTotal = 0;
-            bool xBuff = !string.IsNullOrWhiteSpace(war.XBuffIcon) && war.IsBuffOn(war.XBuffIcon);
+            // A tag that "stayed put" may have been a real player while our character was blocked: forget them all on a
+            // target (a UI word costs one step again, still under the per-war step cap).
+            _warStaticTags.Clear();
+            bool xBuff =!string.IsNullOrWhiteSpace(war.XBuffIcon) && war.IsBuffOn(war.XBuffIcon);
             string shura = string.IsNullOrWhiteSpace(_settings.Lod.ShuraKey) ? "" : $"Shura {war.ShuraHoldMs} ms, ";
             string what = name != null ? $"Target '{name}' ({target.Via})"
                 : target.HpLine is { } hp ? $"A target (HP numbers, name unread: '{hp.Text}')"
