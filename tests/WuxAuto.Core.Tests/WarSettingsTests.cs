@@ -17,7 +17,8 @@ public class WarSettingsTests
             Assert.Equal(345000, s.War.BuffEveryMs);
             Assert.Equal(1200, s.War.ShuraHoldMs);
             Assert.Equal(3, s.War.ListPage);
-            Assert.Equal(new[] { "warbuff1", "warbuff2", "warbuff3", "warbuff4", "warbuff5", "warbuff6", "warweapon1", "warweapon2" }, s.War.BuffIcons);
+            Assert.Equal(new[] { "warbuff1", "warbuff3", "warbuff4", "warbuff5", "warbuff6" }, s.War.BuffIcons);
+            Assert.Equal(new[] { "warbuff2", "warweapon1", "warweapon2" }, s.War.WeaponBuffIcons);
             Assert.Equal(new[] { "waritem1", "waritem2" }, s.War.ItemBuffIcons);
             Assert.Empty(s.War.DisabledBuffs);
             s.Sequence.Mode = RunMode.AutoWar;
@@ -35,7 +36,8 @@ public class WarSettingsTests
             File.WriteAllText(AppPaths.SettingsFile, "{ \"Version\": 21 }");
             var old = SettingsStore.Load();
             Assert.Equal("Enemy worth CP", old.War.TabTargetOption);
-            Assert.Equal(8, old.War.BuffIcons.Count);
+            Assert.Equal(5, old.War.BuffIcons.Count);
+            Assert.Equal(["warbuff2", "warweapon1", "warweapon2"], old.War.WeaponBuffIcons);
             Assert.Equal(["waritem1", "waritem2"], old.War.ItemBuffIcons);
             Assert.Empty(old.War.DisabledBuffs);
         }
@@ -55,7 +57,7 @@ public class WarSettingsTests
         s.War.ListPage = 0;
         s.War.HomeMap = "  [Dark Soul Cave]  ";
         SettingsStore.Normalize(s);
-        Assert.Equal(8, s.War.BuffIcons.Count);
+        Assert.Equal(5, s.War.BuffIcons.Count);
         Assert.Equal(0, s.War.ShuraHoldMs);
         Assert.Equal(1, s.War.ListPage);
         Assert.Equal("[Dark Soul Cave]", s.War.HomeMap);
@@ -71,29 +73,35 @@ public class WarSettingsTests
     }
 
     [Fact]
-    public void WarSettings_NormalizeCleansTheItemAndDisabledLists()
+    public void WarSettings_NormalizeCleansTheWeaponItemAndDisabledLists()
     {
         var s = new AppSettings();
+        s.War.WeaponBuffIcons = [" warweapon2 ", "", null!, "WarWeapon2", "warweapon1"];
         s.War.ItemBuffIcons = [" waritem2 ", "", null!, "WARITEM2", "waritem1"];
         s.War.DisabledBuffs = ["warweapon2", "  ", null!, " WarWeapon2", " waritem1 "];
         SettingsStore.Normalize(s);
+        Assert.Equal(["warweapon2", "warweapon1"], s.War.WeaponBuffIcons);
         Assert.Equal(["waritem2", "waritem1"], s.War.ItemBuffIcons);
         Assert.Equal(["warweapon2", "waritem1"], s.War.DisabledBuffs);
     }
 
     [Fact]
-    public void WarSettings_AnEmptyOrMissingItemList_StaysEmpty_NoRefill()
+    public void WarSettings_AnEmptyOrMissingWeaponOrItemList_StaysEmpty_NoRefill()
     {
-        // The user may have taken the item buffs out on purpose: unlike BuffIcons, nothing refills them.
+        // The user may have taken the weapon or item buffs out on purpose: unlike BuffIcons, nothing refills them.
         var s = new AppSettings();
+        s.War.WeaponBuffIcons = [];
         s.War.ItemBuffIcons = [];
         s.War.DisabledBuffs = null!;
         SettingsStore.Normalize(s);
+        Assert.Empty(s.War.WeaponBuffIcons);
         Assert.Empty(s.War.ItemBuffIcons);
         Assert.Empty(s.War.DisabledBuffs);
 
+        s.War.WeaponBuffIcons = null!;
         s.War.ItemBuffIcons = null!;
         SettingsStore.Normalize(s);
+        Assert.Empty(s.War.WeaponBuffIcons);
         Assert.Empty(s.War.ItemBuffIcons);
     }
 

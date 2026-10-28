@@ -458,22 +458,31 @@ public sealed class WarSettings
     public string TabTargetOption { get; set; } = "Enemy worth CP";
 
     /// <summary>
-    /// Skill buff icons clicked on the skill bar, in order, when there is no autobuff (user's crops): the six war buffs,
-    /// then the two weapon buffs (user, 2026-10-28: "the buff of different weapons" - a character has one weapon, so
-    /// usually only one of the two is on its bar; untick the other in <see cref="DisabledBuffs"/>).
+    /// The plain skill buffs clicked on the skill bar, in order, when there is no autobuff (user's crops): warbuff1, 3, 4, 5,
+    /// 6. warbuff2 is the sword's buff, in <see cref="WeaponBuffIcons"/> since settings v23 (user, 2026-10-28).
     /// </summary>
     public List<string> BuffIcons { get; set; } = DefaultBuffIcons();
 
     /// <summary>
+    /// The weapon buffs (user, 2026-10-28: "the buff of different weapons"): warbuff2 (sword), warweapon1 (white-gold
+    /// lightning around dark armour), warweapon2 (blue swirl). Skill buffs, clicked after <see cref="BuffIcons"/> when
+    /// there is no autobuff. A character uses one weapon, so usually only one of them is on its bar - untick the others in
+    /// <see cref="DisabledBuffs"/>. Kept apart from BuffIcons, which a v0.19.0 copy sharing settings.json requires in full
+    /// at Start. An empty list stays empty (no refill).
+    /// </summary>
+    public List<string> WeaponBuffIcons { get; set; } = DefaultWeaponBuffIcons();
+
+    /// <summary>
     /// Item buffs placed on the skill bar (user, 2026-10-28: "optional but item buffs can be placed on the skill bar"):
-    /// clicking one uses an item. Clicked after the skill buffs, and with autobuff too (the buff key does not use them).
-    /// An empty list stays empty (no refill: the user may have taken them out).
+    /// clicking one uses an item. Clicked after the skill and weapon buffs, with every rebuff, and with autobuff too (the
+    /// buff key does not use them). An empty list stays empty (no refill: the user may have taken them out).
     /// </summary>
     public List<string> ItemBuffIcons { get; set; } = DefaultItemBuffIcons();
 
     /// <summary>
-    /// Buff icons (of <see cref="BuffIcons"/> and <see cref="ItemBuffIcons"/>) the user unticked in Settings > Auto War >
-    /// Buffs (user, 2026-10-28): never clicked, not looked for at Start. Empty = every buff on.
+    /// Buff icons (of <see cref="BuffIcons"/>, <see cref="WeaponBuffIcons"/> and <see cref="ItemBuffIcons"/>) the user
+    /// unticked in Settings > Auto War > Buffs (user, 2026-10-28): never clicked, not looked for at Start. Empty = every
+    /// buff on.
     /// </summary>
     public List<string> DisabledBuffs { get; set; } = [];
 
@@ -537,8 +546,9 @@ public sealed class WarSettings
             DisabledBuffs = [.. disabled, icon];
     }
 
-    internal static List<string> DefaultBuffIcons() =>
-        ["warbuff1", "warbuff2", "warbuff3", "warbuff4", "warbuff5", "warbuff6", "warweapon1", "warweapon2"];
+    internal static List<string> DefaultBuffIcons() => ["warbuff1", "warbuff3", "warbuff4", "warbuff5", "warbuff6"];
+
+    internal static List<string> DefaultWeaponBuffIcons() => ["warbuff2", "warweapon1", "warweapon2"];
 
     internal static List<string> DefaultItemBuffIcons() => ["waritem1", "waritem2"];
 }

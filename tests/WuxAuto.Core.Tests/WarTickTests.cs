@@ -162,11 +162,47 @@ public class WarTickTests
         Assert.True(run.Phase == PilotPhase.OpenInventory, $"phase {run.Phase}" + log);
         string? warning = run.Lines.FirstOrDefault(l => l.StartsWith("Not on the skill bar", StringComparison.Ordinal));
         Assert.True(warning != null, "no warning about the missing icons" + log);
-        Assert.Contains("warbuff1 (not seen)", warning);
-        Assert.Contains("warweapon2 (not seen)", warning);
-        Assert.Contains("waritem2 (not seen)", warning);
+        // No template file at all (an empty templates folder) is said as such, not as "(not seen)".
+        Assert.Contains("warbuff1 (no warbuff1.png in templates/Assets)", warning);
+        Assert.Contains("warweapon2 (no warweapon2.png in templates/Assets)", warning);
+        Assert.Contains("waritem2 (no waritem2.png in templates/Assets)", warning);
         Assert.DoesNotContain("shura", warning);
         Assert.DoesNotContain(run.Lines, l => l.StartsWith("Pilot stopped:", StringComparison.Ordinal) && l != "Pilot stopped: test over.");
+    }
+
+    [Fact]
+    public async Task Start_InACave_ShuraKeySet_ButNoShuraIcon_TheWarningSaysToClearTheKey()
+    {
+        var settings = War();
+        settings.War.HomeMap = "";
+        var input = new FakeGameInput();
+        var ocr = new FakeOcrEngine { Scene = () => [FakeOcrEngine.Line(Cave, 1500, 10, 300, 16)] };
+
+        using var frame = new Mat(Height, Width, MatType.CV_8UC4, Scalar.All(0));
+        var run = await PilotRun.RunAsync(settings, input, ocr, frame, PilotPhase.CheckZone,
+            (pilot, _) => pilot.Phase == PilotPhase.OpenInventory);
+
+        string log = "\nlog:\n" + string.Join("\n", run.Lines);
+        string? warning = run.Lines.FirstOrDefault(l => l.StartsWith("Not on the skill bar", StringComparison.Ordinal));
+        Assert.True(warning != null, "no warning about the missing icons" + log);
+        Assert.Contains("shura (no shura.png in templates/Assets)", warning);
+        Assert.Contains("- clear 'Shura key (LOD)' if this character has no Shura, or the fight still holds that key", warning);
+        Assert.True(run.Phase == PilotPhase.OpenInventory, $"phase {run.Phase}" + log);
+    }
+
+    [Fact]
+    public async Task Start_TitleUnreadable_TheStopNamesTheCaveAndBohai()
+    {
+        var settings = War();
+        var input = new FakeGameInput();
+        var ocr = new FakeOcrEngine();      // nothing reads
+
+        using var frame = new Mat(Height, Width, MatType.CV_8UC4, Scalar.All(0));
+        var run = await PilotRun.RunAsync(settings, input, ocr, frame, PilotPhase.CheckZone, (pilot, _) => false);
+
+        string log = "\nlog:\n" + string.Join("\n", run.Lines);
+        Assert.True(run.Lines.Any(l => l.StartsWith("Pilot stopped: Auto War must be started inside a cave on page 3 of the teleport scroll, "
+                                                    + "or inside Bohai Outpost", StringComparison.Ordinal)), "no stop naming the cave and Bohai" + log);
     }
 
     [Fact]
@@ -210,8 +246,27 @@ public class WarTickTests
         Assert.DoesNotContain(input.Calls, c => c.StartsWith("KeyDown", StringComparison.Ordinal));
         // Shura's skip is told once per Start, not once per cycle; the missing item buff is warned once.
         Assert.Single(run.Lines, l => l.StartsWith("No Shura key is set", StringComparison.Ordinal));
-        Assert.Single(run.Lines, l => l.StartsWith("The buff icon 'waritem2' is not on the skill bar", StringComparison.Ordinal));
+        Assert.Single(run.Lines, l => l.StartsWith("The buff icon 'waritem2' cannot be looked for (no waritem2.png in templates/Assets)", StringComparison.Ordinal));
         Assert.True(input.Calls.Count(c => c == "KeyTap Tab") >= 2, "expected a second fight cycle" + log);
+    }
+
+    [Fact]
+    public async Task AMissingIcon_IsWarnedOncePerStart_NotAgainAtTheRebuff()
+    {
+        var settings = War();
+        settings.Lod.ShuraKey = "";
+        settings.War.BuffEveryMs = 1500;     // a rebuff at the first Tab point after 1.5 s: a second buff round in this Start
+        var (input, run) = await RunBuffAndFightAsync(settings,
+            done: lines => lines.Count(l => l.StartsWith("Buffed with 'O'", StringComparison.Ordinal)) >= 2,
+            waritem2Png: true);
+
+        string log = Log(input, run.Lines);
+        Assert.True(run.Lines.Count(l => l.StartsWith("Buffed with 'O'", StringComparison.Ordinal)) >= 2, "expected two buff rounds" + log);
+        Assert.Contains(run.Lines, l => l.StartsWith("Rebuffing (", StringComparison.Ordinal));
+        // waritem2.png exists but is not on the bar: once, in the first round only.
+        Assert.Single(run.Lines, l => l.StartsWith("The buff icon 'waritem2' is not on the skill bar", StringComparison.Ordinal));
+        string item = $"Click {ItemX + IconSide / 2},{IconY + IconSide / 2}";
+        Assert.True(input.Calls.Count(c => c == item) >= 2, "waritem1 clicked in both rounds" + log);
     }
 
     [Fact]
@@ -250,10 +305,12 @@ public class WarTickTests
 
     /// <summary>
     /// From WarBuff in Bohai with an autobuff scroll in the item list, the X buff (warbuff4) and waritem1 on the skill bar
-    /// (waritem2 not), until the second fight cycle's skill press: the target box shows an enemy until three skill presses
-    /// after the last Tab, then nothing - TargetGoneMs later the cycle starts again.
+    /// (waritem2 not; its PNG only with <paramref name="waritem2Png"/>), until <paramref name="done"/> (given the log) or else
+    /// the second fight cycle's skill press: the target box shows an enemy until three skill presses after the last Tab, then
+    /// nothing - TargetGoneMs later the cycle starts again.
     /// </summary>
-    private static async Task<(FakeGameInput Input, (PilotPhase Phase, List<string> Lines) Run)> RunBuffAndFightAsync(AppSettings settings)
+    private static async Task<(FakeGameInput Input, (PilotPhase Phase, List<string> Lines) Run)> RunBuffAndFightAsync(AppSettings settings,
+        Func<IReadOnlyList<string>, bool>? done = null, bool waritem2Png = false)
     {
         var input = new FakeGameInput();
         var ocr = new FakeOcrEngine();
@@ -277,11 +334,14 @@ public class WarTickTests
         using var frame = new Mat(Height, Width, MatType.CV_8UC4, Scalar.All(0));
         using var xBuff = Noise(seed: 4);
         using var item = Noise(seed: 7);
+        using var item2 = Noise(seed: 11);
         Paste(frame, xBuff, XBuffX, IconY);
         Paste(frame, item, ItemX, IconY);
 
-        var run = await PilotRun.RunAsync(settings, input, ocr, frame, PilotPhase.WarBuff, (_, _) =>
+        var run = await PilotRun.RunAsync(settings, input, ocr, frame, PilotPhase.WarBuff, (_, lines) =>
             {
+                if (done != null)
+                    return done(lines);
                 int second = input.Calls.Select((c, i) => (c, i)).Where(p => p.c == "KeyTap Tab").Skip(1).Select(p => p.i).FirstOrDefault(-1);
                 return second >= 0 && input.Calls.Skip(second).Contains("KeyTap 1");
             },
@@ -290,6 +350,8 @@ public class WarTickTests
             {
                 Cv2.ImWrite(Path.Combine(folder, "warbuff4.png"), xBuff);
                 Cv2.ImWrite(Path.Combine(folder, "waritem1.png"), item);
+                if (waritem2Png)
+                    Cv2.ImWrite(Path.Combine(folder, "waritem2.png"), item2);
             });
         return (input, run);
     }

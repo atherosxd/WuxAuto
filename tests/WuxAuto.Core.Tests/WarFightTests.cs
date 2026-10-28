@@ -290,9 +290,9 @@ public class WarFightTests
     }
 
     [Fact]
-    public void BuffClicks_NoAutobuff_EverySkillBuffThenEveryItemBuff()
+    public void BuffClicks_NoAutobuff_TheBuffsThenTheWeaponBuffsThenTheItemBuffs()
         => Assert.Equal(
-            ["warbuff1", "warbuff2", "warbuff3", "warbuff4", "warbuff5", "warbuff6", "warweapon1", "warweapon2", "waritem1", "waritem2"],
+            ["warbuff1", "warbuff3", "warbuff4", "warbuff5", "warbuff6", "warbuff2", "warweapon1", "warweapon2", "waritem1", "waritem2"],
             AutomationPilot.WarBuffClicks(Buffs(), byBuffKey: false));
 
     [Fact]
@@ -304,7 +304,7 @@ public class WarFightTests
     public void BuffClicks_UntickedOnes_AreLeftOut_IgnoringCase()
     {
         var war = Buffs("warweapon2", "WARITEM1", "warbuff4");
-        Assert.Equal(["warbuff1", "warbuff2", "warbuff3", "warbuff5", "warbuff6", "warweapon1", "waritem2"],
+        Assert.Equal(["warbuff1", "warbuff3", "warbuff5", "warbuff6", "warbuff2", "warweapon1", "waritem2"],
             AutomationPilot.WarBuffClicks(war, byBuffKey: false));
         Assert.Equal(["waritem2"], AutomationPilot.WarBuffClicks(war, byBuffKey: true));
     }
@@ -313,19 +313,32 @@ public class WarFightTests
     public void BuffClicks_EverythingUnticked_IsNothing()
     {
         var war = new WarSettings();
-        foreach (string icon in war.BuffIcons.Concat(war.ItemBuffIcons))
+        foreach (string icon in war.BuffIcons.Concat(war.WeaponBuffIcons).Concat(war.ItemBuffIcons))
             war.SetBuffOn(icon, false);
         Assert.Empty(AutomationPilot.WarBuffClicks(war, byBuffKey: false));
         Assert.Empty(AutomationPilot.WarBuffClicks(war, byBuffKey: true));
     }
 
     [Fact]
-    public void BuffClicks_BlanksSkipped_AnIconInBothLists_ClickedOnce_AsAnItem()
+    public void BuffClicks_BlanksSkipped_AnIconInTwoLists_ClickedOnce_AsAnItemWithAutobuff()
     {
-        var war = new WarSettings { BuffIcons = ["warbuff1", " ", "waritem1"], ItemBuffIcons = ["", "waritem1", "WARBUFF1"] };
-        Assert.Equal(["warbuff1", "waritem1"], AutomationPilot.WarBuffClicks(war, byBuffKey: false));
+        var war = new WarSettings
+        {
+            BuffIcons = ["warbuff1", " ", "waritem1"],
+            WeaponBuffIcons = ["", "WARBUFF1", "warweapon1"],
+            ItemBuffIcons = ["", "waritem1", "WARBUFF1"],
+        };
+        Assert.Equal(["warbuff1", "waritem1", "warweapon1"], AutomationPilot.WarBuffClicks(war, byBuffKey: false));
         // With autobuff an icon listed as an item is still an item: clicked.
         Assert.Equal(["waritem1", "WARBUFF1"], AutomationPilot.WarBuffClicks(war, byBuffKey: true));
+    }
+
+    [Fact]
+    public void BuffClicks_TheWeaponBuffs_AreSkillBuffs_AfterTheSixBeforeTheItems_NotWithAutobuff()
+    {
+        var war = new WarSettings { BuffIcons = ["warbuff1"], WeaponBuffIcons = ["warweapon2", "warweapon1"], ItemBuffIcons = ["waritem1"] };
+        Assert.Equal(["warbuff1", "warweapon2", "warweapon1", "waritem1"], AutomationPilot.WarBuffClicks(war, byBuffKey: false));
+        Assert.Equal(["waritem1"], AutomationPilot.WarBuffClicks(war, byBuffKey: true));
     }
 
     // ---------------------------------------------------------------- the war clock

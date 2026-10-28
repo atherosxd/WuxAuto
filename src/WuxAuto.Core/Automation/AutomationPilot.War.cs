@@ -65,7 +65,11 @@ public sealed partial class AutomationPilot
     /// <summary>A cave and a monster are saved to go back to.</summary>
     private bool HasWarSpot => !string.IsNullOrWhiteSpace(_settings.War.HomeMap) && !string.IsNullOrWhiteSpace(_settings.War.HomeMonster);
 
+    /// <summary>The cave-only wording, where only a cave helps: the stop after a war with no cave saved to go back to.</summary>
     private string NotACaveMessage => $"Auto War must be started inside a cave on page {_settings.War.ListPage} of the teleport scroll";
+
+    /// <summary>Where Start works: a cave, or inside the war map during a war (the Start dispatch's stops).</summary>
+    private string StartPlaceMessage => $"{NotACaveMessage}, or inside {_settings.War.Destination}";
 
     /// <summary>What the teleport list is paged for, as the chevron step names it (Start's cave check has no destination).</summary>
     private string ListPagingTarget => IsWar && _warListCheck
@@ -176,7 +180,7 @@ public sealed partial class AutomationPilot
             }
 
             Log?.Invoke(LogLevel.Info, "The minimap title could not be read (3 tries).");
-            WarStop(frame, NotACaveMessage);
+            WarStop(frame, StartPlaceMessage);
             return;
         }
 
@@ -201,14 +205,14 @@ public sealed partial class AutomationPilot
             }
 
             Log?.Invoke(LogLevel.Info, $"In {HomeTown} with no cave saved to go back to.");
-            WarStop(frame, NotACaveMessage);
+            WarStop(frame, StartPlaceMessage);
             return;
         }
 
         if (ZoneMatches(title, _settings.Sequence.DestinationText) || ZoneMatches(title, _settings.Lod.Destination))
         {
             Log?.Invoke(LogLevel.Info, $"In '{title}' - the Labyrinth and LOD are no caves for Auto War.");
-            WarStop(frame, NotACaveMessage);
+            WarStop(frame, StartPlaceMessage);
             return;
         }
 
@@ -240,13 +244,13 @@ public sealed partial class AutomationPilot
     }
 
     /// <summary>
-    /// The icons Start looks for on the skill bar (<see cref="CheckWarSkillBar"/>): every buff ticked on - the skill buffs,
-    /// then the item buffs - and Shura's icon when <paramref name="shuraKey"/> is set (without it the fight skips the hold).
-    /// Each once, blanks left out.
+    /// The icons Start looks for on the skill bar (<see cref="CheckWarSkillBar"/>): every buff ticked on - the buffs, the
+    /// weapon buffs, then the item buffs - and Shura's icon when <paramref name="shuraKey"/> is set (without it the fight
+    /// skips the hold). Each once, blanks left out.
     /// </summary>
     internal static IReadOnlyList<string> WarBarIcons(WarSettings war, string shuraTemplate, string shuraKey)
     {
-        var icons = war.BuffIcons.Concat(war.ItemBuffIcons).Where(war.IsBuffOn);
+        var icons = war.BuffIcons.Concat(war.WeaponBuffIcons).Concat(war.ItemBuffIcons).Where(war.IsBuffOn);
         if (!string.IsNullOrWhiteSpace(shuraKey))
             icons = icons.Append(shuraTemplate);
         return icons
@@ -259,7 +263,9 @@ public sealed partial class AutomationPilot
     /// The buffs ticked on and Shura (<see cref="WarBarIcons"/>) on the skill bar at <see cref="WarSettings.IconMatchScore"/>.
     /// Every one is optional (user, 2026-10-28: "make the skills optional, not required for pilot to start"): the missing
     /// ones are one warning, each named with its best score at any threshold - 0.90 is not proven on a real alt's bar
-    /// yet, so a near miss must show in that line - and a <c>war_bar_missing</c> snapshot; the buff rounds skip them.
+    /// yet, so a near miss must show in that line - or as having no PNG at all, and a <c>war_bar_missing</c> snapshot; the
+    /// buff rounds skip them. Shura missing while its key is set: the fight still holds that key, so the warning says to
+    /// clear it for a character without Shura.
     /// </summary>
     private void CheckWarSkillBar(Mat frame)
     {
@@ -296,9 +302,13 @@ public sealed partial class AutomationPilot
             return;
         }
 
+        string shura = _settings.Lod.ShuraTemplate;
+        bool shuraMissing = missing.Any(m => string.Equals(m.Name, shura, StringComparison.OrdinalIgnoreCase));
         Log?.Invoke(LogLevel.Warning, $"Not on the skill bar (score {war.IconMatchScore.ToString("0.00", CultureInfo.InvariantCulture)} needed): "
-                                      + $"{DescribeMissingIcons(missing)} - carrying on without them (untick a buff this character does "
-                                      + $"not use in Settings > Auto War > Buffs){(found.Count > 0 ? $"; found {string.Join(", ", found)}" : "")}.");
+                                      + $"{DescribeMissingIcons(missing, t => _analyzer.Library.Get(t) != null)} - carrying on without them "
+                                      + "(untick a buff this character does not use in Settings > Auto War > Buffs)"
+                                      + (shuraMissing ? " - clear 'Shura key (LOD)' if this character has no Shura, or the fight still holds that key" : "")
+                                      + $"{(found.Count > 0 ? $"; found {string.Join(", ", found)}" : "")}.");
         WarShot(frame, "war_bar_missing");
     }
 
@@ -318,11 +328,20 @@ public sealed partial class AutomationPilot
         new("Sequence.AutohuntSettingsKey in settings.json", settings.Sequence.AutohuntSettingsKey, Required: false),
     ];
 
-    /// <summary>"warbuff2 (best 0.84), shura (not seen)": each missing icon with its best score, rounded down.</summary>
-    internal static string DescribeMissingIcons(IEnumerable<(string Name, double? Best)> missing)
-        => string.Join(", ", missing.Select(m => m.Best is double best
-            ? $"{m.Name} (best {(Math.Floor(best * 100 + 1e-9) / 100).ToString("0.00", CultureInfo.InvariantCulture)})"
-            : $"{m.Name} (not seen)"));
+    /// <summary>
+    /// "warbuff3 (best 0.84), shura (not seen), warweapon2 (no warweapon2.png in templates/Assets)": each missing icon with
+    /// its best score, rounded down - or, when <paramref name="hasTemplate"/> says its template was never loaded, that its
+    /// PNG is missing (a crop to add, not an icon to put on the bar).
+    /// </summary>
+    internal static string DescribeMissingIcons(IEnumerable<(string Name, double? Best)> missing, Func<string, bool>? hasTemplate = null)
+        => string.Join(", ", missing.Select(m => hasTemplate?.Invoke(m.Name) == false
+            ? $"{m.Name} ({NoTemplateText(m.Name)})"
+            : m.Best is double best
+                ? $"{m.Name} (best {(Math.Floor(best * 100 + 1e-9) / 100).ToString("0.00", CultureInfo.InvariantCulture)})"
+                : $"{m.Name} (not seen)"));
+
+    /// <summary>"no warweapon2.png in templates/Assets": the template is in neither folder (TemplateLibrary loaded no such name).</summary>
+    private static string NoTemplateText(string template) => $"no {template}.png in templates/Assets";
 
     // ---------------------------------------------------------------- the teleport list
 

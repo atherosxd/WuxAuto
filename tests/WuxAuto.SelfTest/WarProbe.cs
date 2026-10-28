@@ -9,7 +9,7 @@ namespace WuxAuto.SelfTest;
 
 /// <summary>
 /// Auto War screen readers over a folder of saved frames, one line per PNG:
-/// --hp (player HP), --target (target name + chest), --warbar (buff and item buff icons + Shura on the skill bar),
+/// --hp (player HP), --target (target name + chest), --warbar (buff, weapon and item buff icons + Shura on the skill bar),
 /// --menu (the top-centre MENU button, the "Tribe Status" tile), --tribe (the war row's countdown).
 /// </summary>
 internal static class WarProbe
@@ -129,15 +129,16 @@ internal static class WarProbe
     }
 
     /// <summary>
-    /// --warbar &lt;dir&gt;: each buff icon (War.BuffIcons, then War.ItemBuffIcons - ticked off or not) and Shura on
-    /// the skill bar - the best score at any scale (0.30 floor, a hit at War.IconMatchScore or more marked HIT), then
-    /// what the pilot's ScreenAnalyzer.FindSkillBarIcons call at that score returns.
+    /// --warbar &lt;dir&gt;: each buff icon (War.BuffIcons, War.WeaponBuffIcons, then War.ItemBuffIcons - ticked off or not)
+    /// and Shura on the skill bar - the best score at any scale (0.30 floor, a hit at War.IconMatchScore or more marked HIT),
+    /// then what the pilot's ScreenAnalyzer.FindSkillBarIcons call at that score returns.
     /// </summary>
     public static int WarBar(string dir)
     {
         var settings = SettingsStore.Load(persistMigration: false);
         using var analyzer = new ScreenAnalyzer(settings, new OcrService());
-        var templates = settings.War.BuffIcons.Concat(settings.War.ItemBuffIcons).Append(settings.Lod.ShuraTemplate)
+        var war = settings.War;
+        var templates = war.BuffIcons.Concat(war.WeaponBuffIcons).Concat(war.ItemBuffIcons).Append(settings.Lod.ShuraTemplate)
             .Where(t => !string.IsNullOrWhiteSpace(t))
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToList();

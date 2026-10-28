@@ -191,17 +191,12 @@ public static class SettingsStore
             }
         }
 
-        // v23: Auto War's two weapon buffs (user, 2026-10-28). A saved BuffIcons list (warbuff1-6 in v0.19.0) wins over
-        // the new default, so they are appended to it, after the user's own order and entries. An empty or missing list
-        // is left to NormalizeWar, which refills it with the defaults (the weapons included).
-        if (s.Version < 23 && s.War?.BuffIcons is { } buffs && buffs.Any(b => !string.IsNullOrWhiteSpace(b)))
-        {
-            foreach (string weapon in new[] { "warweapon1", "warweapon2" })
-            {
-                if (!buffs.Any(b => string.Equals(b?.Trim(), weapon, StringComparison.OrdinalIgnoreCase)))
-                    buffs.Add(weapon);
-            }
-        }
+        // v23: warbuff2 is the sword's buff (user, 2026-10-28), one of the new WeaponBuffIcons (a new property, so it loads
+        // its default, warbuff2 included). A saved BuffIcons list (warbuff1-6 in v0.19.0) wins over the new default, so
+        // warbuff2 is taken out of it - the user's order and other entries stay. Removal only: the v0.19.0 copy sharing
+        // settings.json requires every BuffIcons entry at Start and then just checks five.
+        if (s.Version < 23 && s.War?.BuffIcons is { } buffs)
+            buffs.RemoveAll(b => string.Equals(b?.Trim(), "warbuff2", StringComparison.OrdinalIgnoreCase));
 
         s.Version = CurrentVersion;
         return true;
@@ -241,12 +236,14 @@ public static class SettingsStore
             .Where(i => i.Length > 0)
             .ToList();
         w.BuffIcons = icons.Count > 0 ? icons : WarSettings.DefaultBuffIcons();
-        // No refill for these two: an empty item list is the user's choice, an empty disabled list means every buff on.
+        // No refill for these three: an empty weapon or item list is the user's choice, an empty disabled list means every
+        // buff on.
         static List<string> Clean(List<string>? names) => (names ?? [])
             .Select(n => (n ?? "").Trim())
             .Where(n => n.Length > 0)
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToList();
+        w.WeaponBuffIcons = Clean(w.WeaponBuffIcons);
         w.ItemBuffIcons = Clean(w.ItemBuffIcons);
         w.DisabledBuffs = Clean(w.DisabledBuffs);
         w.LeadMs = Math.Clamp(w.LeadMs, 0, 120000);

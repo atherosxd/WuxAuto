@@ -7,8 +7,8 @@ namespace WuxAuto.Automation;
 
 /// <summary>
 /// Auto War inside Bohai Outpost (design §4.4-§4.7): the zone after the war dialog's OK, TAB target "Enemy worth CP" (the
-/// Settings visit), the buffs - the buff key with an autobuff scroll, else the skill buff icons one by one; then the item
-/// buffs on the skill bar either way, every icon only when ticked on (<see cref="WarBuffClicks"/>) - then the fight
+/// Settings visit), the buffs - the buff key with an autobuff scroll, else the buff and weapon buff icons one by one;
+/// then the item buffs on the skill bar either way, every icon only when ticked on (<see cref="WarBuffClicks"/>) - then the fight
 /// cycle: Tab until a target (or "Gate is Open"), the X buff, Shura held (when its key is set), the skill until the
 /// target is gone. The HP
 /// numbers are watched all the while; after a death it waits for the revive, rebuffs and fights on. The game sending the
@@ -132,12 +132,13 @@ public sealed partial class AutomationPilot
     /// <summary>
     /// The icons one buff round clicks on the skill bar, in order (user, 2026-10-28). With <paramref name="byBuffKey"/> -
     /// the autobuff key pressed - only the item buffs (<see cref="WarSettings.ItemBuffIcons"/>: the key buffs the skills,
-    /// it uses no items, and the user wants the items clicked with autobuff too); otherwise the skill buffs
-    /// (<see cref="WarSettings.BuffIcons"/>), then the item buffs. Only the ones ticked on (<see cref="WarSettings.IsBuffOn"/>),
-    /// blanks left out, each once (an icon in both lists is clicked once; with autobuff, as an item).
+    /// it uses no items, and the user wants the items clicked with autobuff too); otherwise the buffs
+    /// (<see cref="WarSettings.BuffIcons"/>), the weapon buffs (<see cref="WarSettings.WeaponBuffIcons"/>, skill buffs too),
+    /// then the item buffs. Only the ones ticked on (<see cref="WarSettings.IsBuffOn"/>), blanks left out, each once (an icon
+    /// in two lists is clicked once; with autobuff, as an item).
     /// </summary>
     internal static IReadOnlyList<string> WarBuffClicks(WarSettings war, bool byBuffKey)
-        => (byBuffKey ? Enumerable.Empty<string>() : war.BuffIcons).Concat(war.ItemBuffIcons)
+        => (byBuffKey ? Enumerable.Empty<string>() : war.BuffIcons.Concat(war.WeaponBuffIcons)).Concat(war.ItemBuffIcons)
             .Where(i => !string.IsNullOrWhiteSpace(i) && war.IsBuffOn(i))
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToList();
@@ -709,8 +710,8 @@ public sealed partial class AutomationPilot
 
     /// <summary>
     /// Step 3, one round: autobuff - the buff key (<see cref="LodSettings.BuffKey"/>, O) first; then the icons of
-    /// <see cref="WarBuffClicks"/> - with the key only the item buffs, otherwise the skill buffs and then the item buffs, each
-    /// only when ticked on - one click per tick <see cref="WarSettings.BuffClickGapMs"/> apart, each found on that tick's
+    /// <see cref="WarBuffClicks"/> - with the key only the item buffs, otherwise the buffs, the weapon buffs, then the item
+    /// buffs, each only when ticked on - one click per tick <see cref="WarSettings.BuffClickGapMs"/> apart, each found on that tick's
     /// frame; one not on the bar is skipped, with a warning once per Start. Then the fight.
     /// </summary>
     private async Task TickWarBuffUpAsync(Mat frame)
@@ -753,7 +754,9 @@ public sealed partial class AutomationPilot
             if (hit == null)
             {
                 if (_warMissingIcons.Add(icon))
-                    Log?.Invoke(LogLevel.Warning, $"The buff icon '{icon}' is not on the skill bar - skipping it (said once per Start; untick it in Settings > Auto War > Buffs when this character does not use it).");
+                    Log?.Invoke(LogLevel.Warning, _analyzer.Library.Get(icon) == null
+                        ? $"The buff icon '{icon}' cannot be looked for ({NoTemplateText(icon)}) - skipping it (said once per Start)."
+                        : $"The buff icon '{icon}' is not on the skill bar - skipping it (said once per Start; untick it in Settings > Auto War > Buffs when this character does not use it).");
                 _warBuffIcon++;
                 continue;
             }
