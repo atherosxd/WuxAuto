@@ -1,3 +1,4 @@
+using System.Globalization;
 using OpenCvSharp;
 using WuxAuto.Core;
 using WuxAuto.Vision;
@@ -919,7 +920,8 @@ public sealed partial class AutomationPilot
 
     /// <summary>
     /// Step 1: a name or the chest in the target box = a target - the war has started, the X buff
-    /// (<see cref="WarSettings.XBuffIcon"/>, skipped when unticked or not on the bar) is clicked on this frame, then Shura.
+    /// (<see cref="WarSettings.XBuffIcon"/>, skipped when unticked; not on the bar - skipped, <see cref="WarnXBuffMissing"/>)
+    /// is clicked on this frame, then Shura.
     /// None: Tab again 1 s later; before the war has started the whole client is read for <see cref="WarSettings.GateText"/>
     /// on every 2nd such read.
     /// </summary>
@@ -946,10 +948,15 @@ public sealed partial class AutomationPilot
             Log?.Invoke(LogLevel.Trace, $"{(name != null ? $"Target '{name}'" : "A target (chest icon, name unread)")} - {(xBuff ? "X buff, " : "")}{shura}then the skill until it is gone.");
 
             bool clicked = false;
-            if (xBuff && _analyzer.FindSkillBarIcons(frame, [war.XBuffIcon], war.IconMatchScore)[0].Match is { } x)
+            var x = xBuff ? _analyzer.FindSkillBarIcons(frame, [war.XBuffIcon], war.IconMatchScore)[0].Match : null;
+            if (x != null)
             {
                 _overlays.Add(new OverlayItem(x.Bounds, $"{war.XBuffIcon} {x.Score:0.00}", OverlayColor.Green));
                 clicked = WarClick(x.Bounds, $"the X buff '{war.XBuffIcon}' ({x.Score:0.00})", LogLevel.Trace);
+            }
+            else if (xBuff && _warMissingIcons.Add(war.XBuffIcon))
+            {
+                WarnXBuffMissing(frame);
             }
 
             _warFightStep = 2;
@@ -972,6 +979,28 @@ public sealed partial class AutomationPilot
         _warFightStep = 0;
         _detail = WarFightDetail("no target - Tab again", now);
         _waitUntil = now + 1000;
+    }
+
+    /// <summary>
+    /// The X buff, ticked on, not found on the skill bar at <see cref="WarSettings.IconMatchScore"/> in a fight cycle: one
+    /// warning per Start (<c>_warMissingIcons</c>, shared with the buff round, so an icon it already warned about is not
+    /// warned again) naming its best score at any scale, or that its PNG is missing (<see cref="DescribeMissingIcons"/>).
+    /// With autobuff - or a Start inside Bohai with autobuff - nothing else ever looks for it. The cycle goes on without it.
+    /// </summary>
+    private void WarnXBuffMissing(Mat frame)
+    {
+        string icon = _settings.War.XBuffIcon;
+        var bar = _settings.Regions.Hotbar.ToPixels(frame.Width, frame.Height);
+        bool hasPng = _analyzer.Library.Get(icon) != null;
+        // How close it came: any scale, so no scale is learned from a look-alike.
+        var best = hasPng ? _analyzer.FindIconAnyScale(frame, icon, bar, 0.0).Match : null;
+        if (best != null)
+            _overlays.Add(new OverlayItem(best.Bounds, $"{icon}? {best.Score:0.00}", OverlayColor.Orange));
+        Log?.Invoke(LogLevel.Warning, $"The X buff '{icon}' was not found on the skill bar (score "
+                                      + $"{_settings.War.IconMatchScore.ToString("0.00", CultureInfo.InvariantCulture)} needed): "
+                                      + $"{DescribeMissingIcons([(icon, best?.Score)], _ => hasPng)} - fighting on without it (a cooldown can hide it too; "
+                                      + "said once per Start; untick it in Settings > Auto War > Buffs when this character does not use it).");
+        WarShot(frame, "war_xbuff_missing");
     }
 
     /// <summary>

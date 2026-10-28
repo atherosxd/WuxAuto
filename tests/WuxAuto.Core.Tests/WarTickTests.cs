@@ -287,6 +287,33 @@ public class WarTickTests
     }
 
     [Fact]
+    public async Task TheXBuffNotOnTheBar_WarnedOncePerStart_WithItsBestScore_TheFightGoesOn()
+    {
+        // With autobuff the buff round never looks for warbuff4: only the fight cycle can tell it is missing.
+        var settings = War();
+        settings.Lod.ShuraKey = "";
+        var (input, run) = await RunBuffAndFightAsync(settings, xBuffOnBar: false);
+
+        string log = Log(input, run.Lines);
+        var warning = Assert.Single(run.Lines, l => l.StartsWith("The X buff 'warbuff4' was not found on the skill bar", StringComparison.Ordinal));
+        Assert.Contains("warbuff4 (best ", warning);
+        Assert.True(input.Calls.Count(c => c == "KeyTap Tab") >= 2 && input.Calls.Contains("KeyTap 1"), "expected two fight cycles" + log);
+        Assert.DoesNotContain($"Click {XBuffX + IconSide / 2},{IconY + IconSide / 2}", input.Calls);
+    }
+
+    [Fact]
+    public async Task TheXBuffWithoutItsPng_TheWarningSaysSo()
+    {
+        var settings = War();
+        settings.Lod.ShuraKey = "";
+        var (input, run) = await RunBuffAndFightAsync(settings, xBuffOnBar: false, xBuffPng: false);
+
+        string log = Log(input, run.Lines);
+        var warning = Assert.Single(run.Lines, l => l.StartsWith("The X buff 'warbuff4' was not found on the skill bar", StringComparison.Ordinal));
+        Assert.Contains("warbuff4 (no warbuff4.png in templates/Assets)", warning);
+    }
+
+    [Fact]
     public async Task WithAShuraKey_TheHoldStays()
     {
         var settings = War();
@@ -304,13 +331,14 @@ public class WarTickTests
         => "\ninputs:\n" + string.Join("\n", input.Calls) + "\nlog:\n" + string.Join("\n", lines);
 
     /// <summary>
-    /// From WarBuff in Bohai with an autobuff scroll in the item list, the X buff (warbuff4) and waritem1 on the skill bar
-    /// (waritem2 not; its PNG only with <paramref name="waritem2Png"/>), until <paramref name="done"/> (given the log) or else
-    /// the second fight cycle's skill press: the target box shows an enemy until three skill presses after the last Tab, then
-    /// nothing - TargetGoneMs later the cycle starts again.
+    /// From WarBuff in Bohai with an autobuff scroll in the item list, the X buff (warbuff4; on the bar unless
+    /// <paramref name="xBuffOnBar"/> is false - then only a faded copy -, its PNG unless <paramref name="xBuffPng"/> is false) and waritem1 on the skill
+    /// bar (waritem2 not; its PNG only with <paramref name="waritem2Png"/>), until <paramref name="done"/> (given the log) or
+    /// else the second fight cycle's skill press: the target box shows an enemy until three skill presses after the last Tab,
+    /// then nothing - TargetGoneMs later the cycle starts again.
     /// </summary>
     private static async Task<(FakeGameInput Input, (PilotPhase Phase, List<string> Lines) Run)> RunBuffAndFightAsync(AppSettings settings,
-        Func<IReadOnlyList<string>, bool>? done = null, bool waritem2Png = false)
+        Func<IReadOnlyList<string>, bool>? done = null, bool waritem2Png = false, bool xBuffOnBar = true, bool xBuffPng = true)
     {
         var input = new FakeGameInput();
         var ocr = new FakeOcrEngine();
@@ -335,7 +363,18 @@ public class WarTickTests
         using var xBuff = Noise(seed: 4);
         using var item = Noise(seed: 7);
         using var item2 = Noise(seed: 11);
-        Paste(frame, xBuff, XBuffX, IconY);
+        if (xBuffOnBar)
+        {
+            Paste(frame, xBuff, XBuffX, IconY);
+        }
+        else
+        {
+            // Half the X buff, half other noise (like a cooldown overlay): a best score well under the 0.90 gate.
+            using var other = Noise(seed: 99);
+            using var faded = new Mat();
+            Cv2.AddWeighted(xBuff, 0.5, other, 0.5, 0, faded);
+            Paste(frame, faded, XBuffX, IconY);
+        }
         Paste(frame, item, ItemX, IconY);
 
         var run = await PilotRun.RunAsync(settings, input, ocr, frame, PilotPhase.WarBuff, (_, lines) =>
@@ -348,7 +387,8 @@ public class WarTickTests
             timeoutMs: 20000,
             assets: folder =>
             {
-                Cv2.ImWrite(Path.Combine(folder, "warbuff4.png"), xBuff);
+                if (xBuffPng)
+                    Cv2.ImWrite(Path.Combine(folder, "warbuff4.png"), xBuff);
                 Cv2.ImWrite(Path.Combine(folder, "waritem1.png"), item);
                 if (waritem2Png)
                     Cv2.ImWrite(Path.Combine(folder, "waritem2.png"), item2);
