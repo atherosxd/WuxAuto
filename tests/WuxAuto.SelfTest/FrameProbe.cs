@@ -67,7 +67,8 @@ internal static class FrameProbe
 
             var ring = analyzer.FindBossRing(frame);
             var belt = analyzer.FindBossBelt(frame);
-            Console.WriteLine($"{Path.GetFileName(path)} {frame.Width}x{frame.Height} | ring {(ring == null ? "-" : ring.Value.ToString())} | belt {(belt == null ? "-" : belt.Value.ToString())}");
+            string away = ring == null ? "" : $" away {ScreenAnalyzer.DistanceFromRing(ring.Value, frame.Width, frame.Height):0.00}";
+            Console.WriteLine($"{Path.GetFileName(path)} {frame.Width}x{frame.Height} | ring {(ring == null ? "-" : ring.Value.ToString())}{away} | belt {(belt == null ? "-" : belt.Value.ToString())}");
         }
 
         return 0;

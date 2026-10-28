@@ -25,6 +25,7 @@ public enum RunMode
 {
     AutoLaby = 0,
     AutoLod = 1,
+    AutoWar = 2,
 }
 
 /// <summary>Where the mini mode window opens on the screen (user: default bottom right).</summary>
@@ -76,6 +77,10 @@ public sealed class AppSettings
 
     /// <summary>Auto LOD: the Ultimate Den of Rebirth boss (<see cref="RunMode.AutoLod"/>).</summary>
     public LodSettings Lod { get; set; } = new();
+
+    /// <summary>Auto War: the tribe war in Bohai Outpost (<see cref="RunMode.AutoWar"/>).</summary>
+    public WarSettings War { get; set; } = new();
+
     public UiSettings Ui { get; set; } = new();
 
     /// <summary>Puts every screen position (regions and click fractions) back to the built-in defaults.</summary>
@@ -238,6 +243,37 @@ public sealed class RegionSettings
     /// the bar keeps roughly the same pixel size at every resolution.
     /// </summary>
     public NormRect Hotbar { get; set; } = new(0.20, 0.85, 0.60, 0.15);
+
+    /// <summary>
+    /// Auto War: the player's HP / MP box at the top left. The HP line "42833 / 42833" is the topmost
+    /// "N / M" in it (20261026_042225_228_lod_no_entries, 1920x1080: 184,36 116x15; the MP line (y 63) and
+    /// "100.000%" (y 91) are under it). The "0/3000" bar below it read inside the box on none of the 561
+    /// saved frames (1024x768 to 2304x1488, --hp probe).
+    /// </summary>
+    public NormRect PlayerHp { get; set; } = new(0.0, 0.0, 0.30, 0.10);
+
+    /// <summary>
+    /// Auto War: the target box at the top centre - the target's name with its "N / M" numbers line
+    /// under it. Name / numbers line tops: 1024x768 489,49 / 489,72 (20261021_000527_994_fail_RunToTarget),
+    /// 1273x1024 589,65 / 590,95 (20261025_124800_296_canceldialog_unread), 1920x1080 916,69 / 918,100
+    /// (20261024_152017_954_lod_approach) - y 6-7 % and 9 % at every size.
+    /// </summary>
+    public NormRect TargetBox { get; set; } = new(0.25, 0.03, 0.50, 0.12);
+
+    /// <summary>
+    /// Auto War: the band of the top-centre MENU button (three bars in a gold frame), the way into Tribe
+    /// Status. Not proportional - centre / size on the saved frames: 1024x768 499,21 43x36; 1273x1024
+    /// 581,27 58x47; 1440x900 825,25 51x42; 1920x1080 1182,29 61x50; 2302x1353 1479,37 76x63 (x 0.49-0.64,
+    /// bottom under 0.06). menubutton.png is the dark square inside the gold frame of
+    /// 20261024_170342_166_lod_no_entries (frame x 1149-1215, y 1-56; crop 1152,4 61x50).
+    /// </summary>
+    public NormRect MenuButton { get; set; } = new(0.30, 0.0, 0.40, 0.08);
+
+    /// <summary>
+    /// Auto War: the item status list at the bottom right ("[Auto buff scroll] dd.mm.yyyy", the keys, the scrolls) - the
+    /// band the Laby/LOD key check reads (inline in CheckKeysAsync).
+    /// </summary>
+    public NormRect ItemList { get; set; } = new(0.62, 0.50, 0.38, 0.50);
 }
 
 /// <summary>Auto LOD (user, 2026-10-21) - see AutomationPilot.Lod.cs.</summary>
@@ -264,12 +300,26 @@ public sealed class LodSettings
     /// <summary>The boss name on the target bar (matched fuzzily, whole words).</summary>
     public string BossName { get; set; } = "Bai Gu Great";
 
-    /// <summary>Where to walk to; the boss is near and may come to the character.</summary>
-    public int TargetX { get; set; } = 1191;
-    public int TargetY { get; set; } = 2413;
+    /// <summary>
+    /// Walk to <see cref="TargetX"/>/<see cref="TargetY"/> after the south turn, pressing Tab, then
+    /// wait there tabbing (UI "Walk to the boss spot (LOD)"; on, settings v22). User, 2026-10-28:
+    /// "sometimes the boss doesn't go near the char. move the character forward to 1199, 1782 ...
+    /// after facing south" - the teleport lands at ~1195,1578. Off (user, 2026-10-27: "stay still on
+    /// the same place upon teleport, just keep tabbing until the boss name shows"): the character stays
+    /// where it is and Tab is pressed every <see cref="TabEveryMs"/>. The south turn happens either way
+    /// (user: so the ring round the boss's feet can be targeted).
+    /// </summary>
+    public bool WalkToBossSpot { get; set; } = true;
+
+    /// <summary>
+    /// Where to walk to with <see cref="WalkToBossSpot"/> (user, 2026-10-28; the boss fought at ~1212,1775
+    /// on 2026-10-24). Until v22 it was 1191,2413, the middle of the map.
+    /// </summary>
+    public int TargetX { get; set; } = 1199;
+    public int TargetY { get; set; } = 1782;
     public int TargetTolerance { get; set; } = 60;
 
-    /// <summary>Tab while walking (user: every 1-2 s).</summary>
+    /// <summary>Tab while waiting for the boss (or walking to it; user: every 1-2 s).</summary>
     public int TabEveryMs { get; set; } = 1500;
 
     /// <summary>Tab while turning south - spammed (user).</summary>
@@ -295,8 +345,25 @@ public sealed class LodSettings
     /// <summary>Time for the walk after a Ctrl+click (live: ~165 units in under 1.8 s).</summary>
     public int ApproachWaitMs { get; set; } = 1500;
 
-    /// <summary>Ctrl+clicks per fight before attacking from where the character is.</summary>
+    /// <summary>Ctrl+clicks per walk up before attacking from where the character is.</summary>
     public int ApproachTries { get; set; } = 2;
+
+    /// <summary>
+    /// Keep to the ring (user, 2026-10-27: "try to go to the ring as much as possible, do a periodical
+    /// check"): after the first walk up of a fight, the ring is looked for every this many ms while
+    /// attacking; the character further out than <see cref="RingStayMax"/> -> the same walk up again
+    /// (Shura, Ctrl+click). The ring only, never the belt: no ring in view is mostly the boss's body over
+    /// the camera with the character under it. A walk that did not get there waits 3x as long before the
+    /// next check. 0 = only the walk after the first hit, as before. Needs <see cref="ApproachBoss"/>.
+    /// </summary>
+    public int RingCheckEveryMs { get; set; } = 3000;
+
+    /// <summary>
+    /// The periodic check's "still on the ring": the character's distance from the ring's centre in ring
+    /// radii (ScreenAnalyzer.DistanceFromRing) - 1 = on the ring itself. The walk up stops at 0.6, so a character it just put there is not sent again. Saved
+    /// first-walk frames read 0.07-0.89 on or under the boss and 1.82-2.0 beside the ring.
+    /// </summary>
+    public double RingStayMax { get; set; } = 1.0;
 
     /// <summary>
     /// Auto-buff key (user: O; autohunt is disabled on this map). Pressed on arrival and again every
@@ -367,6 +434,78 @@ public sealed class LodSettings
 
     /// <summary>Wait after being put back at the start before turning south.</summary>
     public int RespawnSettleMs { get; set; } = 3000;
+}
+
+/// <summary>Auto War (user, 2026-10-27): the tribe war in Bohai Outpost - see AutomationPilot.War.cs.</summary>
+public sealed class WarSettings
+{
+    /// <summary>Teleport list entry and minimap zone of the war map (user).</summary>
+    public string Destination { get; set; } = "Bohai Outpost";
+
+    /// <summary>The row of the war in the Tribe Status window (user's screenshot).</summary>
+    public string TribeRowText { get; set; } = "Bohai Outpost (Adept)";
+
+    /// <summary>The Tribe Status tile in the Menu window (user's screenshot).</summary>
+    public string MenuTileText { get; set; } = "Tribe Status";
+
+    /// <summary>How long before the war opens the pilot starts moving (user: 10 s).</summary>
+    public int LeadMs { get; set; } = 10000;
+
+    /// <summary>How long it waits for the "Confirm to move?" dialog to appear (my call: 2 min).</summary>
+    public int DialogWaitMs { get; set; } = 120000;
+
+    /// <summary>The TAB target option the war needs (user: Enemy worth CP).</summary>
+    public string TabTargetOption { get; set; } = "Enemy worth CP";
+
+    /// <summary>Buff icons clicked on the skill bar, in order (user's crops).</summary>
+    public List<string> BuffIcons { get; set; } = DefaultBuffIcons();
+
+    /// <summary>
+    /// The "X buff" (user: icon 4, the bluish-white one with an X; it drops when another player hits): clicked again on the
+    /// skill bar in every fight cycle, once a target shows, before Shura.
+    /// </summary>
+    public string XBuffIcon { get; set; } = "warbuff4";
+
+    /// <summary>Gap between two buff clicks (user: 1 s).</summary>
+    public int BuffClickGapMs { get; set; } = 1000;
+
+    /// <summary>How often the buffs are renewed (my call: 5 min 45 s; the user's buffs last at least 6 min).</summary>
+    public int BuffEveryMs { get; set; } = 345000;
+
+    /// <summary>How long the Shura key is held at the start of each fight cycle, before the skill taps (my call).</summary>
+    public int ShuraHoldMs { get; set; } = 1200;
+
+    /// <summary>How long the target must be gone before the pilot acts (my call).</summary>
+    public int TargetGoneMs { get; set; } = 2000;
+
+    /// <summary>The text that says the war gate is open, read on the whole screen (user).</summary>
+    public string GateText { get; set; } = "Gate is Open";
+
+    /// <summary>The teleport list page of the home map (user: page 3).</summary>
+    public int ListPage { get; set; } = 3;
+
+    /// <summary>The combat log word that says the character arrived (user).</summary>
+    public string ArrivedText { get; set; } = "Arrived";
+
+    /// <summary>How long it waits for the arrival line (my call).</summary>
+    public int ArriveWaitMs { get; set; } = 90000;
+
+    /// <summary>
+    /// Minimum template score of a buff icon (my call). 0.90, not 0.80: warbuff2 (the small grey streak)
+    /// scored up to 0.871 on floor texture in the skill bar band of saved frames (0.80 or more on 32 of 561,
+    /// e.g. 20261020_160055_722_nogate_s4 and the gate_view frames); the other crops stayed under 0.76.
+    /// Shura, checked with the same score, reads 0.951-1.000 on every real bar and at most 0.781 elsewhere.
+    /// </summary>
+    public double IconMatchScore { get; set; } = 0.90;
+
+    /// <summary>The map to go back to after the war, as the teleport list shows it (user; empty = not set).</summary>
+    public string HomeMap { get; set; } = "";
+
+    /// <summary>The monster to hunt on the home map (user; empty = not set).</summary>
+    public string HomeMonster { get; set; } = "";
+
+    internal static List<string> DefaultBuffIcons() =>
+        ["warbuff1", "warbuff2", "warbuff3", "warbuff4", "warbuff5", "warbuff6"];
 }
 
 public sealed class SequenceSettings
@@ -445,7 +584,7 @@ public sealed class SequenceSettings
     public bool KillChime { get; set; } = true;
 
     /// <summary>
-    /// The kill chime's sound file, MP3 or WAV (user, 2026-10-27). Empty = the built-in chime.
+    /// The kill chime's sound file, MP3 or WAV (user, 2026-10-27; a picked OGG is kept as a WAV). Empty = the built-in chime.
     /// Set with the "Choose..." button next to the check box, which copies the file into
     /// <c>%LOCALAPPDATA%\WuxAuto\sounds</c> first, so it keeps playing after the original is moved.
     /// </summary>

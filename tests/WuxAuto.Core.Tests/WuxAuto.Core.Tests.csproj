@@ -27,7 +27,8 @@
   </ItemGroup>
 
   <ItemGroup>
-    <!-- Emgu CV's native OpenCV build for Windows x64 (Core references only the managed Emgu.CV). -->
+    <!-- Emgu CV's native OpenCV build for Windows x64 (Core references only the managed Emgu.CV);
+         also what the pilot tests need to tick AutomationPilot with a real (blank) Mat frame. -->
     <PackageReference Include="Emgu.CV.runtime.mini.windows" Version="5.0.0.6584" />
     <PackageReference Include="Microsoft.NET.Test.Sdk" Version="18.11.0" />
     <PackageReference Include="xunit" Version="2.9.3" />

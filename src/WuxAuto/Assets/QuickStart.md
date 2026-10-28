@@ -15,7 +15,7 @@ Everything it does is drawn on its preview and written to its log.
   | Display mode | **Windowed** (optimized for it; not exclusive fullscreen) |
   | Settings > VISUAL > Interface Scale | **Auto** |
   | Settings > VISUAL > Font Size | **110 - 120 %** (the pilot checks it on start and fixes it if outside) |
-  | Settings > VISUAL > TAB target | **Default** (the pilot checks it on start and sets it) |
+  | Settings > VISUAL > TAB target | **Default** for Laby / LOD (the pilot checks it on start and sets it); Auto War sets **Enemy worth CP** itself |
   | Skill bar | the **Run** skill on it (the pilot turns it on in town before every teleport - a ring round the icon = on; icon not found -> it presses the "Run key", default `W`, once) |
 
 * In the game: a
@@ -26,22 +26,29 @@ Everything it does is drawn on its preview and written to its log.
   through the screens, it never types a password.
 * Start in your **home town** - Piercing City, Molten City or Wandering City (or in the Labyrinth with a boss targeted - it picks up from there).
 
-## Two modes (the Mode drop-down above Start)
+## Three modes (the Mode buttons above Start)
 
 * **AutoLaby** - The Labyrinth (Adept): 4 stages + Sacred Sky Lord, back to your home town, repeat.
-* **AutoLod** - Ultimate Den of Rebirth: walks to the boss **Bai Gu Great** pressing Tab and spams
-  skill `1` until it is dead (it auto-buffs with `O` on arrival and every ~5 min). After the first hit of
+* **AutoLod** - Ultimate Den of Rebirth: turns south, walks a little forward to 1199, 1782 and waits there,
+  pressing Tab until the boss **Bai Gu Great** shows (untick "Walk to the boss spot (LOD)" to stay where
+  the teleport put you), then spams skill `1` until it is dead (it auto-buffs with `O` on arrival and every ~5 min). After the first hit of
   each fight it stops attacking, Ctrl+clicks the pink ring round the boss's feet to walk up to
-  it, then attacks again (setting "Walk up to the boss (LOD)"). The attack is stopped with **Shura**:
+  it, then attacks again (setting "Walk up to the boss (LOD)"); after that it checks every 3 s and walks
+  back to the ring whenever the character is off it. The attack is stopped with **Shura**:
   its icon is found on the skill bar and clicked 3 times; not found -> the "Shura key (LOD)" (default
   `E`, set it to the slot you put Shura in); empty -> Space as before. When the boss says "see you in hell" (or the boss's treasure icon is gone for 2 s) it loots with the `` ` `` key for 10 s, without pressing Tab.
   The boss respawns, so it keeps fighting until the map's timer runs out;
-  then the game sends you to your home town and the pilot teleports back in. Killed by the boss, it walks in again from the start of the map.
+  then the game sends you to your home town and the pilot teleports back in. Killed by the boss, it turns south again at the start of the map and presses Tab.
   Out of keys is noticed at the teleport: LOD not on page 2 of the teleport list -> AutoLaby; still
   in town 2 minutes after a Labyrinth teleport (setting "Laby key wait") -> AutoLod; both out -> opens the autohunt settings (S),
   closes the AUTO BUFF dialog if it is in the way, ticks Regular War, presses J (the game's auto war)
   and stops.
   New and not well tested yet.
+
+* **AutoWar** - Bohai Outpost tribe wars for an alt. Start it **inside the cave** you want to hunt in (the cave must be on
+  **page 3** of the teleport scroll, the autohunt on, the six war buff icons + Shura on the skill bar). It reads the war
+  timer from Menu > Tribe Status, joins every war, fights, then teleports back to the same cave and monster. Not tested live yet.
+  Update every WuxAuto on the PC before choosing it: an older copy cannot read the Auto War setting and resets all settings.
 
 ## Run it
 
@@ -53,7 +60,7 @@ Everything it does is drawn on its preview and written to its log.
    is the active window, so it never types into anything else. If you switch away it waits.
 5. **F10** stops everything immediately.
    **Mini** (next to Stop) shrinks WuxAuto to a small always-on-top bar (bottom left of the
-   screen; Settings > Mini mode > Position picks another spot) with Laby / LOD, Start and Stop; **Full** brings the big window back.
+   screen; Settings > Mini mode > Position picks another spot) with Laby / LOD / War, Start and Stop; **Full** brings the big window back.
 6. **Restart on error** (on): after a problem the pilot starts over by itself, up to 5 times in 30 min.
 
 ## Did it loot?
@@ -67,7 +74,7 @@ Only the newest 500 pictures are kept - copy any you want to keep somewhere else
 chime and shows a Windows notification - a reminder to go and check the loot. The last one also
 shows under the status. **Test alert** (under Loop) plays it now so you can check the volume; the
 **Kill chime** / **Kill notification** boxes turn them off. Want another sound? **Choose...** next to
-*Sound:* picks any MP3 or WAV file (keep it short - it plays in full on every kill); **Default** goes
+*Sound:* picks any MP3, WAV or OGG file (keep it short - it plays in full on every kill); **Default** goes
 back to the built-in chime.
 
 ## Updates

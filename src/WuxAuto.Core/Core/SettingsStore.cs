@@ -42,7 +42,7 @@ public static class AppPaths
 public static class SettingsStore
 {
     /// <summary>Bump when an existing settings.json must be migrated (see <see cref="Migrate"/>).</summary>
-    private const int CurrentVersion = 21;
+    private const int CurrentVersion = 22;
 
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
@@ -174,6 +174,19 @@ public static class SettingsStore
         if (s.Version < 21 && s.Dungeon is { ManualAttacks: 15 })
             s.Dungeon.ManualAttacks = 10;
 
+        // v22: Auto LOD walks forward to 1199,1782 after the south turn and waits there (user,
+        // 2026-10-28: "sometimes the boss doesn't go near the char"). The old 1191,2413 default moves;
+        // a spot set by hand stays.
+        if (s.Version < 22 && s.Lod != null)
+        {
+            s.Lod.WalkToBossSpot = true;
+            if (s.Lod is { TargetX: 1191, TargetY: 2413 })
+            {
+                s.Lod.TargetX = 1199;
+                s.Lod.TargetY = 1782;
+            }
+        }
+
         s.Version = CurrentVersion;
         return true;
     }
@@ -192,7 +205,38 @@ public static class SettingsStore
         }
     }
 
-    private static void Normalize(AppSettings s)
+    private static void NormalizeWar(AppSettings s)
+    {
+        s.War ??= new WarSettings();
+        var w = s.War;
+        var d = new WarSettings();
+        static string Or(string? v, string fallback) => string.IsNullOrWhiteSpace(v) ? fallback : v.Trim();
+        w.Destination = Or(w.Destination, d.Destination);
+        w.TribeRowText = Or(w.TribeRowText, d.TribeRowText);
+        w.MenuTileText = Or(w.MenuTileText, d.MenuTileText);
+        w.TabTargetOption = Or(w.TabTargetOption, d.TabTargetOption);
+        w.GateText = Or(w.GateText, d.GateText);
+        w.ArrivedText = Or(w.ArrivedText, d.ArrivedText);
+        w.XBuffIcon = (w.XBuffIcon ?? "").Trim();
+        w.HomeMap = (w.HomeMap ?? "").Trim();
+        w.HomeMonster = (w.HomeMonster ?? "").Trim();
+        var icons = (w.BuffIcons ?? [])
+            .Select(i => (i ?? "").Trim())
+            .Where(i => i.Length > 0)
+            .ToList();
+        w.BuffIcons = icons.Count > 0 ? icons : WarSettings.DefaultBuffIcons();
+        w.LeadMs = Math.Clamp(w.LeadMs, 0, 120000);
+        w.DialogWaitMs = Math.Clamp(w.DialogWaitMs, 10000, 600000);
+        w.BuffClickGapMs = Math.Clamp(w.BuffClickGapMs, 100, 10000);
+        w.BuffEveryMs = Math.Clamp(w.BuffEveryMs, 30000, 3600000);
+        w.ShuraHoldMs = Math.Clamp(w.ShuraHoldMs, 0, 10000);
+        w.TargetGoneMs = Math.Clamp(w.TargetGoneMs, 500, 30000);
+        w.ListPage = Math.Clamp(w.ListPage, 1, 20);
+        w.ArriveWaitMs = Math.Clamp(w.ArriveWaitMs, 5000, 600000);
+        w.IconMatchScore = Math.Clamp(w.IconMatchScore, 0.3, 1.0);
+    }
+
+    internal static void Normalize(AppSettings s)
     {
         s.Version = CurrentVersion;
         s.Input ??= new InputSettings();
@@ -255,6 +299,7 @@ public static class SettingsStore
         s.Lod.FlashlightMatchScore = Math.Clamp(s.Lod.FlashlightMatchScore, 0.30, 0.99);
         s.Lod.LootMs = Math.Clamp(s.Lod.LootMs, 10000, 60000);
         s.Lod.ListPage = Math.Clamp(s.Lod.ListPage, 1, 20);
+        NormalizeWar(s);
         s.Sequence.RestartDelayMs = Math.Clamp(s.Sequence.RestartDelayMs, 1000, 120000);
         s.Sequence.MaxRestarts = Math.Clamp(s.Sequence.MaxRestarts, 1, 100);
         s.Sequence.LabyKeyWaitSeconds = Math.Clamp(s.Sequence.LabyKeyWaitSeconds, 0, 3600);
@@ -278,6 +323,8 @@ public static class SettingsStore
         s.Lod.ApproachStopPresses = Math.Clamp(s.Lod.ApproachStopPresses, 0, 20);
         s.Lod.ApproachWaitMs = Math.Clamp(s.Lod.ApproachWaitMs, 300, 10000);
         s.Lod.ApproachTries = Math.Clamp(s.Lod.ApproachTries, 1, 10);
+        s.Lod.RingCheckEveryMs = s.Lod.RingCheckEveryMs <= 0 ? 0 : Math.Clamp(s.Lod.RingCheckEveryMs, 500, 60000);
+        s.Lod.RingStayMax = Math.Clamp(s.Lod.RingStayMax, 0.6, 3.0);
         s.Dungeon.ArrivalDelayMs = Math.Clamp(s.Dungeon.ArrivalDelayMs, 0, 10000);
         s.Dungeon.RowChevronThreshold = Math.Clamp(s.Dungeon.RowChevronThreshold, 0.05, 0.99);
         s.Dungeon.RowChevronTemplate = string.IsNullOrWhiteSpace(s.Dungeon.RowChevronTemplate)
