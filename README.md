@@ -183,15 +183,20 @@ home it teleports back to the **same cave and the same monster**, turns the auto
 
 1. Put the character in the cave you want it to hunt in. That cave must be on **page 3** of the teleport scroll
    (setting `War > ListPage`), and the autohunt on. Bind the game, pick **Auto War**, press **Start**.
+   Starting it inside **Bohai Outpost** during a war works too: it fights right away. With no cave saved yet it says so
+   and stops after that war - start it once inside the cave so it remembers where to go back to.
 2. At Start the pilot checks the screen and stops with a message (it never guesses) when: you are not in a cave; the
    cave's name could match **two** entries on page 3; the monster cannot be confirmed in the map's monster list (the row
-   must carry the whole name - "Goblin" is never the "Goblin Elite" row - and only one row may); or the
-   six war buff icons (`warbuff1`-`warbuff6`), the **Shura** icon, or the war keys (skill, target, autohunt, inventory,
-   Shura) are not on the skill bar / not set. Everything must be there.
+   must carry the whole name - "Goblin" is never the "Goblin Elite" row - and only one row may); or a war key (skill,
+   target, autohunt, inventory) is not set, or a key that is set (Shura too) is not a key it can press.
+   The buff icons and **Shura** are **optional**: the ticked buffs and the Shura icon (when the Shura key is set) are
+   looked for on the skill bar, and the missing ones are only a warning with their best scores - the buff rounds skip
+   them. With no Shura key the fight skips the Shura hold.
 3. It then reads the time to the next war from **Menu (the button at the top centre) > Tribe Status**, closes those
    windows, waits, and 10 s before the war (`Lead time`) turns the autohunt off and clicks OK on the war dialog.
-   Inside it sets the game's TAB target to **Enemy worth CP**, buffs (auto-buff key `O` or the six icons one by one,
-   again every 5 min 45 s), then repeats: Tab to an enemy, the X buff, hold Shura, attack until the target is gone.
+   Inside it sets the game's TAB target to **Enemy worth CP**, buffs - auto-buff key `O`, or else the skill buff icons one
+   by one; then the **item buffs** on the skill bar either way (they use an item; with `O` they are still clicked) - again
+   every 5 min 45 s, then repeats: Tab to an enemy, the X buff, hold Shura, attack until the target is gone.
    It watches the HP numbers (top left) and rebuffs after a death. When the war is over it goes back as above - at most
    3 times in 30 min without a war in between (a cave that keeps sending the character to town would otherwise cost a
    teleport every round); then it stops.
@@ -202,14 +207,21 @@ home it teleports back to the **same cave and the same monster**, turns the auto
    in this mode. One game per WuxAuto - do not run it next to a Laby / LOD client on the same PC. It does not walk
    inside Bohai.
 5. Settings (Settings panel > Auto War): **Shura hold (ms)**, **Rebuff every (ms)**, **Lead time (ms)**, **TAB target**,
-   and the read-only **Back to** line (the saved cave and monster). The rest is in `settings.json` under `War`.
+   **Buffs**, and the read-only **Back to** line (the saved cave and monster). The rest is in `settings.json` under `War`.
+   **Buffs** has one check box per buff, with its icon: **Buff 1**-**Buff 6** (`warbuff1`-`warbuff6`), **Weapon 1** /
+   **Weapon 2** (`warweapon1` / `warweapon2`, the buffs of the different weapons - a character usually has only one of
+   them) and **Item 1** / **Item 2** (`waritem1` / `waritem2`, items placed on the skill bar). All are ticked at first;
+   untick the ones this character does not have: an unticked buff is never clicked and not looked for at Start
+   (`War > DisabledBuffs` in `settings.json`; the X buff is `Buff 4`, unticked = not clicked in the fight either).
 
 **Upgrade note:** once Auto War is chosen, `settings.json` holds `"Mode": "AutoWar"`, which a WuxAuto from before Auto War
 cannot read - it starts with the default settings and saves them on close, and your Laby / LOD settings are gone. On a PC
 where an older copy shares `settings.json` (`%LOCALAPPDATA%\WuxAuto`), update every installed copy first, then choose Auto War.
+The same goes for the weapon buffs: from this version on `settings.json` lists `warweapon1` / `warweapon2`, and a v0.19.0
+copy reading that file stops Auto War at Start until both are on the skill bar - update every copy.
 
 **Not verified yet - no live war has been run.** Everything inside Bohai (the minimap title, "Gate is Open", enemy
-players in the target box, HP 0 and the revive), the buff icons on a real skill bar, the Menu close geometry and whether
+players in the target box, HP 0 and the revive), the buff icons on a real skill bar (the weapon and item buffs included), the Menu close geometry and whether
 the menu button toggles it shut, the "Regular War" label in the autohunt settings, and the "Arrived:" wording. Every part logs
 what it saw and saves `war_*` pictures to the debug folder the first time, so send the log and those pictures after the first war.
 

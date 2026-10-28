@@ -46,9 +46,14 @@ Everything it does is drawn on its preview and written to its log.
   New and not well tested yet.
 
 * **AutoWar** - Bohai Outpost tribe wars for an alt. Start it **inside the cave** you want to hunt in (the cave must be on
-  **page 3** of the teleport scroll, the autohunt on, the six war buff icons + Shura on the skill bar). It reads the war
-  timer from Menu > Tribe Status, joins every war, fights, then teleports back to the same cave and monster. Not tested live yet.
-  Update every WuxAuto on the PC before choosing it: an older copy cannot read the Auto War setting and resets all settings.
+  **page 3** of the teleport scroll, the autohunt on). It reads the war timer from Menu > Tribe Status, joins every war,
+  buffs and fights, then teleports back to the same cave and monster. Not tested live yet.
+  The buff icons and Shura are optional: in Settings > Auto War > **Buffs** untick the buffs this character does not have
+  (Buff 1-6, Weapon 1-2 - usually only one weapon buff - and Item 1-2, items on the skill bar that are clicked even with
+  auto-buff); a ticked one missing from the bar is only a warning. No Shura key = no Shura hold in the fight.
+  Started inside Bohai Outpost it fights right away; with no cave saved yet it stops after that war.
+  Update every WuxAuto on the PC before choosing it: an older copy cannot read the Auto War setting and resets all settings,
+  and v0.19.0 would ask for both weapon buffs on the skill bar.
 
 ## Run it
 
