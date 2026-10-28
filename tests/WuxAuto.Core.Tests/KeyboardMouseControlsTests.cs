@@ -82,6 +82,16 @@ public sealed class KeyboardMouseControlsTests
     }
 
     [Fact]
+    public void ActionDown_TeleportScroll_IsRefusedAndSendsNothing()
+    {
+        // No teleport shortcut on the desktop (see Press): nothing to hold, and no key lookup that throws.
+        var (_, input, controls) = Harness();
+        Assert.False(controls.ActionDown(GameAction.TeleportScroll));
+        controls.ActionUp(GameAction.TeleportScroll);
+        Assert.Empty(input.Calls);
+    }
+
+    [Fact]
     public void Has_FalseForBlankKey()
     {
         var (settings, input, controls) = Harness();

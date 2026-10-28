@@ -22,6 +22,9 @@ public sealed class KeyboardMouseControls(AppSettings settings, IGameInput input
     public bool Press(GameAction action) => action != GameAction.TeleportScroll && input.KeyTap(KeyOf(action));
     public bool ActionDown(GameAction action)
     {
+        if (action == GameAction.TeleportScroll)
+            return false;
+
         string key = KeyOf(action);
         if (!input.KeyDown(key))
             return false;
