@@ -66,6 +66,15 @@ public sealed partial class AutomationPilot
     /// <summary>HP unread this long (war clock) = a warning and <c>war_hp_unread</c>; the fight carries on as alive.</summary>
     internal const int WarHpUnreadMs = 10000;
 
+    /// <summary>
+    /// The least time after any buff (the buff key, an icon click, the fight's X buff) before the next input: the buff's
+    /// animation must finish first (user, 2026-10-28: "allow at least 0.8s for buff animation before going next").
+    /// </summary>
+    internal const int WarBuffAnimationMs = 800;
+
+    /// <summary>The wait after a buff in a buff round: <see cref="WarSettings.BuffClickGapMs"/>, never under <see cref="WarBuffAnimationMs"/>.</summary>
+    internal static int WarBuffWaitMs(int buffClickGapMs) => Math.Max(buffClickGapMs, WarBuffAnimationMs);
+
     /// <summary>HP reads in a row behind every verdict (dead, back on our feet, buffs gone): one alone may be a misread.</summary>
     internal const int WarHpReadsInARow = 2;
 
@@ -739,10 +748,13 @@ public sealed partial class AutomationPilot
             // The round is fixed here: a box ticked in the settings panel meanwhile counts from the next round.
             _warBuffRound = WarBuffClicks(war, byKey);
             _warBuffByKey = byKey;
-            if (byKey && _warBuffRound.Count > 0)
+            if (byKey)
             {
-                _detail = $"buffing - pressed '{buffKey}' (autobuff), then the item buffs";
-                _waitUntil = now + war.BuffClickGapMs;
+                // The key's animation runs before the item buffs - or, with none ticked, before the fight's first Tab.
+                _detail = _warBuffRound.Count > 0
+                    ? $"buffing - pressed '{buffKey}' (autobuff), then the item buffs"
+                    : $"buffing - pressed '{buffKey}' (autobuff)";
+                _waitUntil = now + WarBuffWaitMs(war.BuffClickGapMs);
                 return;
             }
         }
@@ -769,7 +781,7 @@ public sealed partial class AutomationPilot
             _warBuffIcon++;
             _warBuffClicks++;
             _detail = $"buffing - clicked '{icon}' ({_warBuffIcon}/{icons.Count})";
-            _waitUntil = now + war.BuffClickGapMs;
+            _waitUntil = now + WarBuffWaitMs(war.BuffClickGapMs);
             return;
         }
 
@@ -960,7 +972,7 @@ public sealed partial class AutomationPilot
             }
 
             _warFightStep = 2;
-            _waitUntil = now + (clicked ? 300 : 0);
+            _waitUntil = now + (clicked ? WarBuffAnimationMs : 0);     // the X buff's animation before Shura
             return;
         }
 

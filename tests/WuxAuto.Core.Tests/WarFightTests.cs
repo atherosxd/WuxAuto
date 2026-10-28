@@ -289,6 +289,15 @@ public class WarFightTests
         return war;
     }
 
+    [Theory]
+    [InlineData(0, 800)]
+    [InlineData(300, 800)]
+    [InlineData(800, 800)]
+    [InlineData(1000, 1000)]
+    public void BuffWait_NeverUnderTheAnimation(int gap, int expected)
+        // The user (2026-10-28): "allow at least 0.8s for buff animation before going next".
+        => Assert.Equal(expected, AutomationPilot.WarBuffWaitMs(gap));
+
     [Fact]
     public void BuffClicks_NoAutobuff_TheBuffsThenTheWeaponBuffsThenTheItemBuffs()
         => Assert.Equal(

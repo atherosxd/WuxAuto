@@ -492,7 +492,7 @@ public sealed class WarSettings
     /// </summary>
     public string XBuffIcon { get; set; } = "warbuff4";
 
-    /// <summary>Gap between two buff clicks (user: 1 s).</summary>
+    /// <summary>Gap between two buff clicks (user: 1 s); never under 800 ms, the buff animation (user, 2026-10-28).</summary>
     public int BuffClickGapMs { get; set; } = 1000;
 
     /// <summary>How often the buffs are renewed (my call: 5 min 45 s; the user's buffs last at least 6 min).</summary>

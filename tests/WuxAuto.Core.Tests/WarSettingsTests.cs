@@ -63,6 +63,18 @@ public class WarSettingsTests
         Assert.Equal("[Dark Soul Cave]", s.War.HomeMap);
     }
 
+    [Theory]
+    [InlineData(100, 800)]      // the buff animation needs 0.8 s (user, 2026-10-28)
+    [InlineData(800, 800)]
+    [InlineData(1000, 1000)]
+    public void WarSettings_NormalizeKeepsTheBuffGapAtLeastTheAnimation(int saved, int expected)
+    {
+        var s = new AppSettings();
+        s.War.BuffClickGapMs = saved;
+        SettingsStore.Normalize(s);
+        Assert.Equal(expected, s.War.BuffClickGapMs);
+    }
+
     [Fact]
     public void WarSettings_NormalizeDropsBlankBuffIcons()
     {
