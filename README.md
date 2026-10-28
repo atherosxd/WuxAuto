@@ -217,7 +217,7 @@ home it teleports back to the **same cave and the same monster**, turns the auto
    are ticked at first; untick the ones this character does not have: an unticked buff is never clicked and not looked for
    at Start (`War > DisabledBuffs` in `settings.json`). The X buff is **Buff 3** (`warbuff4`): unticked, it is not
    clicked in the fight either. A template that has no PNG yet is named as such in the warnings
-   ("no warweapon1.png in templates/Assets").
+   ("no waritem1.png in templates/Assets").
 
 **Upgrade note:** once Auto War is chosen, `settings.json` holds `"Mode": "AutoWar"`, which a WuxAuto from before Auto War
 cannot read - it starts with the default settings and saves them on close, and your Laby / LOD settings are gone. On a PC

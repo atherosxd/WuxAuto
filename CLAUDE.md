@@ -747,7 +747,7 @@ do not run); the 5 s Bohai-dialog Cancel is skipped in this mode (the OK is what
   `WeaponBuffIcons`, `ItemBuffIcons`, minus `DisabledBuffs`) + Shura's icon only when `Lod.ShuraKey` is set - on `Regions.Hotbar`
   (`IconMatchScore` **0.90**, own score: warbuff2, a small grey streak, hit 0.871 on floor texture; Shura 0.951-1.000 on
   real bars, <= 0.781 elsewhere); the missing ones are **one warning** "Not on the skill bar (score 0.90 needed): warbuff3 (best
-  0.84), shura (not seen), warweapon1 (no warweapon1.png in templates/Assets) - carrying on without them ..."
+  0.84), shura (not seen), waritem1 (no waritem1.png in templates/Assets) - carrying on without them ..."
   (`DescribeMissingIcons(missing, hasTemplate)`: a template `ScreenAnalyzer.Library` never loaded is a PNG to add, not an icon
   to put on the bar) + `war_bar_missing`, and the run carries on. Shura in the missing list adds "- clear 'Shura key (LOD)' if
   this character has no Shura, or the fight still holds that key".
@@ -832,9 +832,14 @@ do not run); the 5 s Bohai-dialog Cancel is skipped in this mode (the OK is what
 119 with the treasure chest; menu button score lowest real game frame 0.836 (1440x900), highest non-game 0.451, `MenuButtonScore` **0.70**;
 Shura on the bar 0.951-1.000; `warbuff1-6` crops: **no saved frame shows them** (0.90 unproven on a real alt bar). `--tribe` on the user's Tribe Status
 screenshot: `00:04:25` (265 s).
+`--warbar` 2026-10-28 (592 saved frames, `debug\`): the first alt bar frame (`war_stop`, 2048x1152, a v0.19.0 stop that morning) has
+all six: warbuff1 0.932, warbuff2 0.989, warbuff3 0.920, **warbuff4 0.912** (closest to the 0.90 gate), warbuff5 0.982, warbuff6
+0.970; `warweapon1` (the user's crop, Assets since 2026-10-28) 0.968 on 44 frames of the main character's 1273x1024 bar, always
+the same slot (424,970), checked by eye - the real icon; `warweapon2` best 0.716 (on no saved bar); `waritem1/2` no PNG yet; Shura
+on 554 frames. Run over `war-inputs\` itself the probe says nothing: each crop is its own frame and `Regions.Hotbar` is its bottom 15 %.
 
 **Not seen live (spec §9 + the task reports) - everything inside Bohai:** the Bohai minimap title after the dialog; "Gate is Open"; an enemy player in the target box
-(and whether it has the chest); HP 0 and the revive (does the game send a dead alt to town?); the buff, weapon and item buff icons (warweapon1-2 and waritem1-2 have no PNG yet) on a real alt bar at 0.90; the ☰ menu opened and
+(and whether it has the chest); HP 0 and the revive (does the game send a dead alt to town?); the buff, weapon and item buff icons (waritem1-2 have no PNG yet; warweapon2 is on no saved bar) on a real alt bar at 0.90; the ☰ menu opened and
 the **MENU close geometry** (from faint glyphs on one screenshot; a window whose X is not read is left open with `war_close_stuck`) and whether ☰ toggles the menu shut;
 TRIBE STATUS X at other resolutions (one 795x829 crop); the AUTO BUFF X as a bright blob; the "Regular War" label in the autohunt settings; page 3 of the teleport list at other
 resolutions; the X of the TELEPORT SCROLL (closing it costs no scroll, and whether the inventory stays open); the wording "Arrived: <monster>"; "Auto hunt started" in a cave;
