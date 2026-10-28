@@ -213,11 +213,12 @@ home it teleports back to the **same cave and the same monster**, turns the auto
    **Buff 1**-**Buff 5** (`warbuff1`, `warbuff3`, `warbuff4`, `warbuff5`, `warbuff6`; `War > BuffIcons`),
    **Weapon 1 (sword)**, **Weapon 2**, **Weapon 3** (`warbuff2`, `warweapon1` - white-gold lightning around armour,
    `warweapon2` - blue swirl; `War > WeaponBuffIcons`: a character uses one weapon, so usually only one of them is on its
-   bar) and **Item 1** / **Item 2** (`waritem1` / `waritem2`, items placed on the skill bar; `War > ItemBuffIcons`). All
+   bar) and **Item 1** / **Item 2** (`waritem1` - light scroll with a glyph, `waritem2` - blue scroll: items placed on the
+   skill bar; `War > ItemBuffIcons`). All
    are ticked at first; untick the ones this character does not have: an unticked buff is never clicked and not looked for
    at Start (`War > DisabledBuffs` in `settings.json`). The X buff is **Buff 3** (`warbuff4`): unticked, it is not
    clicked in the fight either. A template that has no PNG yet is named as such in the warnings
-   ("no waritem1.png in templates/Assets").
+   ("no <name>.png in templates/Assets").
 
 **Upgrade note:** once Auto War is chosen, `settings.json` holds `"Mode": "AutoWar"`, which a WuxAuto from before Auto War
 cannot read - it starts with the default settings and saves them on close, and your Laby / LOD settings are gone. On a PC

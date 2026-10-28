@@ -474,7 +474,7 @@ public sealed class WarSettings
 
     /// <summary>
     /// Item buffs placed on the skill bar (user, 2026-10-28: "optional but item buffs can be placed on the skill bar"):
-    /// clicking one uses an item. Clicked after the skill and weapon buffs, with every rebuff, and with autobuff too (the
+    /// waritem1 (light scroll with a glyph), waritem2 (blue scroll); clicking one uses an item. Clicked after the skill and weapon buffs, with every rebuff, and with autobuff too (the
     /// buff key does not use them). An empty list stays empty (no refill: the user may have taken them out).
     /// </summary>
     public List<string> ItemBuffIcons { get; set; } = DefaultItemBuffIcons();
