@@ -433,6 +433,7 @@
                                 <RowDefinition Height="Auto" />
                                 <RowDefinition Height="Auto" />
                                 <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
                             </Grid.RowDefinitions>
 
                             <TextBlock Grid.Row="0" Grid.Column="0" Text="Shura hold (ms)" Style="{StaticResource FieldLabel}"
@@ -452,17 +453,18 @@
                                       SelectedItem="{Binding Settings.War.TabTargetOption}" />
 
                             <!-- Buffs (user, 2026-10-28): one check box per buff icon, unticked = never clicked, not looked for at Start. -->
-                            <TextBlock Grid.Row="3" Grid.Column="0" Text="Buffs" Style="{StaticResource FieldLabel}" VerticalAlignment="Top" Margin="0,6,6,0"
+                            <TextBlock Grid.Row="3" Grid.Column="0" Grid.ColumnSpan="4" Text="Buffs" Style="{StaticResource FieldLabel}" Margin="0,2,6,2"
                                        ToolTip="Tick the buffs this character has on its skill bar. Unticked ones are never clicked and not looked for at Start; a ticked one that is not on the bar is only warned about." />
-                            <ItemsControl Grid.Row="3" Grid.Column="1" Grid.ColumnSpan="3" Margin="0,0,0,6" ItemsSource="{Binding WarBuffSwitches}">
+                            <ItemsControl Grid.Row="4" Grid.Column="0" Grid.ColumnSpan="4" Margin="0,0,0,6" ItemsSource="{Binding WarBuffSwitches}">
                                 <ItemsControl.ItemsPanel>
                                     <ItemsPanelTemplate>
-                                        <WrapPanel />
+                                        <!-- Fixed slots so the boxes line up: two per row, each wide enough for "Weapon 1 (sword)" with its icon (~159 DIP). -->
+                                        <WrapPanel ItemWidth="168" />
                                     </ItemsPanelTemplate>
                                 </ItemsControl.ItemsPanel>
                                 <ItemsControl.ItemTemplate>
                                     <DataTemplate DataType="{x:Type vm:WarBuffSwitch}">
-                                        <CheckBox IsChecked="{Binding IsOn}" ToolTip="{Binding ToolTip}" MinWidth="90" Margin="0,2,4,2">
+                                        <CheckBox IsChecked="{Binding IsOn}" ToolTip="{Binding ToolTip}" Margin="0,2,4,2">
                                             <StackPanel Orientation="Horizontal">
                                                 <Image Source="{Binding Icon}" Width="22" Height="22" Margin="0,0,5,0"
                                                        RenderOptions.BitmapScalingMode="HighQuality">
@@ -483,12 +485,12 @@
                                 </ItemsControl.ItemTemplate>
                             </ItemsControl>
 
-                            <TextBlock Grid.Row="4" Grid.Column="0" Grid.ColumnSpan="4" Style="{StaticResource Caption}"
+                            <TextBlock Grid.Row="5" Grid.Column="0" Grid.ColumnSpan="4" Style="{StaticResource Caption}"
                                        Visibility="{Binding Settings.War.HomeMap, Converter={x:Static vm:BoolConverters.NotEmptyToVisibility}}"
                                        ToolTip="Read from the screen at Start, in the cave you wait in. It is where the pilot goes back to after the war.">
                                 <Run Text="Back to: " /><Run Text="{Binding Settings.War.HomeMap, Mode=OneWay}" /><Run Text=" / " /><Run Text="{Binding Settings.War.HomeMonster, Mode=OneWay}" />
                             </TextBlock>
-                            <TextBlock Grid.Row="4" Grid.Column="0" Grid.ColumnSpan="4" Style="{StaticResource Caption}"
+                            <TextBlock Grid.Row="5" Grid.Column="0" Grid.ColumnSpan="4" Style="{StaticResource Caption}"
                                        Text="Back to: (not set yet - press Start in the cave)"
                                        Visibility="{Binding Settings.War.HomeMap, Converter={x:Static vm:BoolConverters.EmptyToVisibility}}"
                                        ToolTip="Read from the screen at Start, in the cave you wait in. It is where the pilot goes back to after the war." />

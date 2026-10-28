@@ -344,5 +344,56 @@ finally
         $"new ended={a} ({la}), new started={b}, unchanged={c}, noisy ended={d}, repeated started={e}, key={k}");
 }
 
+// ---------------------------------------------------------------- Auto War "Buffs" check boxes
+// The settings panel's switches (WuxAuto.ViewModels.WarBuffSwitch), on a scratch data folder - the real templates folder is
+// never touched: labels and order, tooltips, unticking writes War.DisabledBuffs, and a damaged PNG never throws (the next
+// folder, else the label alone).
+{
+    string root = AppPaths.Root, assetsFolder = AppPaths.AssetsFolder;
+    string scratch = Path.Combine(Path.GetTempPath(), $"wuxauto-buffs-{Guid.NewGuid():N}");
+    string scratchAssets = Path.Combine(scratch, "assets");
+    try
+    {
+        AppPaths.Configure(scratch, scratchAssets);
+        Directory.CreateDirectory(AppPaths.TemplateFolder);
+        Directory.CreateDirectory(scratchAssets);
+        File.WriteAllText(Path.Combine(AppPaths.TemplateFolder, "warbuff1.png"), "not a png");   // damaged here, fine in Assets
+        File.Copy(Path.Combine(assets, "warbuff1.png"), Path.Combine(scratchAssets, "warbuff1.png"));
+        File.WriteAllText(Path.Combine(AppPaths.TemplateFolder, "warbuff3.png"), "not a png");   // damaged in both
+        File.WriteAllBytes(Path.Combine(scratchAssets, "warbuff3.png"), [0x89, 0x50, 0x4E, 0x47, 0, 0, 0]);
+
+        var buffSettings = new AppSettings();
+        var switches = WuxAuto.ViewModels.WarBuffSwitch.For(buffSettings);
+        string labels = string.Join(", ", switches.Select(w => w.Label));
+        var weapon2 = switches.First(w => w.Label == "Weapon 2");
+        int changed = 0;
+        weapon2.PropertyChanged += (_, _) => changed++;
+        weapon2.IsOn = false;
+        string disabledOff = string.Join(",", buffSettings.War.DisabledBuffs);
+        weapon2.IsOn = true;
+        var xBuff = switches.First(w => w.Template == "warbuff4");
+        var item = switches.First(w => w.Template == "waritem1");
+        Check("war buff switches",
+            labels == "Buff 1, Buff 2, Buff 3, Buff 4, Buff 5, Weapon 1 (sword), Weapon 2, Weapon 3, Item 1, Item 2"
+            && switches[5].Template == "warbuff2" && weapon2.Template == "warweapon1"
+            && disabledOff == "warweapon1" && buffSettings.War.DisabledBuffs.Count == 0 && changed == 2
+            && xBuff.Label == "Buff 3" && xBuff.ToolTip.Contains("X buff") && xBuff.ToolTip.EndsWith("warbuff4.png")
+            && item.ToolTip.Contains("also clicked with autobuff") && item.ToolTip.EndsWith("waritem1.png")
+            && switches[0].Icon != null && switches[1].Icon == null && item.Icon == null,
+            $"{labels}; untick Weapon 2 -> DisabledBuffs [{disabledOff}], tick -> [{string.Join(",", buffSettings.War.DisabledBuffs)}], "
+            + $"{changed} change(s); icons: warbuff1 {(switches[0].Icon != null ? "from Assets" : "none")}, warbuff3 "
+            + $"{(switches[1].Icon != null ? "loaded?" : "none (damaged)")}; X buff tip '{xBuff.ToolTip}'");
+    }
+    catch (Exception ex)
+    {
+        Check("war buff switches", false, ex.ToString());
+    }
+    finally
+    {
+        AppPaths.Configure(root, assetsFolder);
+        try { Directory.Delete(scratch, recursive: true); } catch { }
+    }
+}
+
 Console.WriteLine(failures == 0 ? "ALL CHECKS PASSED" : $"{failures} CHECK(S) FAILED");
 return failures == 0 ? 0 : 1;
