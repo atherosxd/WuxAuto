@@ -147,8 +147,14 @@ leaves out detectors the pilot no longer calls (`compass`, `compass-angle` = Tes
 check, hit lists hit by hit; exit code 1 when it is not 0). A difference line tagged `[strict-only]`
 counts only in the strict line, `[pilot-view]` only in the pilot-view line. The OCR checks (`dest-*`,
 `bossname-s*`, `lod-*`, `settingswin-*`, `attacklog`, `autohunt-*`, `gatetext*`, `stagewide*`) read each
-region once per side at `Detection.OcrScale` and judge every needle with the pilot's own rules. There
-is no built-in pass criterion: whether the Emgu CV switch is accepted with the differences found is the
+region once per side at `Detection.OcrScale` and judge every needle with the pilot's own rules. Auto War
+(merged from main 2026-10-28) is covered too: `warbar-*` (FindSkillBarIcons per buff icon, Shura, X buff),
+`target-*`, `player-hp`, `menubutton`, `huntsettings-*`, `itemlist-*`, `warlist-x<scale>-*` (teleport list
+at x1.5 / x2 / x1), `wargate`, `menutile`, `warwindow*`, `warcountdown`, `tribestatus-shows`, `wardialog-*`,
+`warlog-*`, `warmap-*` (MonsterRows for the stage names) and `bossring-away`; the legacy side runs main's
+OpenCvSharp code for them, frozen verbatim in `Legacy/ScreenAnalyzer.War.cs` (a `partial` of the legacy
+analyzer). The saved frames hold no AUTO BUFF dialog, war gate or "Arrived" line, so those checks only
+compare "not found" until such frames exist. There is no built-in pass criterion: whether the Emgu CV switch is accepted with the differences found is the
 user's decision, recorded in the M2 PR.
 
 `--do` frames land in `%TEMP%\wuxauto-step<N>-<verb>.png`. Check the frame before every click: an
@@ -235,7 +241,7 @@ src/WuxAuto                 WPF desktop app, references Core
   Vision/              OcrService (Windows.Media.Ocr, implements IOcrEngine)
   ViewModels/, MainWindow.*   WPF UI
 tests/WuxAuto.SelfTest      offline probes (see above); Legacy/ = the frozen pre-port vision on OpenCvSharp
-                            4.13, only for `--parity`
+                            4.13, only for `--parity` (ScreenAnalyzer.War.cs: main's Auto War vision as of 28763e1)
 tests/WuxAuto.Core.Tests    xUnit tests of Core; `dotnet test`. AppPathsTests (round-trips settings through
                             SettingsStore), TextMatcherTests, TemplateLibraryTests, ImageFileTests (non-ASCII
                             folders), CvHelpersTests (pixel-copy guards); the AppPaths-touching classes derive
@@ -1031,6 +1037,10 @@ Template scores seen on real 1024×768 frames:
   Mat header over the pinned capture buffer (`new Mat(rows, cols, DepthType.Cv8U, 4, ptr, stride)`,
   `WuxEngine`), pixels are read out through OpenCV (`CvHelpers.Bytes` = `Mat.CopyTo(byte[])`) or
   copied *from* `DataPointer` (preview, OCR), and copies are `.Clone()`.
+* **Emgu CV 5 is OpenCV 5.0**: `putText` draws its own fonts (not 4.x's Hershey strokes) and, with
+  anti-aliasing on a BGRA image, blends the alpha channel - the text comes out nearly transparent and
+  Windows OCR reads garbage from it. Synthetic test text goes on a BGR canvas, then `Bgr2Bgra`
+  (WarProbe `--tribe`, 2026-10-28). Overlay labels on the preview / debug snapshots use the new font.
 * **Desktop Duplication cannot capture exclusive fullscreen**; the game must be windowed/borderless.
 * **Hybrid-GPU laptops:** the default adapter (dGPU) cannot duplicate a monitor wired to the iGPU
   (`DXGI_ERROR_UNSUPPORTED`), so the device must be created on the output's own adapter — and with an
