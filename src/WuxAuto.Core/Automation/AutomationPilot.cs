@@ -1,7 +1,6 @@
 using System.Diagnostics;
-using OpenCvSharp;
+using Emgu.CV;
 using WuxAuto.Core;
-using WuxAuto.Input;
 using WuxAuto.Vision;
 using LogLevel = WuxAuto.Core.LogLevel;
 
@@ -33,12 +32,22 @@ public enum PilotPhase
     RunToTarget,
     ReturnToTown,
     Reconnect,
-    AutoWar,
+    RegularWarOn,
     LodRun,
     LodAttack,
     LodApproach,
     LodRespawn,
     LodLoot,
+    WarRemember,
+    WarWait,
+    WarJoin,
+    WarEnter,
+    WarBuff,
+    WarFight,
+    WarDead,
+    WarBack,
+    WarArrive,
+    WarHuntOn,
     Done,
     Failed,
 }
@@ -52,7 +61,7 @@ public sealed partial class AutomationPilot
 {
     private readonly AppSettings _settings;
     private readonly ScreenAnalyzer _analyzer;
-    private readonly IGameInput _input;
+    private readonly IGameControls _controls;
     private readonly List<OverlayItem> _overlays = new();
 
     private PilotPhase _phase = PilotPhase.Idle;
@@ -69,8 +78,6 @@ public sealed partial class AutomationPilot
     private ulong _preLoadHash;
     private ulong _lastHash;
     private int _stableSamples;
-
-    private double _turnRate;
 
     private int _pages;
     private bool _chevronMissing;
@@ -217,8 +224,15 @@ public sealed partial class AutomationPilot
     private int _huntOffPresses;              // AutohuntOff: taps of the autohunt key this visit (<= 3)
     private long _huntOffPressedAt;
     private List<string> _huntOffBaseline = [];   // autohunt log lines before the last tap
+    private bool _huntCheckConfirmed;             // EnsureAutohuntAsync's last "true" read the wanted state (not given up, not a dry run)
     private string? _homeTown;
     private int _fontStep;
+    // One Settings visit: the TAB target option wanted (null = leave it), whether the font size is left
+    // alone, and the phase after the window is closed. Set by AfterTownChecks (Laby/LOD) or
+    // BeginSettingsVisit (Auto War); ResetRunState puts the Laby/LOD values back as a safe default.
+    private string? _visitTabTarget;
+    private bool _visitSkipFont;
+    private PilotPhase _visitNext = PilotPhase.OpenInventory;
     private int _fontClicks;
     private int _fontTabClicks;
     private bool _fontChanged;
@@ -234,17 +248,20 @@ public sealed partial class AutomationPilot
     private int _refineGained;
     private bool _refinePending;
 
-    public AutomationPilot(AppSettings settings, ScreenAnalyzer analyzer, IGameInput input)
+    public AutomationPilot(AppSettings settings, ScreenAnalyzer analyzer, IGameControls controls)
     {
         _settings = settings;
         _analyzer = analyzer;
-        _input = input;
+        _controls = controls;
     }
 
     public event Action<LogLevel, string>? Log;
     public event Action? StateChanged;
 
-    /// <summary>The pilot changed the run mode itself (LOD out of entries -> Auto Laby).</summary>
+    /// <summary>
+    /// The pilot changed a setting the window shows, and saved it: the run mode (LOD out of entries -> Auto Laby), or Auto
+    /// War's remembered cave and monster. Raised on the loop thread.
+    /// </summary>
     public event Action? ModeChanged;
 
     public bool IsRunning { get; private set; }
@@ -265,11 +282,13 @@ public sealed partial class AutomationPilot
         PilotPhase.OpenInventory => "opening inventory",
         PilotPhase.FindScroll => "locating teleport scroll",
         PilotPhase.FindChevron => "clicking next page chevron",
-        PilotPhase.FindDestination => $"finding '{CurrentDestination}'",
+        PilotPhase.FindDestination => IsWar && _warListCheck
+            ? $"checking '{_warTitle}' is on page {_settings.War.ListPage} of the teleport scroll"
+            : $"finding '{CurrentDestination}'",
         PilotPhase.WaitForLoad => "waiting for zone load",
         PilotPhase.WaitForGate => $"waiting for the gate (stage {_stageIndex + 1})",
         PilotPhase.ClickMap => "clicking the map button",
-        PilotPhase.ReadStage => $"reading the map (stage {_stageIndex + 1})",
+        PilotPhase.ReadStage => IsWar ? $"finding '{MapPickName}' on the map" : $"reading the map (stage {_stageIndex + 1})",
         PilotPhase.AdvanceStage => "clicking the next-stage chevron",
         PilotPhase.WaitBoss => $"waiting for the boss (stage {_stageIndex + 1})",
         PilotPhase.SelectBoss => $"selecting the boss (stage {_stageIndex + 1})",
@@ -285,7 +304,17 @@ public sealed partial class AutomationPilot
         PilotPhase.LodLoot => "looting the LOD boss",
         PilotPhase.ReturnToTown => "autohunt off, returning to town",
         PilotPhase.Reconnect => "disconnected - logging back in",
-        PilotPhase.AutoWar => "turning the auto war on",
+        PilotPhase.RegularWarOn => "turning the auto war on",
+        PilotPhase.WarRemember => "remembering the cave and monster",
+        PilotPhase.WarWait => "waiting for the Bohai war",
+        PilotPhase.WarJoin => "joining the war",
+        PilotPhase.WarEnter => "entering Bohai Outpost",
+        PilotPhase.WarBuff => "buffing",
+        PilotPhase.WarFight => "fighting in the war",
+        PilotPhase.WarDead => "dead - waiting to revive",
+        PilotPhase.WarBack => "teleporting back to the cave",
+        PilotPhase.WarArrive => "walking to the monster",
+        PilotPhase.WarHuntOn => "turning the autohunt on",
         PilotPhase.Done => "sequence complete",
         PilotPhase.Failed => "failed",
         _ => "idle",
@@ -311,6 +340,16 @@ public sealed partial class AutomationPilot
         _lodBuffs = 0;
         _lodApproachSnapshots = 0;
         _fontStep = 0;
+        _warSpotChecked = false;
+        _warRemembering = false;
+        _warRefusedTeleports = 0;
+        _warReturnTrips.Clear();
+        _warBarChecked = false;
+        _warNoCaveTold = false;
+        _warMissingIcons.Clear();
+        _warShuraSkipTold = false;
+        _warHp = default;
+        _warShots.Clear();
         _runStart = Environment.TickCount64;
         ResetRunState();
         IsRunning = true;
@@ -322,7 +361,7 @@ public sealed partial class AutomationPilot
             // The left sweep assumes the heading the labyrinth loads with; mid-run it would only
             // overshoot, so a debug start fine-tunes from wherever the camera is.
             _sweepDone = true;
-            _input.TryFocus();
+            _controls.TryBringGameToFront();
             Log?.Invoke(LogLevel.Warning, _stageIndex >= stages
                 ? $"Starting at {startAt} (all stages treated as done)."
                 : $"Starting at {startAt}, stage {_stageIndex + 1}.");
@@ -361,7 +400,6 @@ public sealed partial class AutomationPilot
 
         _attempts = 0;
         _anchor = null;
-        _turnRate = 0;
         _preLoadHash = 0;
         _lastHash = 0;
         _stableSamples = 0;
@@ -419,9 +457,22 @@ public sealed partial class AutomationPilot
         _jumpAgreements = 0;
         _returning = false;
         _autohuntOff = false;
-        _huntOffPresses = 0;
-        _huntOffPressedAt = 0;
-        _huntOffBaseline = [];
+        ResetAutohuntCheck();
+        _visitTabTarget = _settings.Sequence.TabTargetDefault ? "Default" : null;
+        _visitSkipFont = false;
+        _visitNext = PilotPhase.OpenInventory;
+        _warListCheck = false;
+        _warMapVerify = false;
+        _warMonsterConfirmed = false;
+        _warPendingMonster = null;
+        _warPendingMap = null;
+        _warMapClosing = false;
+        _warMapCloseClicked = false;
+        _warTimerStep = 0;
+        _warTitle = null;
+        _warWindowsChecked = false;
+        ResetWarList();
+        _warArriveBaseline = null;
         _stuckShots = 0;
         _finalHuntOffChecked = false;
         _compassAnchored = false;
@@ -469,7 +520,6 @@ public sealed partial class AutomationPilot
             return;
 
         _overlays.Clear();
-        SetFrameSize(frame.Width, frame.Height);
 
         if (_positionsResetPending)
         {
@@ -484,9 +534,17 @@ public sealed partial class AutomationPilot
         // Checked even while a phase is waiting (boss spawn, settle delays): a disconnect can
         // happen at any time and every key/click after it would land on the login screens.
         // Not while the teleport list is open: its destinations and buttons are ours to click.
-        bool cancelDialogs = !string.IsNullOrWhiteSpace(_settings.Sequence.CancelDialogText)
+        // Auto War never cancels the Bohai dialog (user) - it watches for it instead, while waiting
+        // for the war (the timer was missed or misread); the fight itself needs no whole-screen read.
+        // Not once WarRemember has the monster confirmed: that tick saves the spot first, then WarWait
+        // watches (a join before the save lost a confirmed spot). And Auto War reads nothing with the
+        // game behind another window: a second game client's war dialog or login screen is not ours.
+        bool cancelDialogs = !IsWar
+                             && !string.IsNullOrWhiteSpace(_settings.Sequence.CancelDialogText)
                              && _phase is not (PilotPhase.FindChevron or PilotPhase.FindDestination);
-        if ((_settings.Sequence.AutoReconnect || cancelDialogs) && _phase != PilotPhase.Reconnect && now >= _nextDisconnectCheckAt)
+        bool watchWarDialog = IsWar && _phase is (PilotPhase.WarWait or PilotPhase.WarRemember) && !_warMonsterConfirmed;
+        bool warBehind = IsWar && !_controls.IsGameInFront;
+        if ((_settings.Sequence.AutoReconnect || cancelDialogs || watchWarDialog) && !warBehind && _phase != PilotPhase.Reconnect && now >= _nextDisconnectCheckAt)
         {
             _nextDisconnectCheckAt = now + 5000;
             try
@@ -512,6 +570,14 @@ public sealed partial class AutomationPilot
                     Advance(PilotPhase.Reconnect, _settings.Sequence.ReconnectStepDelayMs);
                     return;
                 }
+
+                // The war dialog while waiting for the war: join now.
+                if (watchWarDialog
+                    && ScreenAnalyzer.ToLines(screenWords).Any(l => WarText.IsWarDialogLine(l.Text, _settings.War.Destination)))
+                {
+                    BeginWarJoin("the war dialog is up");
+                    return;
+                }
             }
             catch (Exception ex)
             {
@@ -522,8 +588,27 @@ public sealed partial class AutomationPilot
         // Zone guard (user): Labyrinth phases send nothing unless the minimap title has said
         // "Labyrinth" within the last few seconds. Rotating, map clicks and Tab were sent in town
         // and in Bohai Outpost before. Stage 5 closing puts the character back in town -> next run.
-        if (_settings.Dungeon.Enabled && !_returning && IsLabyrinthPhase(_phase))
+        // Auto War: the same guard over the map pick in the cave (Destination = the cave).
+        if ((_settings.Dungeon.Enabled || IsWar) && !_returning && IsLabyrinthPhase(_phase))
         {
+            // Auto War's map pick reads the map window: only with the game in front - a second game client's map
+            // must never confirm or pick a monster. The minimap is read again as soon as the game is back, and the
+            // 2 minutes below start again then.
+            if (warBehind)
+            {
+                _nextZoneCheckAt = 0;
+                _zoneHoldSince = null;
+                _detail = "waiting for the game window to be in front";
+                if (!_zoneHoldLogged)
+                {
+                    _zoneHoldLogged = true;
+                    ReleaseSweepKey();
+                    Log?.Invoke(LogLevel.Info, $"The game is behind another window - holding {_phase} until it is back in front.");
+                }
+
+                return;
+            }
+
             if (now >= _nextZoneCheckAt)
             {
                 _nextZoneCheckAt = now + 2000;
@@ -531,7 +616,8 @@ public sealed partial class AutomationPilot
                 string zone = title == null ? string.Empty : TextMatcher.Normalize(title);
                 string? townSeen = TownIn(title);
 
-                if (ZoneMatches(title, Destination))
+                // Auto War: the cave itself, never a sibling sharing its first 10 letters (WarText.SameZone).
+                if (IsWar ? WarText.SameZone(title, Destination) : ZoneMatches(title, Destination))
                 {
                     _zoneConfirmedAt = now;
                     _otherZoneReads = 0;
@@ -543,7 +629,7 @@ public sealed partial class AutomationPilot
 
                     _zoneHoldSince = null;
                 }
-                else if (zone.Length > 0 && !_input.IsTargetForeground)
+                else if (zone.Length > 0 && !_controls.IsGameInFront)
                 {
                     // Another window over the game: the capture shows that window's minimap, not ours.
                     // 2026-10-27, 1440x900: a second game client (another character, in Piercing City /
@@ -557,6 +643,18 @@ public sealed partial class AutomationPilot
                 {
                     ReleaseSweepKey();
                     bool inTown = townSeen != null;
+
+                    // Auto War: sent to town = back to the cave; anywhere else = start over (the
+                    // Start dispatch sorts out where the character is), within the restart limit.
+                    if (IsWar)
+                    {
+                        if (inTown)
+                            BeginWarReturn(frame, $"in {HomeTown} during {_phase}");
+                        else
+                            WarStartOver(frame, title);
+
+                        return;
+                    }
 
                     // Auto LOD: the boss respawns, so the map is unlimited until its timer runs out and
                     // the game sends the character to town (user) - teleport in again.
@@ -586,7 +684,7 @@ public sealed partial class AutomationPilot
                 // The 2 minutes only count while the game is in front: behind another window the
                 // capture shows that window, not the minimap (this chat once covered it, run 34 LOD),
                 // and no input could be sent anyway - just wait.
-                if (!_input.IsTargetForeground)
+                if (!_controls.IsGameInFront)
                     _zoneHoldSince = now;
                 _zoneHoldSince ??= now;
                 if (now - _zoneHoldSince.Value > 120000)
@@ -595,12 +693,14 @@ public sealed partial class AutomationPilot
                     return;
                 }
 
-                _detail = "not confirmed in the Labyrinth (minimap title) - holding all input";
+                _detail = IsWar
+                    ? $"not confirmed in {Destination} (minimap title) - holding all input"
+                    : "not confirmed in the Labyrinth (minimap title) - holding all input";
                 if (!_zoneHoldLogged)
                 {
                     _zoneHoldLogged = true;
                     ReleaseSweepKey();
-                    Log?.Invoke(LogLevel.Warning, _input.IsTargetForeground
+                    Log?.Invoke(LogLevel.Warning, _controls.IsGameInFront
                         ? $"The minimap does not show {Destination} - holding {_phase} until it does."
                         : $"The game is behind another window - holding {_phase} until it is back in front.");
                 }
@@ -633,6 +733,9 @@ public sealed partial class AutomationPilot
                     TickRunSkill(frame);
                     break;
                 case PilotPhase.FontSize:
+                    // Auto War's visit (inside Bohai) reads the Settings window: only with the game in front.
+                    if (IsWar && !WarInFront(now))
+                        break;
                     await TickFontSizeAsync(frame);
                     break;
                 case PilotPhase.OpenInventory:
@@ -704,8 +807,38 @@ public sealed partial class AutomationPilot
                 case PilotPhase.Reconnect:
                     await TickReconnectAsync(frame);
                     break;
-                case PilotPhase.AutoWar:
-                    await TickAutoWarAsync(frame);
+                case PilotPhase.RegularWarOn:
+                    await TickRegularWarAsync(frame);
+                    break;
+                case PilotPhase.WarWait:
+                    await TickWarWaitAsync(frame);
+                    break;
+                case PilotPhase.WarJoin:
+                    await TickWarJoinAsync(frame);
+                    break;
+                case PilotPhase.WarEnter:
+                    await TickWarEnterAsync(frame);
+                    break;
+                case PilotPhase.WarBuff:
+                    await TickWarBuffAsync(frame);
+                    break;
+                case PilotPhase.WarFight:
+                    await TickWarFightAsync(frame);
+                    break;
+                case PilotPhase.WarDead:
+                    await TickWarDeadAsync(frame);
+                    break;
+                case PilotPhase.WarRemember:
+                    await TickWarRememberAsync(frame);
+                    break;
+                case PilotPhase.WarBack:
+                    await TickWarBackAsync(frame);
+                    break;
+                case PilotPhase.WarArrive:
+                    await TickWarArriveAsync(frame);
+                    break;
+                case PilotPhase.WarHuntOn:
+                    await TickWarHuntOnAsync(frame);
                     break;
                 case PilotPhase.Done:
                     TickDone();
@@ -730,7 +863,7 @@ public sealed partial class AutomationPilot
     {
         if (_settings.Input.Mode == InputMode.ForegroundSendInput && _settings.Input.FocusOnStart)
         {
-            if (_input.TryFocus())
+            if (_controls.TryBringGameToFront())
             {
                 Log?.Invoke(LogLevel.Info, "Game window is in the foreground; input will only go there.");
                 // The game needs a moment after activation before it takes keys reliably.
@@ -761,6 +894,12 @@ public sealed partial class AutomationPilot
     /// </summary>
     private async Task TickCheckZoneAsync(Mat frame)
     {
+        if (IsWar)
+        {
+            await TickWarCheckZoneAsync(frame);
+            return;
+        }
+
         var dungeon = _settings.Dungeon;
         string? title = await ReadMinimapTitleAsync(frame);
         bool inLabyrinth = ZoneMatches(title, Destination);
@@ -816,7 +955,7 @@ public sealed partial class AutomationPilot
             bool townCheck = TownIn(title) != null && !_returning;
             _runSkillDue = townCheck && _settings.Sequence.RunSkillCheck;
             _runSkillClicks = 0;
-            if (townCheck && _settings.Sequence.AutohuntOffInTown && !string.IsNullOrWhiteSpace(dungeon.AutohuntKey))
+            if (townCheck && _settings.Sequence.AutohuntOffInTown && _controls.Has(GameAction.ToggleAutohunt))
             {
                 _huntOffPresses = 0;
                 _huntOffBaseline = [];
@@ -879,7 +1018,7 @@ public sealed partial class AutomationPilot
             // Tab shows the boss name and marker; give it a few tries.
             if (_attempts < 5)
             {
-                if (_input.KeyTap(dungeon.TabKey))
+                if (_controls.Press(GameAction.TargetNearest))
                     _attempts++;
                 _detail = $"in the Labyrinth - looking for a boss name (Tab {_attempts}/5)";
                 _waitUntil = Environment.TickCount64 + Math.Max(1200, dungeon.TabSettleMs);
@@ -912,8 +1051,16 @@ public sealed partial class AutomationPilot
             return PilotPhase.RunSkill;
         }
 
-        bool settingsCheck = _settings.Sequence.FontSizePercent > 0 || _settings.Sequence.TabTargetDefault;
-        return !_fontChecked && settingsCheck ? PilotPhase.FontSize : PilotPhase.OpenInventory;
+        bool tabDefault = _settings.Sequence.TabTargetDefault;
+        bool settingsCheck = _settings.Sequence.FontSizePercent > 0 || tabDefault;
+        if (_fontChecked || !settingsCheck)
+            return PilotPhase.OpenInventory;
+
+        // The Laby/LOD visit, from the same read of the TAB target box as the decision above.
+        _visitTabTarget = tabDefault ? "Default" : null;
+        _visitSkipFont = false;
+        _visitNext = PilotPhase.OpenInventory;
+        return PilotPhase.FontSize;
     }
 
     /// <summary>
@@ -935,8 +1082,8 @@ public sealed partial class AutomationPilot
     /// <summary>
     /// The autohunt-off check shared by the town visit (<see cref="TickAutohuntOffAsync"/>) and the
     /// arrival at the stage 5 boss (<see cref="TickWaitBossAsync"/>, user 2026-10-26). Ticked until it
-    /// returns true (off, or given up); false = still working, <c>_waitUntil</c> is set. Reset
-    /// <c>_huntOffPresses</c> / <c>_huntOffBaseline</c> before the first tick.
+    /// returns true (off, or given up); false = still working, <c>_waitUntil</c> is set. Call
+    /// <see cref="ResetAutohuntCheck"/> before the first tick.
     /// </summary>
     /// <param name="where">For the log: "in Piercing City", "at the final boss".</param>
     /// <param name="trustVisibleLine">
@@ -946,13 +1093,34 @@ public sealed partial class AutomationPilot
     /// usually presses nothing (a tap on an autohunt that is off would turn it on for a second). In
     /// town the log may be hours old, so the town check always taps.
     /// </param>
-    private async Task<bool> EnsureAutohuntOffAsync(Mat frame, string where, bool trustVisibleLine)
+    private Task<bool> EnsureAutohuntOffAsync(Mat frame, string where, bool trustVisibleLine)
+        => EnsureAutohuntAsync(frame, where, wantOn: false, trustVisibleLine);
+
+    /// <summary>Clears the autohunt check's taps and baseline: the next <see cref="EnsureAutohuntAsync"/> starts afresh.</summary>
+    private void ResetAutohuntCheck()
+    {
+        _huntOffPresses = 0;
+        _huntOffPressedAt = 0;
+        _huntOffBaseline = [];
+    }
+
+    /// <summary>
+    /// Makes the autohunt <paramref name="wantOn"/> (on / off), confirmed in the combat log - J is a
+    /// toggle, so a blind tap is never trusted (see <see cref="EnsureAutohuntOffAsync"/>; Auto War
+    /// turns it back on in the cave). Ticked until true (there, or given up after 3 taps / no line).
+    /// </summary>
+    private async Task<bool> EnsureAutohuntAsync(Mat frame, string where, bool wantOn, bool trustVisibleLine)
     {
         var seq = _settings.Sequence;
         string key = _settings.Dungeon.AutohuntKey;
+        string want = wantOn ? "on" : "off";
+        string other = wantOn ? "off" : "on";
         long now = Environment.TickCount64;
 
-        if (_input.IsDryRun)
+        // Every "true" below ends the check; only the two that read the wanted state confirm it (Auto War's
+        // "hunting again" is only claimed then). The value is not read by Laby / LOD.
+        _huntCheckConfirmed = false;
+        if (_controls.IsDryRun)
         {
             Log?.Invoke(LogLevel.Info, $"Dry run - not checking whether the autohunt is on {where}.");
             return true;
@@ -963,7 +1131,7 @@ public sealed partial class AutomationPilot
 
         bool Tap()
         {
-            if (!_input.KeyTap(key))
+            if (!_controls.Press(GameAction.ToggleAutohunt))
             {
                 _detail = "autohunt key blocked - waiting for the game to be in front";
                 _waitUntil = now + 300;
@@ -983,16 +1151,17 @@ public sealed partial class AutomationPilot
             if (trustVisibleLine)
             {
                 bool? visible = AutohuntLog.NewState([], lines, seq.AutohuntStartedText, seq.AutohuntEndedText, out string? last, seq.AutohuntStoppedText);
-                if (visible == false)
+                if (visible == wantOn)
                 {
-                    Log?.Invoke(LogLevel.Success, $"Autohunt is off {where} (the combat log's newest autohunt line reads '{last}').");
+                    Log?.Invoke(LogLevel.Success, $"Autohunt is {want} {where} (the combat log's newest autohunt line reads '{last}').");
+                    _huntCheckConfirmed = true;
                     return true;
                 }
 
-                if (visible == true)
+                if (visible == !wantOn)
                 {
                     if (Tap())
-                        Log?.Invoke(LogLevel.Warning, $"The combat log's newest autohunt line reads '{last}' - the autohunt is on {where}; pressed '{key}' to turn it off.");
+                        Log?.Invoke(LogLevel.Warning, $"The combat log's newest autohunt line reads '{last}' - the autohunt is {other} {where}; pressed '{key}' to turn it {want}.");
                     return false;
                 }
             }
@@ -1003,23 +1172,24 @@ public sealed partial class AutomationPilot
         }
 
         bool? on = AutohuntLog.NewState(_huntOffBaseline, lines, seq.AutohuntStartedText, seq.AutohuntEndedText, out string? line, seq.AutohuntStoppedText);
-        if (on == false)
+        if (on == wantOn)
         {
-            Log?.Invoke(LogLevel.Success, $"Autohunt is off {where} ('{line}' after '{key}' x{_huntOffPresses}).");
+            Log?.Invoke(LogLevel.Success, $"Autohunt is {want} {where} ('{line}' after '{key}' x{_huntOffPresses}).");
+            _huntCheckConfirmed = true;
             return true;
         }
 
-        if (on == true)
+        if (on == !wantOn)
         {
             if (_huntOffPresses < 3)
             {
                 if (Tap())
-                    Log?.Invoke(LogLevel.Warning, $"The autohunt was off - '{key}' turned it on ('{line}'); pressed it again to turn it off.");
+                    Log?.Invoke(LogLevel.Warning, $"The autohunt was {want} - '{key}' turned it {other} ('{line}'); pressed it again to turn it {want}.");
                 return false;
             }
 
             Log?.Invoke(LogLevel.Warning, $"The combat log still reads '{line}' after '{key}' x3 - carrying on.");
-            DebugArtifacts.SaveFrame(frame, _overlays, "autohunt_on");
+            DebugArtifacts.SaveFrame(frame, _overlays, wantOn ? "autohunt_off" : "autohunt_on");
             return true;
         }
 
@@ -1065,7 +1235,7 @@ public sealed partial class AutomationPilot
             string missing = string.IsNullOrWhiteSpace(seq.RunSkillTemplate)
                 ? "The Run skill has no icon template"
                 : $"The Run skill icon ('{seq.RunSkillTemplate}') is not on the skill bar";
-            if (string.IsNullOrWhiteSpace(seq.RunSkillKey))
+            if (!_controls.Has(GameAction.RunSkillKey))
             {
                 Log?.Invoke(LogLevel.Warning, $"{missing} and no Run key is set - carrying on.");
                 DebugArtifacts.SaveFrame(frame, _overlays, "runskill_unread");
@@ -1073,7 +1243,7 @@ public sealed partial class AutomationPilot
                 return;
             }
 
-            if (_input.IsDryRun)
+            if (_controls.IsDryRun)
             {
                 Log?.Invoke(LogLevel.Info, $"Dry run - {missing.ToLowerInvariant()}; would press '{seq.RunSkillKey}' once.");
                 Done();
@@ -1087,7 +1257,7 @@ public sealed partial class AutomationPilot
                 return;
             }
 
-            if (!_input.KeyTap(seq.RunSkillKey))
+            if (!_controls.Press(GameAction.RunSkillKey))
             {
                 _detail = "Run key blocked - waiting for the game to be in front";
                 _waitUntil = now + 300;
@@ -1113,7 +1283,7 @@ public sealed partial class AutomationPilot
             return;
         }
 
-        if (_input.IsDryRun)
+        if (_controls.IsDryRun)
         {
             Log?.Invoke(LogLevel.Info, $"Dry run - the Run skill is off (ring {ring:0.00}); would click its icon at {x},{y} (score {icon.Score:0.00}).");
             Done();
@@ -1128,7 +1298,7 @@ public sealed partial class AutomationPilot
             return;
         }
 
-        if (!_input.Click(x, y))
+        if (!_controls.Tap(x, y))
         {
             _detail = "Run icon click blocked - waiting for the game to be in front";
             _waitUntil = now + 300;
@@ -1188,14 +1358,30 @@ public sealed partial class AutomationPilot
     }
 
     /// <summary>
+    /// A Settings visit outside the town checks (Auto War, inside Bohai Outpost): TAB target to
+    /// <paramref name="tabTarget"/> (null = leave it), the font size left alone when
+    /// <paramref name="skipFont"/>, then <paramref name="next"/>.
+    /// </summary>
+    private void BeginSettingsVisit(string? tabTarget, bool skipFont, PilotPhase next)
+    {
+        _visitTabTarget = tabTarget;
+        _visitSkipFont = skipFont;
+        _visitNext = next;
+        _fontStep = 0;
+        Advance(PilotPhase.FontSize, 200);
+    }
+
+    /// <summary>
     /// One visit to the game's Settings window per Start, in town:
     /// Escape -> VISUAL -> list scrolled to the top -> "Font size" kept within
     /// <see cref="SequenceSettings.FontSizePercent"/> .. <see cref="SequenceSettings.FontSizeMaxPercent"/>
     /// (outside it, the chevrons beside the value move it to the nearer end) -> list scrolled down
-    /// to "TAB target", set to Default with its left chevron (<see cref="SequenceSettings.TabTargetDefault"/>)
-    /// -> SAVE once if anything changed -> Escape. Only buttons found by their own text are clicked
-    /// (the window also has CHARACTER SELECT and EXIT). Anything unexpected: close the window and
-    /// carry on with the run - neither setting is worth a failure.
+    /// to "TAB target", stepped to the wanted option with its chevrons (Laby/LOD: Default with
+    /// <see cref="SequenceSettings.TabTargetDefault"/>; Auto War: <see cref="BeginSettingsVisit"/>)
+    /// -> SAVE once if anything changed -> Escape -> the visit's next phase (the teleport for
+    /// Laby/LOD). Only buttons found by their own text are clicked (the window also has CHARACTER
+    /// SELECT and EXIT). Anything unexpected: close the window and carry on with the run - neither
+    /// setting is worth a failure.
     /// </summary>
     private async Task TickFontSizeAsync(Mat frame)
     {
@@ -1223,7 +1409,7 @@ public sealed partial class AutomationPilot
         // Font size done (or skipped): the TAB target next, then SAVE if anything changed.
         void AfterFont()
         {
-            if (_settings.Sequence.TabTargetDefault)
+            if (_visitTabTarget != null)
             {
                 _fontStep = TabStep;
                 return;
@@ -1246,7 +1432,7 @@ public sealed partial class AutomationPilot
         {
             int x = _visualTab.CenterX;
             int y = Math.Min(frame.Height - 1, _visualTab.Bottom + _visualTab.Height * 10);
-            if (_input.Wheel(x, y, notches))
+            if (_controls.ScrollList(x, y, notches))
                 return true;
 
             _detail = "scroll blocked - waiting for the game to be in front";
@@ -1264,7 +1450,7 @@ public sealed partial class AutomationPilot
                 _tabScrolls = 0;
                 _tabChanged = false;
                 _settingsChanges.Clear();
-                if (!_input.KeyTap("Escape"))
+                if (!_controls.Press(GameAction.ToggleSettings))
                 {
                     _waitUntil = now + 300;
                     return;
@@ -1287,7 +1473,7 @@ public sealed partial class AutomationPilot
                     _fontChecked = true;
                     _fontStep = OpenStep;
                     Log?.Invoke(LogLevel.Warning, "The Settings window did not open - leaving the font size and TAB target alone.");
-                    Advance(PilotPhase.OpenInventory, 300);
+                    Advance(_visitNext, 300);
                     return;
                 }
 
@@ -1328,7 +1514,7 @@ public sealed partial class AutomationPilot
                     return;
                 }
 
-                if (low <= 0) // font size check off
+                if (low <= 0 || _visitSkipFont) // font size check off, or not this visit
                 {
                     AfterFont();
                     return;
@@ -1375,8 +1561,16 @@ public sealed partial class AutomationPilot
                 return;
             }
 
-            case TabStep: // "TAB target" -> Default; the row is at the bottom of the list
+            case TabStep: // "TAB target" -> the wanted option; the row is at the bottom of the list
             {
+                // _fontStep survives a restart, and ResetRunState takes the TAB option from the check box again:
+                // ticked off in the meantime, there is nothing to set - skip the step.
+                if (_visitTabTarget is not string wanted)
+                {
+                    AfterTab();
+                    return;
+                }
+
                 var row = await _analyzer.ReadSettingRowAsync(frame, "TAB target", numeric: false);
                 if (row?.ValueText is not string value)
                 {
@@ -1398,31 +1592,32 @@ public sealed partial class AutomationPilot
                     return;
                 }
 
-                // Default is the first option: every click on the left chevron moves one step towards it.
-                if (IsDefaultTabTarget(value))
+                int? step = TabTargetChevron(value, wanted);
+                if (step == 0)
                 {
                     if (_tabChanged)
-                        _settingsChanges.Add("TAB target Default");
+                        _settingsChanges.Add($"TAB target {wanted}");
                     else
-                        Log?.Invoke(LogLevel.Info, "TAB target is already Default.");
+                        Log?.Invoke(LogLevel.Info, $"TAB target is already {wanted}.");
                     AfterTab();
                     return;
                 }
 
-                if (row.Left == null || _tabClicks >= 5)
+                PixelRect? chevron = step < 0 ? row.Left : step > 0 ? row.Right : null;
+                if (chevron == null || _tabClicks >= 5)
                 {
-                    Log?.Invoke(LogLevel.Warning, $"TAB target is '{value}' and could not be set to Default - leaving it.");
+                    Log?.Invoke(LogLevel.Warning, $"TAB target is '{value}' and could not be set to {wanted} - leaving it.");
                     if (_tabChanged)
                         _settingsChanges.Add($"TAB target {value}");
                     AfterTab();
                     return;
                 }
 
-                if (!Click(row.Left.Value))
+                if (!Click(chevron.Value))
                     return;
                 _tabClicks++;
                 _tabChanged = true;
-                _detail = $"TAB target '{value}' -> Default";
+                _detail = $"TAB target '{value}' -> {wanted}";
                 _waitUntil = now + 500;
                 return;
             }
@@ -1446,18 +1641,18 @@ public sealed partial class AutomationPilot
                 return;
             }
 
-            default: // close the window (Escape toggles it), then the teleport
+            default: // close the window (Escape toggles it), then the visit's next phase (Laby/LOD: the teleport)
             {
                 if (_attempts < 3 && await Find("SETTINGS") != null)
                 {
                     _attempts++;
-                    _input.KeyTap("Escape");
+                    _controls.Press(GameAction.ToggleSettings);
                     _waitUntil = now + 700;
                     return;
                 }
 
                 _fontStep = OpenStep;
-                Advance(PilotPhase.OpenInventory, 300);
+                Advance(_visitNext, 300);
                 return;
             }
         }
@@ -1468,6 +1663,20 @@ public sealed partial class AutomationPilot
     /// Nearest monster) score below 0.2 against it.
     /// </summary>
     public static bool IsDefaultTabTarget(string value) => TextMatcher.Similarity(value, "Default") >= 0.75;
+
+    /// <summary>
+    /// The TAB target chevron that moves <paramref name="value"/> towards <paramref name="wanted"/>:
+    /// 0 = already there, -1 = left, +1 = right, null = cannot tell. The options are stepped through in
+    /// a fixed order (<see cref="TabTargetOptions.All"/>), Default first, so an unrecognised value can
+    /// still be stepped left towards Default (as before Auto War), but towards nothing else.
+    /// </summary>
+    internal static int? TabTargetChevron(string value, string wanted)
+    {
+        int? steps = TabTargetOptions.StepsTo(value, wanted);
+        if (steps == null)
+            return TabTargetOptions.IndexOf(wanted) == 0 ? -1 : null;
+        return Math.Sign(steps.Value);
+    }
 
     private void TickOpenInventory(Mat frame)
     {
@@ -1481,7 +1690,7 @@ public sealed partial class AutomationPilot
             return;
         }
 
-        if (!_input.KeyTap(_settings.Input.InventoryKey))
+        if (!_controls.Press(GameAction.OpenInventory))
         {
             _waitUntil = Environment.TickCount64 + 250;
             _detail = "input blocked - waiting for the game to be in front";
@@ -1521,7 +1730,7 @@ public sealed partial class AutomationPilot
 
         // Right click: in Wuxen2 a left click only picks the item up (it sticks to the cursor) and a
         // double click does nothing - the right click is what opens the "TELEPORT SCROLL" panel.
-        if (!RightClick(match.Bounds))
+        if (!UseItem(match.Bounds))
             return;
 
         Log?.Invoke(LogLevel.Success, $"Right-clicked the teleport scroll (score {match.Score:0.00}, match {ms:0.0}ms).");
@@ -1543,7 +1752,7 @@ public sealed partial class AutomationPilot
         if (matches.Count == 0)
         {
             _chevronMissing = true;
-            Fail(frame, $"rightchevron.png was not found in the destination list region, so '{CurrentDestination}' cannot be paged to. Widen Sequence ▸ Regions ▸ Teleport list, or re-crop rightchevron.png.");
+            Fail(frame, $"rightchevron.png was not found in the destination list region, so {ListPagingTarget} cannot be paged to. Widen Sequence ▸ Regions ▸ Teleport list, or re-crop rightchevron.png.");
             return;
         }
 
@@ -1561,13 +1770,27 @@ public sealed partial class AutomationPilot
 
         _pages++;
         Log?.Invoke(LogLevel.Info, _pagingBack
-            ? $"Paged the destination list back looking for '{CurrentDestination}'."
-            : $"Paged the destination list (page {_pages}) looking for '{CurrentDestination}'.");
+            ? $"Paged the destination list back looking for {ListPagingTarget}."
+            : $"Paged the destination list (page {_pages}) looking for {ListPagingTarget}.");
         Advance(PilotPhase.FindDestination, _settings.Input.AfterClickMs + _settings.Sequence.RetryDelayMs);
     }
 
     private async Task TickFindDestinationAsync(Mat frame)
     {
+        // Auto War's Start: page to the caves' page and check the cave is there - no entry is clicked.
+        if (IsWar && _warListCheck)
+        {
+            await TickWarListCheckAsync(frame);
+            return;
+        }
+
+        // Auto War's trip back: the saved cave's entry, picked so that it is never a sibling cave.
+        if (IsWar)
+        {
+            await TickWarDestinationAsync(frame);
+            return;
+        }
+
         var roi = _settings.Regions.Ocr.ToPixels(frame.Width, frame.Height);
         var (hit, ms, words) = await _analyzer.FindTextAsync(
             frame,
@@ -1845,7 +2068,7 @@ public sealed partial class AutomationPilot
         // Short tap, then look again; half taps close to the peak for a finer stop.
         bool fine = _bestFlashlightScore >= need - 0.05;
         int tapMs = fine ? Math.Max(20, dungeon.RotateStepMs / 2) : dungeon.RotateStepMs;
-        if (!HoldKey(dungeon.RotateLeftKey, tapMs))
+        if (!HoldKey(TurnDirection.Left, tapMs))
         {
             _waitUntil = Environment.TickCount64 + 300;
             return;
@@ -1866,8 +2089,9 @@ public sealed partial class AutomationPilot
     {
         var dungeon = _settings.Dungeon;
         int tapMs = dungeon.NorthRefineTapMs;
-        string key = _refineDir == 1 ? _settings.Input.RotateKey : dungeon.RotateLeftKey;
-        string back = _refineDir == 1 ? dungeon.RotateLeftKey : _settings.Input.RotateKey;
+        var turn = _refineDir == 1 ? TurnDirection.Right : TurnDirection.Left;
+        var back = _refineDir == 1 ? TurnDirection.Left : TurnDirection.Right;
+        string key = TurnKeyName(turn);
         const double Gain = 0.004;
 
         if (!_refinePending)
@@ -1908,7 +2132,7 @@ public sealed partial class AutomationPilot
             return;
         }
 
-        if (!HoldKey(key, tapMs))
+        if (!HoldKey(turn, tapMs))
         {
             _waitUntil = Environment.TickCount64 + 300;
             return;
@@ -1936,10 +2160,9 @@ public sealed partial class AutomationPilot
     /// </summary>
     private bool TapBack()
     {
-        string reverse = _settings.Input.RotateKey;
         for (int i = _tapsSinceBest.Count - 1; i >= 0; i--)
         {
-            if (!HoldKey(reverse, _tapsSinceBest[i]))
+            if (!HoldKey(TurnDirection.Right, _tapsSinceBest[i]))
             {
                 _waitUntil = Environment.TickCount64 + 300;
                 return false;
@@ -2017,7 +2240,7 @@ public sealed partial class AutomationPilot
                 }
             }
 
-            if (!_input.Drag(cx, cy, cx, cy - dungeon.CameraTiltPx, 300))
+            if (!_controls.TiltCamera(cx, cy, -dungeon.CameraTiltPx, 300))
             {
                 _waitUntil = Environment.TickCount64 + 300;
                 return;
@@ -2066,7 +2289,7 @@ public sealed partial class AutomationPilot
         // front of the gate (user), and stay above the character.
         int x = gate.CenterX;
         int y = Math.Min(gate.Bottom + Math.Max(12, (int)(frame.Height * 0.03)), (int)(frame.Height * 0.50));
-        if (!_input.Click(x, y))
+        if (!_controls.WalkTo(x, y, forceWalk: false))
         {
             _waitUntil = Environment.TickCount64 + 300;
             return;
@@ -2087,21 +2310,23 @@ public sealed partial class AutomationPilot
 
         int cx = frame.Width / 2;
         int cy = frame.Height / 2;
-        if (_input.Drag(cx, cy, cx, cy + _settings.Dungeon.CameraTiltPx, 300))
+        if (_controls.TiltCamera(cx, cy, _settings.Dungeon.CameraTiltPx, 300))
             _gateTilted = false;
     }
 
-    /// <summary>Holds a key for <paramref name="ms"/> (only into the bound window).</summary>
-    private bool HoldKey(string key, int ms)
+    /// <summary>Turns for <paramref name="ms"/> (only into the bound window).</summary>
+    private bool HoldKey(TurnDirection direction, int ms)
     {
-        if (!_input.KeyDown(key))
+        if (!_controls.Turn(direction, ms))
             return false;
 
-        Thread.Sleep(ms);
-        _input.KeyUp(key);
-        Log?.Invoke(LogLevel.Trace, $"Held '{key}' for {ms}ms.");
+        Log?.Invoke(LogLevel.Trace, $"Held '{TurnKeyName(direction)}' for {ms}ms.");
         return true;
     }
+
+    /// <summary>The key a turn holds, for the log: left = <see cref="DungeonSettings.RotateLeftKey"/>, right = <see cref="InputSettings.RotateKey"/>.</summary>
+    private string TurnKeyName(TurnDirection direction) =>
+        direction == TurnDirection.Left ? _settings.Dungeon.RotateLeftKey : _settings.Input.RotateKey;
 
     /// <summary>
     /// Holds the "turn left" key for <see cref="DungeonSettings.RotateLeftSweepMs"/>, a little at a
@@ -2113,7 +2338,7 @@ public sealed partial class AutomationPilot
 
         if (_sweepStartedAt == 0)
         {
-            if (!_input.KeyDown(dungeon.RotateLeftKey))
+            if (!_controls.BeginTurn(TurnDirection.Left))
             {
                 _detail = "waiting for the game window to turn left";
                 _waitUntil = now + 400;
@@ -2136,7 +2361,7 @@ public sealed partial class AutomationPilot
             return true;
         }
 
-        _input.KeyUp(dungeon.RotateLeftKey);
+        _controls.EndTurn(TurnDirection.Left);
         _sweepStartedAt = 0;
         _sweepDone = true;
         Log?.Invoke(LogLevel.Info, $"Finished the left sweep ({elapsed}ms) - checking the searchlight.");
@@ -2152,37 +2377,7 @@ public sealed partial class AutomationPilot
             return;
 
         _sweepStartedAt = 0;
-        _input.KeyUp(_settings.Dungeon.RotateLeftKey);
-    }
-
-    /// <summary>Turns by a signed number of degrees along the forward key / rightward drag axis.</summary>
-    private int ApplyTurn(double signedDegrees)
-    {
-        if (_settings.Sequence.RotationMode == RotationMode.MouseDrag)
-        {
-            int pixels = (int)Math.Clamp(signedDegrees * _turnRate, -600, 600);
-            if (Math.Abs(pixels) < 8)
-                pixels = signedDegrees >= 0 ? 8 : -8;
-
-            var cursor = _analyzer.CompassRegion(_lastFrameWidth, _lastFrameHeight);
-            int duration = Math.Clamp(Math.Abs(pixels) * 3, 120, 700);
-            if (!_input.Drag(cursor.CenterX, cursor.CenterY, cursor.CenterX + pixels, cursor.CenterY, duration))
-                return 0;
-
-            Log?.Invoke(LogLevel.Trace, $"Turn drag {pixels}px over {duration}ms.");
-            return duration;
-        }
-
-        string key = signedDegrees >= 0 ? _settings.Input.RotateKey : _settings.Input.RotateKeyReverse;
-        int holdMs = (int)Math.Clamp(Math.Abs(signedDegrees) / Math.Max(5, _turnRate) * 1000.0, 80, 1800);
-
-        if (!_input.KeyDown(key))
-            return 0;
-
-        Thread.Sleep(holdMs);
-        _input.KeyUp(key);
-        Log?.Invoke(LogLevel.Trace, $"Turn key '{key}' held for {holdMs}ms ({signedDegrees:0}deg).");
-        return holdMs;
+        _controls.EndTurn(TurnDirection.Left);
     }
 
     // ---------------------------------------------------------------- dungeon flow
@@ -2206,6 +2401,7 @@ public sealed partial class AutomationPilot
 
     private PilotPhase NextAfterLoad()
         => _returning ? PilotPhase.Done
+            : IsWar ? PilotPhase.WarBack
             : !_settings.Dungeon.Enabled ? PilotPhase.FaceNorth
             : _settings.Dungeon.ZoomOutNotches > 0 || _settings.Dungeon.NorthOnArrival ? PilotPhase.ZoomOut
             : PilotPhase.WaitForGate;
@@ -2280,7 +2476,7 @@ public sealed partial class AutomationPilot
             // The game zooms with Ctrl + wheel (user); wheel down = out.
             int x = frame.Width / 2;
             int y = (int)(frame.Height * 0.40);
-            if (!_input.CtrlWheel(x, y, -dungeon.ZoomOutNotches))
+            if (!_controls.ZoomOut(x, y, dungeon.ZoomOutNotches))
             {
                 _waitUntil = Environment.TickCount64 + 300;
                 return;
@@ -2514,13 +2710,7 @@ public sealed partial class AutomationPilot
             }
         }
 
-        var roi = _settings.Regions.MapIcon.ToPixels(frame.Width, frame.Height);
-
-        // The button sits in the very corner of the panel and is often partly clipped by the
-        // client edge, which costs a lot of correlation - so it gets a softer floor than icons
-        // that are fully on screen. The region keeps it from matching anything else.
-        double threshold = Math.Max(0.50, _settings.Detection.TemplateThreshold - 0.10);
-        var (match, ms) = _analyzer.FindIconTimed(frame, "mapicon", roi, threshold);
+        var (match, ms) = FindMapButton(frame);
 
         if (match == null)
         {
@@ -2537,25 +2727,79 @@ public sealed partial class AutomationPilot
 
         Log?.Invoke(LogLevel.Success, $"Clicked the map button (score {match.Score:0.00}, match {ms:0.0}ms).");
         _mapScrolls = 0;
-        Advance(_settings.Dungeon.Enabled ? PilotPhase.ReadStage : PilotPhase.Done,
-            _settings.Dungeon.Enabled ? _settings.Dungeon.MapOpenDelayMs : _settings.Input.AfterClickMs);
+        bool pick = IsWar || _settings.Dungeon.Enabled;
+        Advance(pick ? PilotPhase.ReadStage : PilotPhase.Done,
+            pick ? _settings.Dungeon.MapOpenDelayMs : _settings.Input.AfterClickMs);
     }
 
     /// <summary>
-    /// Reads the boss name of the current stage from the map's monster list, scrolling the list
-    /// with the wheel when the name is not on the visible page, then clicks that row's '>'.
+    /// The map button. It sits in the very corner of the panel and is often partly clipped by the
+    /// client edge, which costs a lot of correlation - so it gets a softer floor than icons that are
+    /// fully on screen. The region keeps it from matching anything else.
+    /// </summary>
+    private (TemplateMatch? Match, double Ms) FindMapButton(Mat frame)
+    {
+        var roi = _settings.Regions.MapIcon.ToPixels(frame.Width, frame.Height);
+        double threshold = Math.Max(0.50, _settings.Detection.TemplateThreshold - 0.10);
+        return _analyzer.FindIconTimed(frame, "mapicon", roi, threshold);
+    }
+
+    /// <summary>
+    /// The monster the map pick looks for: the Labyrinth stage's boss, or Auto War's monster - the one
+    /// being checked at Start (<c>_warMapVerify</c>) or the remembered one. Null = nothing to pick.
+    /// </summary>
+    private string? MapPickName => IsWar
+        ? NullIfBlank(_warMapVerify ? _warPendingMonster : _settings.War.HomeMonster)
+        : _stageIndex < _settings.Dungeon.Stages.Count ? _settings.Dungeon.Stages[_stageIndex] : null;
+
+    /// <summary>Where the map pick goes once the row's '>' is clicked (or the name confirmed).</summary>
+    private PilotPhase AfterMapPick => !IsWar ? PilotPhase.WaitBoss
+        : _warMapVerify ? PilotPhase.WarRemember
+        : PilotPhase.WarArrive;
+
+    private static string? NullIfBlank(string? value) => string.IsNullOrWhiteSpace(value) ? null : value;
+
+    /// <summary>
+    /// Reads the boss name of the current stage (Auto War: the monster, <see cref="MapPickName"/>)
+    /// from the map's monster list, scrolling the list with the wheel when the name is not on the
+    /// visible page, then clicks that row's '>'. Auto War's Start check (<c>_warMapVerify</c>) only
+    /// confirms the name is in the list and closes the map.
     /// </summary>
     private async Task TickReadStageAsync(Mat frame)
     {
         var dungeon = _settings.Dungeon;
-        if (dungeon.Stages.Count == 0)
+        if (!IsWar)
         {
-            Advance(PilotPhase.AdvanceStage, 0);
+            if (dungeon.Stages.Count == 0)
+            {
+                Advance(PilotPhase.AdvanceStage, 0);
+                return;
+            }
+
+            _stageIndex = Math.Clamp(_stageIndex, 0, dungeon.Stages.Count - 1);
+        }
+
+        if (IsWar && _warMapClosing)
+        {
+            await TickCloseWarMapAsync(frame);
             return;
         }
 
-        _stageIndex = Math.Clamp(_stageIndex, 0, dungeon.Stages.Count - 1);
-        string expected = dungeon.Stages[_stageIndex];
+        bool verify = IsWar && _warMapVerify;
+        string? expected = MapPickName;
+        if (expected == null)
+        {
+            // Auto War: nothing to pick, but ClickMap has just opened the map - shut it first.
+            if (IsWar)
+            {
+                await BeginCloseWarMapAsync(frame);
+                return;
+            }
+
+            Advance(AfterMapPick, 300);
+            return;
+        }
+
         var roi = _settings.Regions.MapBossList.ToPixels(frame.Width, frame.Height);
 
         // The map button click can be swallowed (the game is still busy after the kill). If the
@@ -2582,6 +2826,12 @@ public sealed partial class AutomationPilot
 
             // No clicking without the map (user, 2026-10-26): a boss name read here with the map
             // shut is the name tag in the game world, and a click on it walks the character.
+            if (verify)
+            {
+                WarStop(frame, $"The map window never opened, so '{expected}' could not be checked against this map's monster list - press Start again");
+                return;
+            }
+
             Fail(frame, "The map window never opened. Widen Regions.MapBossList or raise Dungeon.MapReopenRetries " +
                         "- press F11 with the map open to check the region.");
             return;
@@ -2589,7 +2839,25 @@ public sealed partial class AutomationPilot
 
         _mapVisibleMisses = 0;
 
-        var (hit, _, _) = await _analyzer.FindTextAsync(frame, roi, expected);
+        TextHit? hit;
+        if (IsWar)
+        {
+            // Auto War: the row whose whole name column is the monster (WarText.MonsterRows) - the best single
+            // word would take the "Goblin" of "Goblin Elite". Two such rows: never a guess.
+            var rows = await ReadWarMonsterRowsAsync(frame, roi, expected);
+            if (rows.Count > 1)
+            {
+                WarStop(frame, $"'{expected}' fits {rows.Count} rows of this map's monster list ({string.Join(", ", rows.Select(r => $"'{r.Line}'"))}) - not guessing which; "
+                               + (verify ? "target another monster and press Start again" : "press Start again inside the cave"));
+                return;
+            }
+
+            hit = WarRowHit(rows);
+        }
+        else
+        {
+            hit = (await _analyzer.FindTextAsync(frame, roi, expected)).Hit;
+        }
 
         // Only a (nearly) whole boss name counts: the fuzzy matcher accepts fragments, and the
         // '[Rage' of a [Rage Elixir] item text once passed for 'Ragesoul Heathen' (run 23, stage 4).
@@ -2598,8 +2866,10 @@ public sealed partial class AutomationPilot
 
         // Different resolutions move the map window around, so before paging the list try one
         // generous region. If the name turns up there, say where - that is the correction for
-        // Regions.MapBossList.
-        if (hit == null && _attempts == 0 && _mapScrolls == 0)
+        // Regions.MapBossList. Not in Auto War: that wide band also holds the game world, where the
+        // cave's monsters (and a targeted player) show their name tags - a click there walks the
+        // character, and a player's name would pass Start's check.
+        if (hit == null && _attempts == 0 && _mapScrolls == 0 && !IsWar)
         {
             var wide = new NormRect(0.32, 0.08, 0.68, 0.86).ToPixels(frame.Width, frame.Height);
             var (wideHit, _, _) = await _analyzer.FindTextAsync(frame, wide, expected);
@@ -2616,8 +2886,30 @@ public sealed partial class AutomationPilot
 
         if (hit != null)
         {
-            _overlays.Add(new OverlayItem(hit.Bounds, $"stage {_stageIndex + 1}: {hit.Text}", OverlayColor.Green));
-            Log?.Invoke(LogLevel.Success, $"Map shows stage {_stageIndex + 1}: '{hit.Text}' ({hit.Similarity:0.00}).");
+            if (IsWar)
+            {
+                _overlays.Add(new OverlayItem(hit.Bounds, hit.Text, OverlayColor.Green));
+                Log?.Invoke(LogLevel.Success, $"Map shows '{hit.Text}' (row '{hit.LineText}', {hit.Similarity:0.00}).");
+            }
+            else
+            {
+                _overlays.Add(new OverlayItem(hit.Bounds, $"stage {_stageIndex + 1}: {hit.Text}", OverlayColor.Green));
+                Log?.Invoke(LogLevel.Success, $"Map shows stage {_stageIndex + 1}: '{hit.Text}' ({hit.Similarity:0.00}).");
+            }
+
+            // Start's check: the monster is in this cave's list - that is all it wanted to know.
+            // No row click (that walks the character there); close the map instead. The list's spelling
+            // (the row's name column) is the one saved: the target bar's read may carry stray characters.
+            if (verify)
+            {
+                if (hit.Text != expected)
+                    Log?.Invoke(LogLevel.Info, $"Saving the map list's spelling '{hit.Text}' (the target bar read '{expected}').");
+                _warPendingMonster = hit.Text;
+                _warMonsterConfirmed = true;
+                await BeginCloseWarMapAsync(frame);
+                return;
+            }
+
             ClickStageRow(frame, hit.Bounds, hit.Text);
             return;
         }
@@ -2663,7 +2955,7 @@ public sealed partial class AutomationPilot
             {
                 int wheelX = (int)Math.Round(frame.Width * dungeon.MapWheelX);
                 int wheelY = (int)Math.Round(frame.Height * dungeon.MapWheelY);
-                if (!_input.Wheel(wheelX, wheelY, back ? dungeon.MapScrollNotches : -dungeon.MapScrollNotches))
+                if (!_controls.ScrollList(wheelX, wheelY, back ? dungeon.MapScrollNotches : -dungeon.MapScrollNotches))
                 {
                     _waitUntil = Environment.TickCount64 + 400;
                     return;
@@ -2679,18 +2971,21 @@ public sealed partial class AutomationPilot
         }
 
         // A different stage name means the game is ahead/behind us - say so instead of guessing.
-        foreach (var (name, index) in dungeon.Stages.Select((n, i) => (n, i)))
+        if (!IsWar)
         {
-            if (index == _stageIndex)
-                continue;
+            foreach (var (name, index) in dungeon.Stages.Select((n, i) => (n, i)))
+            {
+                if (index == _stageIndex)
+                    continue;
 
-            var (other, _, _) = await _analyzer.FindTextAsync(frame, roi, name);
-            if (other == null)
-                continue;
+                var (other, _, _) = await _analyzer.FindTextAsync(frame, roi, name);
+                if (other == null)
+                    continue;
 
-            Log?.Invoke(LogLevel.Warning,
-                $"Map shows '{other.Text}' (stage {index + 1}) but '{expected}' (stage {_stageIndex + 1}) was expected.");
-            break;
+                Log?.Invoke(LogLevel.Warning,
+                    $"Map shows '{other.Text}' (stage {index + 1}) but '{expected}' (stage {_stageIndex + 1}) was expected.");
+                break;
+            }
         }
 
         if (++_attempts > _settings.Sequence.MaxRetries)
@@ -2706,6 +3001,12 @@ public sealed partial class AutomationPilot
                 return;
             }
 
+            if (verify)
+            {
+                WarStop(frame, $"'{expected}' is not in this map's monster list - target a monster of this cave and press Start again");
+                return;
+            }
+
             Fail(frame, $"Could not find '{expected}' in the map's monster list after scrolling " +
                         $"{dungeon.MapScrollMaxSteps} time(s). Check Regions.MapBossList - press F11 with the map open.");
             return;
@@ -2714,6 +3015,71 @@ public sealed partial class AutomationPilot
         _mapScrolls = 0;
         _detail = $"reading the map for '{expected}' (retry {_attempts}/{_settings.Sequence.MaxRetries})";
         _waitUntil = Environment.TickCount64 + 700;
+    }
+
+    /// <summary>
+    /// Auto War ends a map pick without a row click (Start's check found the monster, or there is no
+    /// monster to pick): the map is closed with its button, then <see cref="AfterMapPick"/>. Ticked in
+    /// ReadStage (<c>_warMapClosing</c>, cleared by <see cref="Advance"/>) starting with this frame.
+    /// </summary>
+    private async Task BeginCloseWarMapAsync(Mat frame)
+    {
+        _warMapClosing = true;
+        _warMapCloseClicked = false;
+        _attempts = 0;
+        await TickCloseWarMapAsync(frame);
+    }
+
+    /// <summary>
+    /// One look per tick: the map shut -> <see cref="AfterMapPick"/>; still open -> click its button,
+    /// at most 3 tries (a missing button counts), each decided on a fresh frame; still open after
+    /// that -> a warning and on anyway (no click goes into the world either way).
+    /// </summary>
+    private async Task TickCloseWarMapAsync(Mat frame)
+    {
+        long now = Environment.TickCount64;
+        if (!await MapWindowVisibleAsync(frame))
+        {
+            if (_attempts > 0)
+                Log?.Invoke(LogLevel.Info, "The map is closed.");
+            Advance(AfterMapPick, 300);
+            return;
+        }
+
+        // Still open right after a click: one more look first - a second click on a map that is
+        // only slow to close would open it again.
+        if (_warMapCloseClicked)
+        {
+            _warMapCloseClicked = false;
+            _detail = "waiting for the map to close";
+            _waitUntil = now + 700;
+            return;
+        }
+
+        if (_attempts >= 3)
+        {
+            Log?.Invoke(LogLevel.Warning, "The map is still open after 3 tries to close it with its button - leaving it open.");
+            Advance(AfterMapPick, 300);
+            return;
+        }
+
+        var (button, _) = FindMapButton(frame);
+        if (button == null)
+        {
+            _attempts++;
+            _detail = $"map button not found to close the map ({_attempts}/3)";
+            _waitUntil = now + 500;
+            return;
+        }
+
+        _overlays.Add(new OverlayItem(button.Bounds, $"close map {button.Score:0.00}", OverlayColor.Green));
+        if (!Click(button.Bounds))
+            return;
+
+        _attempts++;
+        _warMapCloseClicked = true;
+        _detail = $"closing the map ({_attempts}/3)";
+        _waitUntil = now + Math.Max(700, _settings.Dungeon.MapOpenDelayMs);
     }
 
 
@@ -2728,7 +3094,7 @@ public sealed partial class AutomationPilot
             int y = nameBounds.CenterY;
             SaveRowClickSnapshot(frame, x, y, $"select_{text}");
 
-            if (!_input.Click(x, y))
+            if (!_controls.Tap(x, y))
             {
                 _detail = "row click blocked - waiting for the game to be in front";
                 _waitUntil = Environment.TickCount64 + 300;
@@ -2873,7 +3239,7 @@ public sealed partial class AutomationPilot
 
         SaveRowClickSnapshot(frame, clickX, clickY, text);
 
-        if (!_input.Click(clickX, clickY))
+        if (!_controls.Tap(clickX, clickY))
         {
             _detail = "row click blocked - waiting for the game to be in front";
             _waitUntil = Environment.TickCount64 + 300;
@@ -2955,15 +3321,18 @@ public sealed partial class AutomationPilot
     private async Task TickAdvanceStageAsync(Mat frame)
     {
         var dungeon = _settings.Dungeon;
-        string? expected = _stageIndex < dungeon.Stages.Count ? dungeon.Stages[_stageIndex] : null;
+        string? expected = MapPickName;
         if (expected == null)
         {
-            Advance(PilotPhase.WaitBoss, 300);
+            Advance(AfterMapPick, 300);
             return;
         }
 
         var roi = _settings.Regions.MapBossList.ToPixels(frame.Width, frame.Height);
-        var (stillThere, _, _) = await _analyzer.FindTextAsync(frame, roi, expected);
+        // Auto War: the one row whose name column is the monster (two such rows read as none: ReadStage stops on them).
+        var stillThere = IsWar
+            ? WarRowHit(await ReadWarMonsterRowsAsync(frame, roi, expected))
+            : (await _analyzer.FindTextAsync(frame, roi, expected)).Hit;
         bool mapOpen = await MapWindowVisibleAsync(frame);
         // The list band also covers the item list on the right ("[Rage Elixir] 25 (min(s))"
         // reads as a partial "Ragesoul Heathen"), so only trust a full name with the map open.
@@ -2974,8 +3343,10 @@ public sealed partial class AutomationPilot
         {
             if (_chevronClicked)
             {
-                Log?.Invoke(LogLevel.Info, "The map closed after the '>' click; waiting for the spawn.");
-                Advance(PilotPhase.WaitBoss, 300);
+                Log?.Invoke(LogLevel.Info, IsWar
+                    ? $"The map closed after the '>' click; walking to '{expected}'."
+                    : "The map closed after the '>' click; waiting for the spawn.");
+                Advance(AfterMapPick, 300);
                 return;
             }
 
@@ -3008,8 +3379,9 @@ public sealed partial class AutomationPilot
                 return;
             }
 
-            Log?.Invoke(LogLevel.Warning, $"The map is gone before the '>' click and was reopened {dungeon.MapReopenRetries}x already; waiting for the spawn anyway.");
-            Advance(PilotPhase.WaitBoss, 300);
+            Log?.Invoke(LogLevel.Warning, $"The map is gone before the '>' click and was reopened {dungeon.MapReopenRetries}x already; " +
+                                          (IsWar ? "carrying on anyway." : "waiting for the spawn anyway."));
+            Advance(AfterMapPick, 300);
             return;
         }
 
@@ -3058,7 +3430,7 @@ public sealed partial class AutomationPilot
         if (++_attempts > 3)
         {
             Log?.Invoke(LogLevel.Warning, "The map is still open after the chevron click; carrying on anyway.");
-            Advance(PilotPhase.WaitBoss, 300);
+            Advance(AfterMapPick, 300);
             return;
         }
 
@@ -3086,7 +3458,7 @@ public sealed partial class AutomationPilot
         // off before the Tab / skill selection starts.
         if (IsFinalBoss && !_finalHuntOffChecked)
         {
-            if (dungeon.FinalBossPressAutohunt && !string.IsNullOrWhiteSpace(dungeon.AutohuntKey))
+            if (dungeon.FinalBossPressAutohunt && _controls.Has(GameAction.ToggleAutohunt))
             {
                 if (!await EnsureAutohuntOffAsync(frame, "at the final boss", trustVisibleLine: true))
                     return;
@@ -3105,7 +3477,7 @@ public sealed partial class AutomationPilot
         // engaged there before the character was at the boss (user).
         if (!IsFinalBoss && !_autohuntPressed && !HoldBeforeAutohunt && elapsed >= spawnWait)
         {
-            if (!string.IsNullOrWhiteSpace(dungeon.AutohuntKey) && _input.KeyTap(dungeon.AutohuntKey))
+            if (_controls.Has(GameAction.ToggleAutohunt) && _controls.Press(GameAction.ToggleAutohunt))
             {
                 _autohuntPressed = true;
                 Log?.Invoke(LogLevel.Success, $"Pressed '{dungeon.AutohuntKey}' to turn the autohunt on (stage {_stageIndex + 1}).");
@@ -3123,7 +3495,7 @@ public sealed partial class AutomationPilot
 
         if (!_tabPressed)
         {
-            if (_input.KeyTap(dungeon.TabKey))
+            if (_controls.Press(GameAction.TargetNearest))
             {
                 _tabPressed = true;
                 _lastWaitTabAt = Environment.TickCount64;
@@ -3174,7 +3546,7 @@ public sealed partial class AutomationPilot
         // to the boss coordinates; arriving there starts this wait again.
         if (IsFinalBoss && _fromWaypoint && _runToTargetPending == false && spawnWaitOver && dungeon.WaypointWalkFallback)
         {
-            if (_autohuntPressed && !string.IsNullOrWhiteSpace(dungeon.AutohuntKey) && !_input.KeyTap(dungeon.AutohuntKey))
+            if (_autohuntPressed && _controls.Has(GameAction.ToggleAutohunt) && !_controls.Press(GameAction.ToggleAutohunt))
             {
                 _waitUntil = Environment.TickCount64 + 300;
                 return;
@@ -3210,7 +3582,7 @@ public sealed partial class AutomationPilot
         // walking and the name only showed 25 s later (user, run 23). Keep pressing it.
         long now = Environment.TickCount64;
         // Every second (user; was 2.5 s).
-        if (now - _lastWaitTabAt >= 1000 && _input.KeyTap(dungeon.TabKey))
+        if (now - _lastWaitTabAt >= 1000 && _controls.Press(GameAction.TargetNearest))
         {
             _lastWaitTabAt = now;
             _tabPressed = true;
@@ -3417,7 +3789,7 @@ public sealed partial class AutomationPilot
             }
         }
 
-        if (!_input.Click(x, y))
+        if (!_controls.Tap(x, y))
         {
             _detail = "boss select click blocked - waiting for the game to be in front";
             _waitUntil = Environment.TickCount64 + 300;
@@ -3452,27 +3824,10 @@ public sealed partial class AutomationPilot
     }
 
     /// <summary>
-    /// One manual attack press: the skill key, then Ctrl + skill key with
-    /// <see cref="DungeonSettings.CtrlSkill"/> (user, 2026-10-26: "when manually attacking couple it
-    /// with ctrl + skill key"). False only when the plain key was blocked; a blocked Ctrl tap after it
-    /// still counts as the press.
+    /// A held skill's release waits this long before its Ctrl + skill tap, as <see cref="IGameControls.SkillTap"/> does
+    /// between its plain and Ctrl taps (CtrlSkill, user 2026-10-26: "when manually attacking couple it with ctrl + skill key").
     /// </summary>
-    private bool TapSkill(string key)
-    {
-        if (!_input.KeyTap(key))
-            return false;
-
-        if (_settings.Dungeon.CtrlSkill)
-        {
-            // Let the game see the plain key go up before the same key goes down with Ctrl.
-            Thread.Sleep(CtrlSkillGapMs);
-            _input.CtrlKeyTap(key);
-        }
-
-        return true;
-    }
-
-    private const int CtrlSkillGapMs = 60;
+    private const int CtrlSkillGapMs = KeyboardMouseControls.CtrlSkillGapMs;
 
     /// <summary>A skill press for the log: '1', or '1' + Ctrl+1 with CtrlSkill.</summary>
     private string SkillText(string key) => _settings.Dungeon.CtrlSkill ? $"'{key}' + Ctrl+{key}" : $"'{key}'";
@@ -3486,7 +3841,7 @@ public sealed partial class AutomationPilot
     {
         var dungeon = _settings.Dungeon;
         long now = Environment.TickCount64;
-        if (!_input.KeyDown(dungeon.SkillKey))
+        if (!_controls.SkillDown(dungeon.SkillKey))
         {
             _detail = "skill key blocked - waiting for the game to be in front";
             _waitUntil = now + 300;
@@ -3494,6 +3849,7 @@ public sealed partial class AutomationPilot
         }
 
         _heldSkill = dungeon.SkillKey;
+        _heldAction = null;
         _holdUntil = now + dungeon.HoldSkillMs;
         _detail = $"holding '{dungeon.SkillKey}' (0/{dungeon.HoldSkillMs} ms)";
         _waitUntil = now + 250;
@@ -3523,7 +3879,7 @@ public sealed partial class AutomationPilot
         if (dungeon.CtrlSkill)
         {
             Thread.Sleep(CtrlSkillGapMs);
-            _input.CtrlKeyTap(dungeon.SkillKey);
+            _controls.SkillCtrlTap(dungeon.SkillKey);
         }
 
         return true;
@@ -3610,7 +3966,7 @@ public sealed partial class AutomationPilot
                 return;
             }
 
-            if (!TapSkill(dungeon.SkillKey))
+            if (!_controls.SkillTap(dungeon.SkillKey))
             {
                 _detail = "skill key blocked - waiting for the game to be in front";
                 _waitUntil = now + 300;
@@ -3632,7 +3988,7 @@ public sealed partial class AutomationPilot
         {
             if (++_manualRounds < maxRounds)
             {
-                if (!_input.KeyTap(dungeon.TabKey))
+                if (!_controls.Press(GameAction.TargetNearest))
                 {
                     _manualRounds--;
                     _detail = "tab key blocked - waiting for the game to be in front";
@@ -3759,7 +4115,7 @@ public sealed partial class AutomationPilot
                 }
             }
 
-            if (!_input.Click(x, y))
+            if (!_controls.Tap(x, y))
             {
                 _detail = "boss select click blocked - waiting for the game to be in front";
                 _waitUntil = now + 300;
@@ -3780,7 +4136,7 @@ public sealed partial class AutomationPilot
         }
 
         // Autohunt off again (J is a toggle).
-        if (_autohuntPressed && !string.IsNullOrWhiteSpace(dungeon.AutohuntKey) && !_input.KeyTap(dungeon.AutohuntKey))
+        if (_autohuntPressed && _controls.Has(GameAction.ToggleAutohunt) && !_controls.Press(GameAction.ToggleAutohunt))
         {
             _detail = "autohunt key blocked - waiting for the game to be in front";
             _waitUntil = now + 300;
@@ -3812,9 +4168,9 @@ public sealed partial class AutomationPilot
     private bool EngageAutohunt()
     {
         var dungeon = _settings.Dungeon;
-        if (_autohuntPressed || string.IsNullOrWhiteSpace(dungeon.AutohuntKey))
+        if (_autohuntPressed || !_controls.Has(GameAction.ToggleAutohunt))
             return true;
-        if (!_input.KeyTap(dungeon.AutohuntKey))
+        if (!_controls.Press(GameAction.ToggleAutohunt))
             return false;
 
         _autohuntPressed = true;
@@ -3943,7 +4299,7 @@ public sealed partial class AutomationPilot
                 }
                 else if (now - _watchAttackAt >= dungeon.AutohuntStallMs)
                 {
-                    if (!string.IsNullOrWhiteSpace(dungeon.AutohuntKey) && !_input.KeyTap(dungeon.AutohuntKey))
+                    if (_controls.Has(GameAction.ToggleAutohunt) && !_controls.Press(GameAction.ToggleAutohunt))
                     {
                         _detail = "autohunt key blocked - waiting for the game to be in front";
                         _waitUntil = now + 300;
@@ -3984,7 +4340,7 @@ public sealed partial class AutomationPilot
 
         // A missing name usually means the boss lost focus, not that it died: press Tab again and
         // look once the marker has had time to show.
-        if (now - _lastWatchTabAt >= Math.Max(2000, dungeon.TabSettleMs * 2) && _input.KeyTap(dungeon.TabKey))
+        if (now - _lastWatchTabAt >= Math.Max(2000, dungeon.TabSettleMs * 2) && _controls.Press(GameAction.TargetNearest))
         {
             _lastWatchTabAt = now;
             _watchTabs++;
@@ -4027,9 +4383,9 @@ public sealed partial class AutomationPilot
         {
             // Autohunt (still on from stage 4) keeps buffing and fighting and stopped the gate walk
             // (user): off for the run, on again at the final boss (ArriveAtFinalBoss -> WaitBoss).
-            if (dungeon.FinalBossPressAutohunt && !string.IsNullOrWhiteSpace(dungeon.AutohuntKey))
+            if (dungeon.FinalBossPressAutohunt && _controls.Has(GameAction.ToggleAutohunt))
             {
-                if (!_input.KeyTap(dungeon.AutohuntKey))
+                if (!_controls.Press(GameAction.ToggleAutohunt))
                 {
                     _waitUntil = Environment.TickCount64 + 300;
                     return;
@@ -4506,9 +4862,7 @@ public sealed partial class AutomationPilot
 
         // WaitBoss first reads the autohunt off in the combat log (user, 2026-10-26).
         _finalHuntOffChecked = false;
-        _huntOffPresses = 0;
-        _huntOffPressedAt = 0;
-        _huntOffBaseline = [];
+        ResetAutohuntCheck();
 
         // Autohunt only once the boss has been hit by hand (SelectBoss, user).
         _bossFirstSeenAt = null;
@@ -4608,7 +4962,7 @@ public sealed partial class AutomationPilot
             return;
         }
 
-        if (!_input.Click(x, y))
+        if (!_controls.WalkTo(x, y, forceWalk: false))
         {
             _detail = "run click blocked - waiting for the game to be in front";
             _probe = RunProbe.None;
@@ -4627,7 +4981,7 @@ public sealed partial class AutomationPilot
         var dungeon = _settings.Dungeon;
         if (!_autohuntOff)
         {
-            if (!string.IsNullOrWhiteSpace(dungeon.AutohuntKey) && !_input.KeyTap(dungeon.AutohuntKey))
+            if (_controls.Has(GameAction.ToggleAutohunt) && !_controls.Press(GameAction.ToggleAutohunt))
             {
                 _detail = "autohunt-off key blocked - waiting for the game to be in front";
                 _waitUntil = Environment.TickCount64 + 300;
@@ -4726,7 +5080,9 @@ public sealed partial class AutomationPilot
     /// <summary>
     /// The zone name at the top of the minimap panel, e.g. "[The Labyrinth (Adep", "[Piercing City)",
     /// "[Bohai Outpost (Adep": the first line there that starts with '[' and has no digits (the
-    /// coordinates line below it has digits). Null when it cannot be read.
+    /// coordinates line below it has digits). Null when it cannot be read. Auto War's caves can have
+    /// digits ("[Dark Soul Cave 2F (WD)]"), so there any '[' line that is no coordinates line
+    /// counts (<see cref="WarText.IsZoneTitleLine"/>).
     /// </summary>
     private async Task<string?> ReadMinimapTitleAsync(Mat frame)
     {
@@ -4734,7 +5090,9 @@ public sealed partial class AutomationPilot
         var words = await _analyzer.Ocr.RecognizeAsync(frame, band, 2.0);
         var lines = words.Select(w => w.LineText.Trim()).Distinct().ToList();
         return lines.FirstOrDefault(l => ZoneMatches(l, Destination))
-               ?? lines.FirstOrDefault(l => l.StartsWith('[') && !l.Any(char.IsDigit) && TextMatcher.Normalize(l).Length >= 4);
+               ?? lines.FirstOrDefault(l => IsWar
+                   ? WarText.IsZoneTitleLine(l)
+                   : l.StartsWith('[') && !l.Any(char.IsDigit) && TextMatcher.Normalize(l).Length >= 4);
     }
 
     /// <summary>
@@ -4766,7 +5124,7 @@ public sealed partial class AutomationPilot
             return true;
         }
 
-        BeginAutoWar($"{why}, and no Den of Rebirth entries / Temple of Fiends Keys either");
+        BeginRegularWar($"{why}, and no Den of Rebirth entries / Temple of Fiends Keys either");
         return false;
     }
 
@@ -4857,6 +5215,22 @@ public sealed partial class AutomationPilot
                 .Select(t => TownIn(t) is { } townName ? townName
                     : ZoneMatches(t, Destination) ? Destination : null)
                 .FirstOrDefault(w => w != null);
+
+            // Auto War: Destination is the cave, but a re-login during the war lands in Bohai Outpost - the war
+            // map or any zone title will do (the raw lines: the '[' of a title is gone from the normalised ones).
+            if (where == null && IsWar && !lines.Any(l => IsStartGame(l.Text)))
+            {
+                var band = words
+                    .Where(w => w.LineBounds.CenterX >= minimap.X && w.LineBounds.CenterX <= minimap.Right &&
+                                w.LineBounds.CenterY >= minimap.Y && w.LineBounds.CenterY <= minimap.Bottom)
+                    .Select(w => w.LineText.Trim())
+                    .Distinct()
+                    .ToList();
+                bool loginScreen = lines.Any(l => l.Text is "servers" or "accountname" or "rememberme" or "characterselect"
+                                                      or "characterinfo" or "newcharacter" or "deletecharacter" or "selectworld");
+                where = WarReloginZone(band, _settings.War.Destination, loginScreen);
+            }
+
             if (where != null)
             {
                 Log?.Invoke(LogLevel.Success, $"Logged back in - in {where}. Restarting the run.");
@@ -5002,7 +5376,7 @@ public sealed partial class AutomationPilot
             var box = target!.Value;
             if (!Click(box))
             {
-                _input.TryFocus();
+                _controls.TryBringGameToFront();
                 return;
             }
 
@@ -5061,7 +5435,7 @@ public sealed partial class AutomationPilot
 
     private bool Click(PixelRect target)
     {
-        if (!_input.Click(target.CenterX, target.CenterY))
+        if (!_controls.Tap(target.CenterX, target.CenterY))
         {
             _detail = "click blocked - waiting for the game to be in front";
             _waitUntil = Environment.TickCount64 + 300;
@@ -5072,9 +5446,9 @@ public sealed partial class AutomationPilot
         return true;
     }
 
-    private bool RightClick(PixelRect target)
+    private bool UseItem(PixelRect target)
     {
-        if (!_input.Click(target.CenterX, target.CenterY, MouseButton.Right))
+        if (!_controls.UseItem(target.CenterX, target.CenterY))
         {
             _detail = "click blocked - waiting for the game to be in front";
             _waitUntil = Environment.TickCount64 + 300;
@@ -5092,6 +5466,7 @@ public sealed partial class AutomationPilot
         _phase = next;
         _phaseStart = Environment.TickCount64;
         _attempts = 0;
+        _warMapClosing = false;
         _lastHash = 0;
         _stableSamples = 0;
         _noPathLogged = false;
@@ -5150,14 +5525,4 @@ public sealed partial class AutomationPilot
     }
 
     private void RaiseState() => StateChanged?.Invoke();
-
-    private int _lastFrameWidth = 1920;
-    private int _lastFrameHeight = 1080;
-
-    /// <summary>The vision loop calls this before each tick so helpers know the client size.</summary>
-    public void SetFrameSize(int width, int height)
-    {
-        _lastFrameWidth = Math.Max(1, width);
-        _lastFrameHeight = Math.Max(1, height);
-    }
 }

@@ -10,7 +10,8 @@ earlier history exists only in this file.
 
 `WuxAuto` is a **.NET 10 / WPF** pilot for the game window `Wuxen2.exe` (TwelveSky2, Unity port).
 It captures the game with the **Desktop Duplication API**, finds UI elements with **OpenCV template
-matching + Windows.Media.Ocr**, and sends **keyboard/mouse input only to the bound window**.
+matching (through Emgu CV 5) + Windows.Media.Ocr**, and sends **keyboard/mouse input only to the
+bound window**.
 
 The automation goal:
 
@@ -20,6 +21,10 @@ The automation goal:
    (tolerance 30).
 
 Everything it does is visible: detections are drawn on the live preview and every step is logged.
+
+Two more modes sit beside the Labyrinth (the Mode buttons above Start): **Auto LOD** (§4.5) and
+**Auto War** (§4.8, user 2026-10-27: an alt waits in a page-3 cave, joins every Bohai Outpost tribe war,
+fights, comes back to the same cave and monster; one game per WuxAuto, no walking inside Bohai).
 
 The user is non-technical about the internals but precise about the game behaviour — when they
 report "it didn't click X", the fastest path is almost always (a) read the debug snapshot from
@@ -40,9 +45,13 @@ dotnet build .\WuxAuto.slnx
 .\src\WuxAuto\bin\Debug\net10.0-windows10.0.19041.0\WuxAuto.exe
 ```
 
-Another PC: `.\publish.ps1` → `dist\WuxAuto-win-x64.zip` (self-contained, no .NET install; the
-unused `opencv_videoio_ffmpeg` DLL is dropped). `App.OnStartup` runs `Core/StartupCheck` (desktop project) before
-the window: Media Foundation DLLs (imported by `OpenCvSharpExtern.dll` — missing on Windows N and
+Another PC: `.\publish.ps1` → `dist\WuxAuto-win-x64.zip` (self-contained, no .NET install; Emgu CV's
+native `cvextern.dll` and the MSVC runtime are kept once, next to the exe — the second copies the
+runtime packages' build targets add under `runtimes\win-x64\native` made the process load
+`cvextern.dll` twice and are dropped, as is the unused `opencv_videoio_ffmpeg` plugin; the script
+fails unless exactly one `cvextern.dll` is left; `LICENSE` goes in as `LICENSE.txt`).
+`App.OnStartup` runs `Core/StartupCheck` (desktop project) before the window: Media Foundation
+DLLs (`MF.dll`, `MFPlat.DLL`, `MFReadWrite.dll`, imported by `cvextern.dll` — missing on Windows N and
 trimmed "lite" builds such as Ghost Spectre; fatal), OpenCV load (fatal), English OCR and build
 ≥ 19041 (warnings). Report → `logs\startup_check_*.txt`, unhandled errors → `logs\crash_*.txt`.
 `StartupUri` was removed: `App` creates `MainWindow` itself so a failed start exits instead of
@@ -64,7 +73,7 @@ Package for someone else (self-contained, no .NET needed; `src/WuxAuto/Assets/Qu
 the zip's top-level `README.md`):
 
 ```powershell
-.\publish.ps1     # -> dist\build\WuxAuto\ (the build), dist\WuxAuto-win-x64.zip (~93 MB) and dist\WuxAuto\
+.\publish.ps1     # -> dist\build\WuxAuto\ (the build), dist\WuxAuto-win-x64.zip (~76 MB) and dist\WuxAuto\
                   # (refreshed from the build only while no WuxAuto.exe runs from it - the user's live
                   # copy lives there and updates itself from the release; 2026-10-27 a release died on
                   # "Access to the path '...\dist\WuxAuto\Accessibility.dll' is denied" mid-run, and
@@ -117,12 +126,44 @@ dotnet run --project .\tests\WuxAuto.SelfTest -- --alert <file>
 
 # auto-confirm dialog (message line + OK button) for every PNG (absolute path; tests\frames holds the user's crop)
 dotnet run --project .\tests\WuxAuto.SelfTest -- --confirm "$env:LOCALAPPDATA\WuxAuto\debug"
+
+# Auto War probes (tests/WuxAuto.SelfTest/WarProbe.cs), each over a folder of PNGs
+dotnet run --project .\tests\WuxAuto.SelfTest -- --hp "$env:LOCALAPPDATA\WuxAuto\debug"      # top-left "cur / max" HP read (white-text read, plain fallback)
+dotnet run --project .\tests\WuxAuto.SelfTest -- --target "$env:LOCALAPPDATA\WuxAuto\debug"  # the fight's target read: which read decided (x1.5 / white / red / numbers / chest) + the old name read
+dotnet run --project .\tests\WuxAuto.SelfTest -- --warwalk "$env:LOCALAPPDATA\WuxAuto\debug" # the walk out of the respawn point: goal name tag + Ctrl+click point per frame
+dotnet run --project .\tests\WuxAuto.SelfTest -- --warui "$env:LOCALAPPDATA\WuxAuto\debug"   # where the UI text lies per client size (what WarWalkBands is measured from)
+dotnet run --project .\tests\WuxAuto.SelfTest -- --warbar "$env:LOCALAPPDATA\WuxAuto\debug"  # BuffIcons + WeaponBuffIcons + ItemBuffIcons + Shura on the skill bar
+dotnet run --project .\tests\WuxAuto.SelfTest -- --menu "$env:LOCALAPPDATA\WuxAuto\debug"    # the menu button and the MENU window
+dotnet run --project .\tests\WuxAuto.SelfTest -- --tribe "$env:LOCALAPPDATA\WuxAuto\war-inputs"  # TRIBE STATUS: the Bohai row's countdown (the user's screenshot lives there, never in git)
+
+# M2 parity: the pilot's detectors and x1.5 OCR reads on the frozen legacy vision (tests\...\Legacy,
+# OpenCvSharp 4.13) vs Core's (Emgu CV), per frame; ends with two summary lines (see below)
+dotnet run --project .\tests\WuxAuto.SelfTest -- --parity "$env:LOCALAPPDATA\WuxAuto\parity-frames"
 ```
+
+`--parity` prints every difference line, the coverage per check, the pilot-view rules and then two
+summary lines. `pilot-view: differences=… excluded=…` counts capped hit lists the way the pilot's
+call site consumes them (best pick, count, the focused-row chevron, the fallback click point) and
+leaves out detectors the pilot no longer calls (`compass`, `compass-angle` = Test scan only;
+`selectionring`); the last line, `parity: frames=… checks=… differences=…`, is the strict view (every
+check, hit lists hit by hit; exit code 1 when it is not 0). A difference line tagged `[strict-only]`
+counts only in the strict line, `[pilot-view]` only in the pilot-view line. The OCR checks (`dest-*`,
+`bossname-s*`, `lod-*`, `settingswin-*`, `attacklog`, `autohunt-*`, `gatetext*`, `stagewide*`) read each
+region once per side at `Detection.OcrScale` and judge every needle with the pilot's own rules. Auto War
+(merged from main 2026-10-28) is covered too: `warbar-*` (FindSkillBarIcons per buff icon, Shura, X buff),
+`target-*`, `player-hp`, `menubutton`, `huntsettings-*`, `itemlist-*`, `warlist-x<scale>-*` (teleport list
+at x1.5 / x2 / x1), `wargate`, `menutile`, `warwindow*`, `warcountdown`, `tribestatus-shows`, `wardialog-*`,
+`warlog-*`, `warmap-*` (MonsterRows for the stage names) and `bossring-away`; the legacy side runs main's
+OpenCvSharp code for them, frozen verbatim in `Legacy/ScreenAnalyzer.War.cs` (a `partial` of the legacy
+analyzer). The saved frames hold no AUTO BUFF dialog, war gate or "Arrived" line, so those checks only
+compare "not found" until such frames exist. There is no built-in pass criterion: whether the Emgu CV switch is accepted with the differences found is the
+user's decision, recorded in the M2 PR.
 
 `--do` frames land in `%TEMP%\wuxauto-step<N>-<verb>.png`. Check the frame before every click: an
 Escape with a target selected only clears the target (no SETTINGS window), and the clicks meant for
-the window then walk the character (2026-10-24). `WuxAuto.slnx` does not build `tests\WuxAuto.SelfTest`
-— build it on its own before `--no-build` runs, or the probe is stale.
+the window then walk the character (2026-10-24). `WuxAuto.slnx` builds `tests\WuxAuto.SelfTest` too, but
+into `bin\x64\Debug\…` (the solution maps it to x64), while `dotnet run --project tests\WuxAuto.SelfTest`
+uses `bin\Debug\…` — run `dotnet build tests\WuxAuto.SelfTest` before `--no-build` runs, or the probe is stale.
 
 The frame probe prints, per template, the best score, box, learned scale and timing, plus OCR
 words and the map scroll-arrow result. `--crop` writes `<frame>.crop.png` next to the frame.
@@ -130,7 +171,7 @@ words and the map scroll-arrow result. `--crop` writes `<frame>.crop.png` next t
 Core tests and the refactor parity gate (M1, 2026-10-27):
 
 ```powershell
-dotnet test tests\WuxAuto.Core.Tests        # xUnit, platform-free Core only (29 tests, ~35 s; the pilot tests tick a
+dotnet test tests\WuxAuto.Core.Tests        # xUnit, platform-free Core only (495 tests, ~4 min; the pilot tests tick a
                                            # blank Mat with a scripted OCR scene - see tests/ in section 3)
 # probe baseline: runs every SelfTest probe over a frozen, local-only frame set (never committed)
 # and writes normalised output; run it before and after a refactor and diff the two
@@ -171,17 +212,26 @@ The app itself:
 ```
 src/WuxAuto.Core            net10.0 class library, platform-free (M1, 2026-10-27: move-only split so an Android
                             app can share the pilot). Holds everything that decides what to do:
-  Automation/          AutomationPilot (+ .Lod / .War / .KillShots partials) - the whole state machine,
+  Automation/          AutomationPilot (+ .Lod / .RegularWar / .War / .WarTimer / .WarFight / .KillShots partials) - the whole state machine,
+                       WarText (pure text rules of Auto War: countdown, war row, list entries, HP, target name, log lines),
+                       TabTargetOptions (the four TAB target values, steps between them),
                        AutohuntLog
   Core/                AppSettings (all tunables; positions reset per run), SettingsStore + AppPaths
                        (load/save/migrate; `AppPaths.Configure(root, assetsFolder?)`), Geometry
                        (NormRect/PixelRect), LogEntry
   Platform/            the seams: IOcrEngine (desktop: OcrService), IGameInput (desktop: WindowInput),
                        MouseButton. IOcrEngine and IGameInput are in namespace `WuxAuto.Core`, MouseButton
-                       in `WuxAuto.Input`. ScreenAnalyzer takes (and disposes) its IOcrEngine, the pilot takes
-                       an IGameInput; `AutomationPilot.TickAsync(Mat, CancellationToken)` gets only the frame
+                       in `WuxAuto.Input`. ScreenAnalyzer takes (and disposes) its IOcrEngine. The pilot takes
+                       an IGameControls (M3, 2026-10-28): game actions (`GameAction` Press / Has, SkillTap,
+                       WalkTo, Turn, TiltCamera, ZoomOut, ScrollList, UseItem, ...), never raw keys, so Android
+                       can map them to on-screen buttons; desktop = `KeyboardMouseControls(settings, IGameInput)`
+                       (each action = its settings key, read per call; `KeyboardMouseControlsTests` pin the raw
+                       calls). `AutomationPilot.TickAsync(Mat, CancellationToken)` gets only the frame
   Vision/              TemplateMatcher, TemplateLibrary, ScreenAnalyzer, CompassDetector, OverlayRenderer,
-                       KillScreenshots, TextMatcher, VisionModels
+                       KillScreenshots, TextMatcher, VisionModels. OpenCV through Emgu CV 5.0 (M2): Core
+                       references only the managed `Emgu.CV`; each host adds the native runtime (desktop:
+                       `Emgu.CV.runtime.mini.windows`). CvHelpers supplies the OpenCV default
+                       arguments that Emgu leaves to the caller
   RULE: Core must stay OS-free - no WPF, WinRT, Win32/P-Invoke, System.Windows.*, registry. Anything
   that touches the OS goes behind a Platform/ interface and is implemented in the desktop project.
 src/WuxAuto                 WPF desktop app, references Core
@@ -196,15 +246,20 @@ src/WuxAuto                 WPF desktop app, references Core
   Interop/             NativeMethods, window enumeration, global hotkeys, process info
   Vision/              OcrService (Windows.Media.Ocr, implements IOcrEngine)
   ViewModels/, MainWindow.*   WPF UI
-tests/WuxAuto.SelfTest      offline probes (see above)
-tests/WuxAuto.Core.Tests    xUnit tests of Core (AppPathsTests, which round-trips settings through SettingsStore; TextMatcherTests;
+tests/WuxAuto.SelfTest      offline probes (see above); Legacy/ = the frozen pre-port vision on OpenCvSharp
+                            4.13, only for `--parity` (ScreenAnalyzer.War.cs: main's Auto War vision as of 28763e1)
+tests/WuxAuto.Core.Tests    xUnit tests of Core; `dotnet test`. AppPathsTests (round-trips settings through
+                            SettingsStore), TextMatcherTests, TemplateLibraryTests, ImageFileTests (non-ASCII
+                            folders), CvHelpersTests (pixel-copy guards); the AppPaths-touching classes derive
+                            from AppPathsScope, which puts AppPaths back and deletes its temp folders after
+                            each test. Pilot and vision tests: ScreenAnalyzerTests;
                             StageBossSelectTests: ticks the real AutomationPilot from WaitBoss at stage 1 (`Start(WaitBoss,
                             stageIndex: 0)`) over a blank 1440×900 Mat with PilotTestDoubles - FakeOcrEngine returns a scripted
                             scene (minimap title, boss name, 8 attack-log lines whose numbers shift per click) for whatever area is
                             asked, FakeGameInput records every call - and asserts the input order: hold on → Tab, KeyDown/KeyUp 1,
                             Ctrl+1, J, centre click, "boss selected on click 1" → WatchBoss; hold off → J, Tab, click. No templates
-                            (AppPaths points at an empty temp root), so the boss is found by name; needs OpenCvSharp4.runtime.win
-                            in the test project; LodStandStillTests: the same doubles from `Start(LodRun)` in AutoLod -
+                            (AppPaths points at an empty temp root), so the boss is found by name; needs the native OpenCV
+                            (Emgu.CV.runtime.mini.windows) in the test project; LodStandStillTests: the same doubles from `Start(LodRun)` in AutoLod -
                             defaults: a walk click from 1195,1578, then at 1201,1760 "the boss spot" and only Tab;
                             `WalkToBossSpot` off → only Tab until "[LOD] Bai Gu Great" reads, then LodAttack;
                             SettingsMigrationTests: an edited settings.json loaded back (v22: LOD walk on, 1191,2413 → 1199,1782);
@@ -212,13 +267,14 @@ tests/WuxAuto.Core.Tests    xUnit tests of Core (AppPathsTests, which round-trip
                             2 Ctrl+clicks, then "Ring check 1" and a 3rd, each after Shura's key; ring underfoot → 1 click only;
                             `RingCheckEveryMs` 0 → 2 only; ring + a cyan "belt" gone / shown after the click → "under the boss", 1 click; a cyan "belt" after the
                             walk → no ring-check walk; RingDistanceTests: DistanceFromRing on 6 real ring boxes; the shared
-                            runner is `PilotRun.RunAsync` in PilotTestDoubles); `dotnet test`
+                            runner is `PilotRun.RunAsync` in PilotTestDoubles
 tests/probe-baseline.ps1    runs every SelfTest probe over a frozen frame set and writes normalised
                             output for before/after diffs (refactor parity check, section 2)
 tests/WuxAuto.UiShot        renders the window to a PNG
 branding/                   wuxen2-source.png + make_icon.py -> WuxAuto-logo.png (README) and
                             src/WuxAuto/WuxAuto.ico (exe + window icon; "AUTO" drawn over "ONLINE")
 README.md                   user-facing documentation (kept up to date - read it too)
+LICENSE                     GPL-3.0 (gnu.org text); Emgu CV's open-source licence is the GPL v3
 ```
 
 Threading: `WuxEngine.VisionLoopAsync` owns capture → `AutomationPilot.TickAsync` → preview
@@ -276,8 +332,8 @@ seen live.
 | `ReadStage` | OCRs `Regions.MapBossList` for `Stages[stageIndex]`; only a whole name counts (`IsFullName`: similarity ≥ 0.90 or ≥ 60 % of the letters — the `[Rage` of a [Rage Elixir] text passed at 0.84 and was clicked as stage 4, run 23). Missing → page **down** (list always opens at the top), max `MapScrollMaxSteps` 8 → reopen map → fail. **Every tick first checks `MapWindowVisibleAsync`** (no map → wait 700 ms → reopen ≤ 3 → fail); the old "chevrons not detected but the name is readable — carrying on" escape is gone (2026-10-26): a name read with the map shut is the name tag in the world, and the click walks the character |
 | `AdvanceStage` | clicks the **boss name** first (highlights the row), waits `BossNameClickDelayMs`, then clicks the highlighted row's `>` found with `rightchevronfoc.png`; retries 3×, then fallbacks: bright-blob glyph → template column → name click. The name is only trusted with the map open (`IsFullName` + `MapWindowVisibleAsync`). **Name gone before the `>` click** (`_chevronClicked` false; the name click only highlights, the `>` closes the map — the fallback's glyph / column click counts as a `>` click): map still open → re-read ≤ 3 × 500 ms (`_rowNameMisses`) → `ReadStage` again; map shut → something else closed it (user, 2026-10-26: their own mouse) → `ClickMap` again (≤ `MapReopenRetries`, shared counter) → then `WaitBoss` anyway. Before this the pilot went to `WaitBoss` and waited 60–90 s for a boss that was never picked |
 | `WaitBoss` | waits `BossSpawnWaitMs` (60 s), taps `J` (autohunt; **only without `HoldBeforeAutohunt`** — with it, the default, `J` follows the held press in `SelectBoss`), taps `Tab` (again every 1 s until something shows — one Tab on arrival at stage 5 showed nothing for 25 s, run 23), then looks for `monstericon.png` or the stage name; needs the boss visible `BossSelectDelayMs` (2 s). The 90 s no-boss timeout still turns the autohunt on and watches anyway |
-| stages 1–4 hold | **(user, 2026-10-27: "on other stages, before going autohunt, try to skill hold first"; `Dungeon.HoldBeforeAutohunt` on, check box "Hold skill before autohunt (stages 1-4)")** `TickSelectBossAsync`, `!IsFinalBoss && !_autohuntPressed`: `StartHeldSkill` (`KeyDown`, `_heldSkill` / `_holdUntil`, `HoldSkillMs` 3000 shared with stage 5) → `TickHeldSkill` lets go + Ctrl + skill (`CtrlSkill`) → `_heldBeforeHunt` → `EngageAutohunt` (`J`) → `AutohuntSettleMs` (1 s) → **quiet log**: the combat log read every 250 ms until unchanged for `SelectQuietMs` (1.5 s; cap `SelectQuietMaxMs` 6 s → warning "still changing", click anyway), that state = the click baseline → the centre clicks as before (click give-up → `EngageAutohunt` is a no-op → `WatchBoss`). Off, no skill key or `HoldSkillMs` 0 → the old flow (`J` in `WaitBoss` right after the spawn wait). `_heldBeforeHunt` / `_holdUntil` reset per boss (`ResetBossState`); the key is down between ticks, `Advance` / Stop release it. History: on 2026-10-22 delaying `J` on stages 1–4 until after the selection "broke the run" (unknown how) — the check box is the way back. Not yet seen live; the input order (Tab → hold → Ctrl+1 → `J` → centre click → hit → `WatchBoss`, and `J` → Tab → click with the switch off) is pinned by `tests/WuxAuto.Core.Tests/StageBossSelectTests` (user, 2026-10-27, after v0.14.0: "after enabling autohunt in Stage 1-4 do still click near center ... it seemed to be removed" — it was not; the clicks follow `J` after the 1 s settle, as in this morning's v0.13.0 log where every stage hit on click 1–3). **Quiet-log wait (user, 2026-10-29: "click the center ... was removed ... doesn't try to select the boss at stage 2 above"):** the clicks were there, but stopped too early. Before the hold, 12 full runs: stage 2 always hit on click 2+ (the boss stands above the centre), stage 3 on click 3+. v0.17.0 with the hold (07:24): stage 2 "hit" on click 1, stage 3 on click 2 - the Ctrl + skill tap right before `J` prints hits 1–2 s later, past the fixed 1 s settle, and one after click 1 read as the selection. Pinned by `StageBossSelectTests` (late hits for 2 s after `J`, click 1 misses → 2 clicks, first click ≥ 2 s after `J`; a never-quiet log still clicks after the cap). Not yet seen live |
-| `SelectBoss` | **Stage 5 only (user, 2026-10-22 — on stages 1–4 it broke the run, those keep the old flow: `J` after the spawn wait — since 2026-10-27 after the held press above — then centre clicks until an attack line → `WatchBoss`):** autohunt only after a hit by hand. **Since 2026-10-27 (user: "in the log, it says it didn't see the pink ring, but it is there, and stops attacking the boss. also it didn't get near or inside the boss. Instead do this: Waypoint 1, make sure autohunt is off; Attack Hold skill, then do 10x attack (total 11); check if has attack succeeded, then auto hunt then click on the boss"):** the boss's name in view (`WaitBoss`, `BossSelectDelayMs` 2 s settle) → `StartManualAttack` at once — no selection ring, no target-bar read, no 15 s skill spam first (all gone; `FindSelectionRing` only lives on in the `--ring` probe). `TickManualAttackAsync`: press 1 **holds** `SkillKey` down for `HoldSkillMs` (**3000**, UI "Hold skill (ms)", 0 = taps only; `_heldSkill` / `_holdUntil` — the key is down *between* ticks, so Stop / F10 / `Advance` let go of it through `ReleaseHeldSkill` like the LOD hold), released → Ctrl + skill tap (`CtrlSkill`), then `ManualAttacks` (**10**; settings v21 turns the v20 15 into 10) `TapSkill` taps ≥ `ManualAttackIntervalMs` (300) apart — 11 presses in all. **Only a new attack line after the last press counts** (`_manualHit`, user 2026-10-23; checked `ManualAttackWaitMs` 500 after it); none → more taps, up to 3× the total; still none → `Tab` + another round (hold + taps, `_manualRounds` ≤ `MaxManualRounds` 3) → `nohit_s5` snapshot (≤ 3 per Start, `_stuckShots`, shared with `stall_s5`), `ArriveAtFinalBoss` (Tab wait, **autohunt still off** — nothing is clicked while it is off, user 2026-10-27). A hit → `EngageAutohunt` (`J` unless already on) → `TickAutohuntConfirmAsync`: `AutohuntSettleMs` (1000, const) of silence first (the manual attacks' last skill animations still print attack lines after `J`), the log re-read as the baseline (`_huntBaselineAt`), then **the stage 1–4 centre clicks at once** (`_huntClicks`, `SelectClickPoint`, `finalboss.png` first, one per `AttackConfirmMs`, ≤ `BossSelectMaxTries`; user 2026-10-27: "after enabling J, it unselected the boss, add the click the middle to try to select the boss") — a new line after any click → `WatchBoss`; all clicks without one → `J` (off), `StartManualAttack` again (counts as a round, same ≤ 3 limit) → 3 rounds → `nohit_s5`, Tab wait, autohunt off. The 2 s `AutohuntConfirmMs` wait before the clicks is gone (setting removed): in the v0.12.0 log (2026-10-27 09:02–09:08, 1440×900) every cycle read "ring + line → J → one late line 1.3 s after J → 15 s stall → J off" six times over, with the character standing ~250 px from the boss's feet the whole time (`stall_s5` / `ring_s5` frames) — the taps alone hit from a distance and the autohunt never attacked; the hold is the user's answer to "didn't get near or inside the boss". Before this (2026-10-26/27): the ring (`FindSelectionRing`, HSV H 138–156, S ≥ 89, V ≥ 190 in (0.05, 0.12, 0.70, 0.78)) + a new line + the boss in the target bar (`IsFinalBossTargetedAsync`, removed) gated `J`; round 1 in that log read "No selection ring" with the ring under the boss. **`WatchBoss` watchdog at stage 5 (2026-10-27):** with the autohunt on and the boss up, the combat log is read every boss poll; no new attack line for `AutohuntStallMs` (15000) → `J` off, snapshot `stall_s5` (≤ 3, `_stuckShots`), `ArriveAtFinalBoss` (autohunt-off check → Tab → hold + taps → `J` → clicks). Catches every "autohunt on but not attacking" state whatever let it through; unbounded, the stage closes itself within ~2 min anyway. At stage 5 nothing else turns the autohunt on: the click give-up before `J` goes back to the Tab wait (`attack_s5` snapshot; only reachable with an empty `SkillKey`), and the 90 s no-boss timeout only applies to stages 1–4 (stage 5 keeps tabbing until the zone guard sees the stage closed). Stages 1–4: click give-up and the 90 s timeout still turn autohunt on. **Autohunt off at the waypoint (user, 2026-10-26: "when in Waypoint 1, disable auto hunt"):** the first `WaitBoss` tick at stage 5 (`_finalHuntOffChecked`, every `ArriveAtFinalBoss`) runs `EnsureAutohuntOffAsync` (the town check's logic, shared) with `trustVisibleLine`: the newest autohunt line already in the combat log decides — "Auto hunt ended" = off, nothing pressed (the stage 4 `J` is a blind toggle, but its line is normally still on screen); "Auto hunt started" = on → `J`, expect "ended"; no line → tap and read as in town (≤ 3 taps, `autohunt_on` / `autohunt_unread`). `_phaseStart` restarts after it. Not yet seen live. Before that: **left-clicks around the middle of the client** until a new `Attack succeeded!... damage(+N)` line appears in the combat log (`Regions.AttackMessage`, left side): centre, ring of 8 at `BossSelectStep` (0.06 × height), ring of 8 at 2 steps, max `BossSelectMaxTries` 17, `AttackConfirmMs` 1200 per click. The log holds ~8 lines and is usually full, so line counts don't change: it compares the visible lines (normalised `attacksucceeded...damage(N)`, top to bottom) with a baseline taken before the first click; any change = hit. Gives up → warning + `attack_s<N>` snapshot → `WatchBoss` anyway. Autohunt will not attack an unselected boss |
+| stages 1–4 hold | **(user, 2026-10-27: "on other stages, before going autohunt, try to skill hold first"; `Dungeon.HoldBeforeAutohunt` on, check box "Hold skill before autohunt (stages 1-4)")** `TickSelectBossAsync`, `!IsFinalBoss && !_autohuntPressed`: `StartHeldSkill` (`KeyDown`, `_heldSkill` / `_holdUntil`, `HoldSkillMs` 3000 shared with stage 5) → `TickHeldSkill` lets go + Ctrl + skill (`CtrlSkill`) → `_heldBeforeHunt` → `EngageAutohunt` (`J`) → `AutohuntSettleMs` (1 s) → **quiet log**: the combat log read every 250 ms until unchanged for `SelectQuietMs` (1.5 s; cap `SelectQuietMaxMs` 6 s → warning "still changing", click anyway), that state = the click baseline → the centre clicks as before (click give-up → `EngageAutohunt` is a no-op → `WatchBoss`). Off, no skill key or `HoldSkillMs` 0 → the old flow (`J` in `WaitBoss` right after the spawn wait). `_heldBeforeHunt` / `_holdUntil` reset per boss (`ResetBossState`); the key is down between ticks, `Advance` / Stop release it. History: on 2026-10-22 delaying `J` on stages 1–4 until after the selection "broke the run" (unknown how) — the check box is the way back. Not yet seen live; the input order (Tab → hold → Ctrl+1 → `J` → centre click → hit → `WatchBoss`, and `J` → Tab → click with the switch off) is pinned by `tests/WuxAuto.Core.Tests/StageBossSelectTests` (user, 2026-10-27, after v0.14.0: "after enabling autohunt in Stage 1-4 do still click near center ... it seemed to be removed" — it was not; the clicks follow `J` after the 1 s settle, as in this morning's v0.13.0 log where every stage hit on click 1–3). **Quiet-log wait (user, 2026-10-29: "click the center ... was removed ... doesn't try to select the boss at stage 2 above"):** the clicks were there, but stopped too early. Before the hold, 12 full runs: stage 2 always hit on click 2+ (the boss stands above the centre), stage 3 on click 3+. v0.21.0 with the hold (07:24): stage 2 "hit" on click 1, stage 3 on click 2 - the Ctrl + skill tap right before `J` prints hits 1–2 s later, past the fixed 1 s settle, and one after click 1 read as the selection. Pinned by `StageBossSelectTests` (late hits for 2 s after `J`, click 1 misses → 2 clicks, first click ≥ 2 s after `J`; a never-quiet log still clicks after the cap). Not yet seen live |
+| `SelectBoss` | **Stage 5 only (user, 2026-10-22 — on stages 1–4 it broke the run, those keep the old flow: `J` after the spawn wait — since 2026-10-27 after the held press above — then centre clicks until an attack line → `WatchBoss`):** autohunt only after a hit by hand. **Since 2026-10-27 (user: "in the log, it says it didn't see the pink ring, but it is there, and stops attacking the boss. also it didn't get near or inside the boss. Instead do this: Waypoint 1, make sure autohunt is off; Attack Hold skill, then do 10x attack (total 11); check if has attack succeeded, then auto hunt then click on the boss"):** the boss's name in view (`WaitBoss`, `BossSelectDelayMs` 2 s settle) → `StartManualAttack` at once — no selection ring, no target-bar read, no 15 s skill spam first (all gone; `FindSelectionRing` only lives on in the `--ring` probe). `TickManualAttackAsync`: press 1 **holds** `SkillKey` down for `HoldSkillMs` (**3000**, UI "Hold skill (ms)", 0 = taps only; `_heldSkill` / `_holdUntil` — the key is down *between* ticks, so Stop / F10 / `Advance` let go of it through `ReleaseHeldSkill` like the LOD hold), released → Ctrl + skill tap (`CtrlSkill`), then `ManualAttacks` (**10**; settings v21 turns the v20 15 into 10) `SkillTap` taps ≥ `ManualAttackIntervalMs` (300) apart — 11 presses in all. **Only a new attack line after the last press counts** (`_manualHit`, user 2026-10-23; checked `ManualAttackWaitMs` 500 after it); none → more taps, up to 3× the total; still none → `Tab` + another round (hold + taps, `_manualRounds` ≤ `MaxManualRounds` 3) → `nohit_s5` snapshot (≤ 3 per Start, `_stuckShots`, shared with `stall_s5`), `ArriveAtFinalBoss` (Tab wait, **autohunt still off** — nothing is clicked while it is off, user 2026-10-27). A hit → `EngageAutohunt` (`J` unless already on) → `TickAutohuntConfirmAsync`: `AutohuntSettleMs` (1000, const) of silence first (the manual attacks' last skill animations still print attack lines after `J`), the log re-read as the baseline (`_huntBaselineAt`), then **the stage 1–4 centre clicks at once** (`_huntClicks`, `SelectClickPoint`, `finalboss.png` first, one per `AttackConfirmMs`, ≤ `BossSelectMaxTries`; user 2026-10-27: "after enabling J, it unselected the boss, add the click the middle to try to select the boss") — a new line after any click → `WatchBoss`; all clicks without one → `J` (off), `StartManualAttack` again (counts as a round, same ≤ 3 limit) → 3 rounds → `nohit_s5`, Tab wait, autohunt off. The 2 s `AutohuntConfirmMs` wait before the clicks is gone (setting removed): in the v0.12.0 log (2026-10-27 09:02–09:08, 1440×900) every cycle read "ring + line → J → one late line 1.3 s after J → 15 s stall → J off" six times over, with the character standing ~250 px from the boss's feet the whole time (`stall_s5` / `ring_s5` frames) — the taps alone hit from a distance and the autohunt never attacked; the hold is the user's answer to "didn't get near or inside the boss". Before this (2026-10-26/27): the ring (`FindSelectionRing`, HSV H 138–156, S ≥ 89, V ≥ 190 in (0.05, 0.12, 0.70, 0.78)) + a new line + the boss in the target bar (`IsFinalBossTargetedAsync`, removed) gated `J`; round 1 in that log read "No selection ring" with the ring under the boss. **`WatchBoss` watchdog at stage 5 (2026-10-27):** with the autohunt on and the boss up, the combat log is read every boss poll; no new attack line for `AutohuntStallMs` (15000) → `J` off, snapshot `stall_s5` (≤ 3, `_stuckShots`), `ArriveAtFinalBoss` (autohunt-off check → Tab → hold + taps → `J` → clicks). Catches every "autohunt on but not attacking" state whatever let it through; unbounded, the stage closes itself within ~2 min anyway. At stage 5 nothing else turns the autohunt on: the click give-up before `J` goes back to the Tab wait (`attack_s5` snapshot; only reachable with an empty `SkillKey`), and the 90 s no-boss timeout only applies to stages 1–4 (stage 5 keeps tabbing until the zone guard sees the stage closed). Stages 1–4: click give-up and the 90 s timeout still turn autohunt on. **Autohunt off at the waypoint (user, 2026-10-26: "when in Waypoint 1, disable auto hunt"):** the first `WaitBoss` tick at stage 5 (`_finalHuntOffChecked`, every `ArriveAtFinalBoss`) runs `EnsureAutohuntOffAsync` (the town check's logic, shared) with `trustVisibleLine`: the newest autohunt line already in the combat log decides — "Auto hunt ended" = off, nothing pressed (the stage 4 `J` is a blind toggle, but its line is normally still on screen); "Auto hunt started" = on → `J`, expect "ended"; no line → tap and read as in town (≤ 3 taps, `autohunt_on` / `autohunt_unread`). `_phaseStart` restarts after it. Not yet seen live. Before that: **left-clicks around the middle of the client** until a new `Attack succeeded!... damage(+N)` line appears in the combat log (`Regions.AttackMessage`, left side): centre, ring of 8 at `BossSelectStep` (0.06 × height), ring of 8 at 2 steps, max `BossSelectMaxTries` 17, `AttackConfirmMs` 1200 per click. The log holds ~8 lines and is usually full, so line counts don't change: it compares the visible lines (normalised `attacksucceeded...damage(N)`, top to bottom) with a baseline taken before the first click; any change = hit. Gives up → warning + `attack_s<N>` snapshot → `WatchBoss` anyway. Autohunt will not attack an unselected boss |
 | `WatchBoss` | gate banner checked every `GatePollMs` (template every poll, OCR every `GateOcrEveryNPolls`, OCR only counts *new* lines vs a baseline) = dead → next stage skips `WaitForGate` (last stage → `FaceNorth`). Boss name/icon checked every `BossPollMs` (2 s); it only counts as dead after `BossGoneMs` (10 s) of continuous absence — two quick misses once ended a live fight (the name flickers when the boss is off camera). The 15 s `GateFallbackMs` first re-checks the previous boss and goes back to `WatchBoss` if it is still up. The banner check was added because after stage 4 the pilot sat in `WatchBoss` while the gate banner was already up. **No time limit** while the boss is visible (2026-10-24, user: the 15 min `BossDeadTimeoutMs` moved a friend's run on with the stage 1 boss at 1 %; the dungeon stays open for a slow kill) |
 | after stage 4 | `FaceNorth` |
 
@@ -473,7 +529,7 @@ brightness) and the pilot "lined up" facing north at ~0.82 — user caught it. f
   1195, 1578 a walk click, then at 1201, 1760 only Tab; off: only Tab until the name, then `LodAttack`)
   and `SettingsMigrationTests` (v22). The walk to 1199, 1782 itself is not yet seen live.
 * **Ctrl + skill key** (user, 2026-10-26: "when manually attacking couple it with ctrl+ skill key";
-  `Dungeon.CtrlSkill` on, check box "Ctrl + skill key too"): every press of the spam is `TapSkill` =
+  `Dungeon.CtrlSkill` on, check box "Ctrl + skill key too"): every press of the spam is `SkillTap` (IGameControls) =
   the plain key, 60 ms (`CtrlSkillGapMs`), then `WindowInput.CtrlKeyTap` (Ctrl down, 40 ms, key tap,
   40 ms, Ctrl up) — the same helper as the Laby stage 5 presses (§4.2). With `HoldSkill` the held key
   is let go every `SkillEveryMs`, Ctrl + key tapped, then held again. What Ctrl + skill does in the
@@ -666,7 +722,7 @@ left, after a successful Labyrinth run). Labyrinth: teleport clicked but still i
 45 s lagging) → keep waiting (no second teleport) until `Sequence.LabyKeyWaitSeconds` (120 s, UI "Laby key
 wait (s)", user) after the teleport → still in town = out of Temple of Fiends Keys. LOD: not on teleport-list page 2 (or not on the last page) = out of Den of Rebirth
 entries. `OutOfKeys`: one used up → the other mode (saved, buttons refreshed); both used up this Start →
-**`AutoWar`** (`AutomationPilot.War.cs`, user 2026-10-22: players using the pilot get "Regular War" switched
+**"Regular War on"** (`AutomationPilot.RegularWar.cs`, `PilotPhase.RegularWarOn`, `BeginRegularWar` / `TickRegularWarAsync` / `FinishRegularWar`; renamed from `AutoWar` / `AutomationPilot.War.cs` in Auto War's Task 1 - **not** `RunMode.AutoWar`; user 2026-10-22: players using the pilot get "Regular War" switched
 off, so the character stayed in town during a war): `Sequence.AutohuntSettingsKey` **S** opens the autohunt
 settings (≤ 3 presses, 2.5 s apart) → the AUTO BUFF dialog covers the list on lower resolutions: its title
 (whole line "autobuff", not the "[Auto buff scroll]" item) → click the X right of it
@@ -716,6 +772,172 @@ read as text, always the gold button, click dead centre at 1024, 1273, 1920 and 
 use?", USE ALL (x100) / CANCEL / OK). **The sell dialog itself and the live click are not yet seen.**
 Note: while the pilot is idle the Bohai dialog is not cancelled; a Ctrl + right click within 3 s of it
 would confirm the move instead.
+
+### 4.8 Auto War (user, 2026-10-27, `Sequence.Mode` = `AutoWar`, `AutomationPilot.War.cs` / `.WarTimer.cs` / `.WarFight.cs`, settings `AppSettings.War`)
+
+Spec: `docs/superpowers/specs/2026-10-27-auto-war-design.md` (§4 flow, §9 not verified, §11 assumptions). The alt
+stands in a **cave on page 3 of the teleport scroll** with the autohunt on; every war (Bohai Outpost, Adept) it
+leaves, fights, and comes back to the **same cave and monster**. No town steps (autohunt off, Run skill, font size
+do not run); the 5 s Bohai-dialog Cancel is skipped in this mode (the OK is what we want). Phases (`PilotPhase`):
+`WarRemember, WarWait, WarJoin, WarEnter, WarBuff, WarFight, WarDead, WarBack, WarArrive, WarHuntOn`.
+
+* **Start (`WarRemember`).** Zone must be a cave (not a home town, Labyrinth, LOD or Bohai) - else warning "Auto War
+  must be started inside a cave on page 3 of the teleport scroll, or inside Bohai Outpost" (`StartPlaceMessage`; the cave-only
+  `NotACaveMessage` is left for the stop after a war with no cave saved) and stop. Keys (`WarKeys(settings)` / `WarKeyProblem`): Skill, Target, Autohunt,
+  Inventory required; Shura, Buff and the autohunt settings key optional; any key that is set must be pressable (`IsKnownKey`) -
+  else warning + stop. **Buffs and Shura are optional (user, 2026-10-28: "make the skills optional, not required for pilot to
+  start")**: `CheckWarSkillBar`, once per Start (`_warBarChecked`), looks for `WarBarIcons` - the buffs ticked on (`BuffIcons`,
+  `WeaponBuffIcons`, `ItemBuffIcons`, minus `DisabledBuffs`) + Shura's icon only when `Lod.ShuraKey` is set - on `Regions.Hotbar`
+  (`IconMatchScore` **0.90**, own score: warbuff2, a small grey streak, hit 0.871 on floor texture; Shura 0.951-1.000 on
+  real bars, <= 0.781 elsewhere); the missing ones are **one warning** "Not on the skill bar (score 0.90 needed): warbuff3 (best
+  0.84), shura (not seen), warbuff7 (no warbuff7.png in templates/Assets) - carrying on without them ..."
+  (`DescribeMissingIcons(missing, hasTemplate)`: a template `ScreenAnalyzer.Library` never loaded is a PNG to add, not an icon
+  to put on the bar) + `war_bar_missing`, and the run carries on. Shura in the missing list adds "- clear 'Shura key (LOD)' if
+  this character has no Shura, or the fight still holds that key".
+  Opens the teleport list on page 3 (`ListPage`), picks the entry that fits the minimap title (`WarText.BestListEntryFolded`:
+  case-blind, I/l/1/| and O/0 folded; **two caves that fit = ambiguous = stop, never a guess**; 3 reads then stop), closes
+  the list with its X, `Tab`s (<= 3) for the monster, **confirms the name against the map window's monster list** (a
+  player's name can never be saved; the row whose **whole name column** is the name - `WarText.MonsterRows`, see Back - and
+  the list's spelling is saved), saves `War.HomeMap` / `War.HomeMonster` (settings.json; the read-only "Back to:" line in the
+  UI refreshes through `ModeChanged`, "(not set yet - press Start in the cave)" while empty).
+  Start inside Bohai (user, 2026-10-28: supported) -> straight to the enter step, no skill bar check, nothing on that path needs
+  the buff icons or Shura; with no cave saved one Info "No cave saved yet - after this war the pilot stops. Start it once inside
+  the cave to remember it." (`_warNoCaveTold`, once per Start) and after the war `BeginWarReturn` stops ("No cave is saved to go
+  back to ..."). In a home town with a saved spot -> `WarBack`; else stop.
+* **Wait (`WarWait`, `.WarTimer.cs`).** The menu is the ☰ button at the top centre (`menubutton.png`; **no key**) ->
+  "Tribe Status" tile (`MenuTileText`) -> row `TribeRowText` "Bohai Outpost (Adept)" -> `hh:mm:ss` or `In progress`;
+  then closes TRIBE STATUS (`PickWarClose`: only the X read in the title row, tolerance 16 px - **never a blind click**) and
+  the MENU. Windows OCR drops `hh:mm:ss` in whole-frame reads, so `ScreenAnalyzer.ReadWarCountdownAsync` reads the
+  digits with a colon-gap band read (user's screenshot: `00:04:25` = 265 s). Missing row = unknown, not zero. Re-reads ~2 min
+  before zero and every ~15 min; `In progress` every ~5 min; 3 unreadable -> `tribe_unread`. Only reads the screen with the game in front.
+* **Join (`WarJoin`).** `LeadMs` (10 s) before zero: autohunt off, confirmed in the combat log (`EnsureAutohuntOffAsync` logic);
+  the WAR dialog (Auto confirm's `FindConfirmDialogAsync`, gold OK) is polled <= 1 s; none within `DialogWaitMs` (2 min) -> autohunt
+  on again, back to the wait. Then the load and the minimap title "Bohai Outpost" (`Destination`, 60 s). The 5 s whole-screen
+  check also watches for the dialog in `WarWait` / `WarRemember` (not once the remember step has its monster confirmed: that tick
+  saves the spot first). Only with the game in front: the dialog wait runs on the war clock (`FrontClock`) and stands still behind
+  another window.
+* **Game in front.** Every Auto War step that reads the screen waits while the game window is behind another window
+  (`WarInFront`: the timer read's steps, the join, the autohunt at the monster, the Settings visit and everything in Bohai; the map
+  pick through the zone guard; the 5 s whole-screen check is skipped) - a second game client's dialog, map or log is never read as
+  ours. The shared teleport steps (inventory, scroll, list pages, load) and the re-login still read, but send nothing then
+  (input is refused while the game is behind).
+* **Enter / buff (`WarEnter`, `WarBuff`).** Settings visit sets TAB target to `TabTargetOption` ("Enemy worth CP"; the shared
+  FontSize phase takes the wanted option and steps the chevrons by `TabTargetOptions.StepsTo`; Laby/LOD still ask for Default; left
+  as is after the war). Autobuff? "[Auto buff scroll]" in the item list, else `S` + the AUTO BUFF title (closed with its X, then the
+  settings window; the "Regular War" label is the sign the settings are open). One round (`TickWarBuffUpAsync` step 3, the icon list
+  fixed at the round's start by the pure `WarBuffClicks(war, byBuffKey)`): autobuff -> `O`, then the **item buffs** (user,
+  2026-10-28: "with autobuff the item buffs on the skill bar are still clicked"; every rebuff); no autobuff -> `BuffIcons`
+  (warbuff1, 3, 4, 5, 6) -> `WeaponBuffIcons` (warbuff2 = sword, warweapon1 = white-gold lightning around armour, warweapon2 =
+  blue swirl; skill buffs, so not with autobuff) -> `ItemBuffIcons` (waritem1 = light scroll with a glyph, waritem2 = blue scroll); only the ones ticked on, each once; one icon per
+  tick, found on that tick's frame, `BuffClickGapMs` (1 s) apart; a missing one is skipped with **one warning per Start**
+  (`_warMissingIcons`, cleared in `Start`; "cannot be looked for (no X.png in templates/Assets)" when its PNG is missing). Rebuff every `BuffEveryMs` (**345000** = 5 min 45 s), only between fight cycles.
+* **Buff switches (user, 2026-10-28).** `War.DisabledBuffs` (default empty = every buff on) holds the template names unticked in
+  Settings > Auto War > **Buffs** (`ViewModels/WarBuffSwitch`: one check box per icon of `BuffIcons`, `WeaponBuffIcons`,
+  `ItemBuffIcons`, labelled by list and place: "Buff 1".."Buff 5" (warbuff1, 3, 4, 5, 6), "Weapon 1 (sword)" (warbuff2), "Weapon 2"
+  (warweapon1), "Weapon 3" (warweapon2), "Item 1/2"; the PNG from `templates\` then `Assets` loaded with `BitmapCacheOption.OnLoad`
+  (no file lock; any exception -> next folder, else label only - it runs in the view model's constructor); one-line tooltip
+  "Clicked when buffing" (+ "(uses an item; also clicked with autobuff)"; the X buff warbuff4 = "Buff 3" says it is also the fight
+  cycle's X buff) ending in the template file name, since the logs name templates; WrapPanel `ItemWidth` 168, two per row - "Weapon
+  1 (sword)" with its icon is ~159 DIP). `WarSettings.IsBuffOn` / `SetBuffOn` (a new list replaces the old one: the loop thread may
+  be reading it); saved like every other setting (close / Save settings). A character uses one weapon, so usually two of the three
+  weapon buffs are unticked. SelfTest check "war buff switches" (labels, tooltips, DisabledBuffs written, damaged PNGs).
+* **Fight (`WarFight`, `.WarFight.cs`).** `Tab` ~1/s until a **target** (in the target box only: a name over its numbers line
+  (`WarText.FindTargetName`; not the version/ping line, a system notice or a lone number), the numbers line alone or the chest - see
+  "Target rule" below) or the "Gate is Open" line; cycle = `Tab` -> X buff (`XBuffIcon` warbuff4;
+  skipped when unticked; ticked but not found -> one Warning per Start with its best score or "(no warbuff4.png in templates/Assets)" + `war_xbuff_missing` (`WarnXBuffMissing`, `_warMissingIcons`; with autobuff nothing else looks for it), 0.90 gate kept) -> **hold the Shura key `ShuraHoldMs` 1200** (`_heldSkill`, released by `Advance` / Stop / F10; **no Shura key
+  = no hold**, one Info per Start "No Shura key is set ..." (`_warShuraSkipTold`)) -> skill spam (`SkillTap`, Ctrl + skill)
+  until no target for `TargetGoneMs` (2 s) -> next cycle. After the war has started a death/rebuff goes back to the cycle, not the start wait.
+  **Target rule (2026-10-28, user: "it seems not to try to attack" + a sample: player "zMADARAz" in red, "49293/49293" in white on a red
+  bar, buff icons under it, no chest):** the fight reads `ScreenAnalyzer.ReadWarTargetAsync` (the remember step keeps `ReadTargetAsync`,
+  unchanged): name by plain x1.5, then white x2, then **red x2** (`RedTextMask`: R - max(G,B) > 80 -> 255; `OcrRedTextAsync`;
+  `FindTargetName` on the red read alone) - and the target bar's **"N / M" line alone is a target** (`WarText.TargetHpLine`: the whole
+  line is the pair, spaces optional, O -> 0, <= 3 stray characters each end that are neither letters, digits nor ':' ("HP 100/100"
+  never passes), up to 9 digits (boss bars "16284125/65136500"), M >= 100; dates and times never pass; **the line's centre in the
+  middle half of the target box** - without that, 55 of the 592 saved frames, none with a target, read the pet / mount panel's gold
+  "100/100" bar under the top bar at 0.69-0.71 w (1024, 1273, 1538 wide) as a target; the target bar sits at ~0.52 w), name "?" then.
+  "Gone" (step 4) uses the same rule with `seenOnly`: it stops at the first sign (the chest, then the first read with a name or the
+  numbers line). Before this a red name never read (the white read blacks it out, the plain read drops the bar's slash), so a player
+  was never a target and the skill never went out - the likely cause of the report; once a target is seen nothing else stands between
+  it and the skill (X buff and Shura are optional, `SkillKey` is required at Start). The Trace log says which read decided
+  (`Target 'X' (red x2)`, `A target (HP numbers, name unread: '...')`). `--target` 2026-10-28 (592 saved frames, none from Bohai): 128
+  named (58 x1.5, 70 white x2, 0 red - no red name in them), 4 by the numbers alone (all four with the chest: a boss bar under a
+  dialog), 11 by the chest alone, 136 with the chest, 449 none; 0 frames without a target with a numbers line in the band; 127 of the
+  128 named targets would also be seen by their numbers alone.
+  **Walk out of the respawn point (user, same day: "try to move out of respawn" -> toward players on screen):** step 5 of the fight,
+  `AutomationPilot.WarFight.cs`. Due (`WarWalkDue`) when **the war has started** (`_warStarted`: "Gate is Open" or a first target -
+  before that everyone stands at the closed gate), `WarWalkAfterTabs` 5 Tabs in a row found no target, fewer than `WarWalkMaxSteps` 6
+  steps in this spell and fewer than **`WarWalkMaxTotalSteps` 18 in this war** (reset by a target and by `BeginWarEnter`; at 18 one Info
+  line, then Tab only), not resting; and only while the last minimap title read (`WarZoneCheckAsync`, `_warTitleIsWarMap`) was the war map
+  (else "the minimap does not read" once per spell). On the next tick's frame: whole-screen OCR x1 -> `WarWalkGoal`: no goal at all
+  while a window covers the world (`WarText.IsWindowTitleLine`: "Spawns" / "Monsters on this map" - the map's rows read like tags, 147
+  saved frames chose "Serpent Knight" -, INVENTORY, TELEPORT SCROLL, SETTINGS, SERVERS); else lines passing `WarText.IsPlayerTagText`
+  (3+ letters, no ':', no sentence ending '.', '!', '?' or ',', no opening quote - boss speech -, <= 4 words - notices -, not one
+  bracketed name alone - zone banners, "[Premium]" -, no combat-log word: attack, damage, auto hunt, arrived, succeeded), not a text
+  found to be UI this war, centre outside **`WarWalkBands`** and more than `WarOwnTagRadius` **0.22 h** from the character's spot
+  (0.5 w, 0.54 h; the brief said 0.12 h, but our own "[Premium]" / name tags sit up to 0.176 h away) -> the nearest.
+  `WarWalkBands`, measured with `--warui` on the saved frames (the UI scales with the client): top strip 0-0.13 h; combat log
+  0-0.31 w x 0.13-0.56 h (log text 0.00-0.30 w, 0.20-0.55 h); chat + bottom bar 0-0.40 w below 0.56 h (chat 0.01-0.38 w, 0.66-0.96 h);
+  pet panel + minimap 0.56-1 w above 0.23 h and minimap panel 0.74-1 w above 0.37 h (pet panel 0.57-0.74 w, 0.06-0.22 h; minimap panel
+  0.76-0.98 w, 0.06-0.36 h); event notices 0.80-1 w x 0.37-0.60 h (0.83-1.00 w, 0.37-0.58 h); item list 0.70-1 w below 0.55 h
+  (0.72-1.00 w, 0.56-1.00 h); skill bar 0.20-0.80 w below 0.85 h. Searchable: 26 % of the frame and 0.31-0.80 w at the character's
+  height (the reading regions `AttackMessage` / `Minimap` / `ItemList` used first left 16 % and 0.40-0.62 w).
+  The goal -> **Ctrl+click** (`WarWalkClick`: 4 % h below the tag, pulled in to <= 0.25 h from the spot, clamped to the LOD walk area
+  0.25-0.74 w, 0.25-0.78 h), Shura released first, dry run logs only (and remembers no goal); Info "No target after N Tabs - walking
+  toward 'X' (step k/6)."; `war_walk` snapshot on a spell's first step (<= 3 per Start); `WarWalkWaitMs` 1.5 s -> Tab. **Static-goal
+  memory** (`WarWalkStatic`): on the next look, the last goal's text within 2 % of the screen of where it was = it did not move with
+  the camera = UI ("'X' stayed put after the step"), ignored for the rest of the war (`_warStaticTags`, cleared by `BeginWarEnter`).
+  After 6 steps Tab only for `WarWalkRestMs` 20 s (war clock), then a new spell; no tag -> no click, "no players in view" once per
+  spell, and `WarWalkEmptyLooks` 3 empty looks in a row -> the same 20 s rest (no whole-screen OCR on every Tab). A target ends the
+  spell; `BeginWarFight` (buffs, revive) starts the spell fresh. `--warwalk` (592 saved frames): a goal on 36 frames - 13 other
+  characters ("(Tiger) [ZhuFan]", "[PvP] (Dragon) Delisya", "Roronoazoroo", "Indomie"...), 8 WuxAuto's own overlay labels in debug
+  snapshots ("selected", "pink rin"; not on a live frame), 15 other words ("search" 8, desktop captures); the first version (wide
+  reading regions, no window rule) had a goal on 68: 5 players, 21 "SERVERS", 12 map-list rows, the rest UI words. **Not seen live**: the red read on a real red name, the numbers rule on a real player bar, name
+  tags over players in Bohai, the walk itself.
+* **Death watch (`WarDead`).** The top-left HP "cur / max" read about once a second. Death = `Cur == 0` and Max in 0.5-1.05x of the
+  **alive max** (the "0/3000" bar and the MP line never count; the alive max is learned from agreeing reads, a raise is capped at 1.5x
+  and warned once). Unreadable = alive (`war_hp_unread` after 10 s). Dead: release keys, wait for HP > 0, rebuff, fight; 30 s dead -> `war_dead`.
+* **Back (`WarBack`, `WarArrive`, `WarHuntOn`).** Home town (or the cave itself, or any other zone read 3x -> `wrong_zone`) = war over:
+  scroll -> page 3 -> the **exact** saved entry (`SameEntry`; "[Dark Soul Cave IX]" must not pass for "[...X]"), twice in town -> stop; map icon -> the saved
+  monster's row -> `>` (the Laby pick, but the row is `WarText.MonsterRows`: the OCR line whose **whole name column** - the words before the Lv / Spawns
+  numbers, a one-letter marker dropped - is the name, same `FoldedKey` or >= 0.90 and not longer: "Goblin" never clicks the "Goblin Elite" row, which the best
+  single word did, and "Cave Bat" is found; two such rows = stop, never a guess); wait for the combat-log line "Arrived: <monster>" (`ArrivedText`; **new lines
+  only** - an old one from an earlier trip is ignored; 90 s then carry on); `J` confirmed by "Auto hunt started" (<= 3 taps) -> back to `WarWait`. At most
+  **3 trips back in 30 min without a war in between** (`WarReturnAllowed`; `BeginWarEnter` clears the count), then stop - a cave that takes the teleport but
+  sends the alt back to town would loop, a teleport a round.
+* Restart / reconnect land by zone: the saved cave -> `WarHuntOn` (the autohunt on, read-confirmed) -> wait; Bohai -> enter; town -> back. After a re-login
+  the reconnect counts the war map or any zone title on the minimap as back in (`WarReloginZone`; the cave is `Destination`, but a re-login during the war
+  lands in Bohai), not while a login screen still shows.
+  Dry run never clicks the dialog OK, so `WarEnter` times out (60 s) and restarts - expected.
+* **Upgrade note (settings across versions).** Once settings.json holds `"Mode": "AutoWar"`, a build from before Auto War throws on the unknown
+  enum name in `Load`, falls back to the defaults and saves them on close - the Laby/LOD settings are gone. Release and update every installed copy
+  before choosing Auto War on a PC where an older copy shares settings.json (`%LOCALAPPDATA%\WuxAuto`). The loader is not changed: old builds cannot be fixed.
+  Settings v23 (2026-10-28) is **removal only**: it takes `warbuff2` (the sword buff, now in the new `WeaponBuffIcons`) out of a saved
+  `BuffIcons`, keeping the user's order and other entries; nothing is ever added to `BuffIcons`, because v0.19.0 requires every
+  `BuffIcons` icon on the bar at Start (with v23 it simply checks five). `WeaponBuffIcons`, `ItemBuffIcons` and `DisabledBuffs` are
+  new properties v0.19.0 ignores - and drops when it saves (the check boxes come back all ticked). The SelfTest probes load with
+  `SettingsStore.Load(persistMigration: false)` (the migration stays in memory) - a probe of a newer build never rewrites the
+  settings.json of a running older copy. The app itself and UiShot (which restores the file) still save the migration.
+
+**Probe numbers (Task 4, 561 saved frames, none from Bohai):** `--hp` 511 read (508 white-text + 3 plain fallback), none reads 0/N; `--target` 114 named,
+119 with the treasure chest (historical: the Task 4 reader on 561 frames - today's `--target` numbers are under "Target rule" above); menu button score lowest real game frame 0.836 (1440x900), highest non-game 0.451, `MenuButtonScore` **0.70**;
+Shura on the bar 0.951-1.000; `warbuff1-6` crops: **no saved frame shows them** (0.90 unproven on a real alt bar). `--tribe` on the user's Tribe Status
+screenshot: `00:04:25` (265 s).
+`--warbar` 2026-10-28 (592 saved frames, `debug\`): the first alt bar frame (`war_stop`, 2048x1152, a v0.19.0 stop that morning) has
+all six: warbuff1 0.932, warbuff2 0.989, warbuff3 0.920, **warbuff4 0.912** (closest to the 0.90 gate), warbuff5 0.982, warbuff6
+0.970; `warweapon1` (the user's crop, Assets since 2026-10-28) 0.968 on 44 frames of the main character's 1273x1024 bar, always
+the same slot (424,970), checked by eye - the real icon; `warweapon2` best 0.716 (on no saved bar); `waritem1` (light scroll with a glyph, 31x24) best 0.653 and `waritem2` (blue
+scroll, 28x30) best 0.591 - no saved frame shows them on a bar, and nothing else reaches 0.90 (look-alikes: tiny 15-20 px boxes); Shura
+on 554 frames. Run over `war-inputs\` itself the probe says nothing: each crop is its own frame and `Regions.Hotbar` is its bottom 15 %.
+
+**Not seen live (spec §9 + the task reports) - everything inside Bohai:** the Bohai minimap title after the dialog; "Gate is Open"; an enemy player in the target box
+(and whether it has the chest); HP 0 and the revive (does the game send a dead alt to town?); the buff, weapon and item buff icons (warweapon2, waritem1 and waritem2 are on no saved bar) on a real alt bar at 0.90; the ☰ menu opened and
+the **MENU close geometry** (from faint glyphs on one screenshot; a window whose X is not read is left open with `war_close_stuck`) and whether ☰ toggles the menu shut;
+TRIBE STATUS X at other resolutions (one 795x829 crop); the AUTO BUFF X as a bright blob; the "Regular War" label in the autohunt settings; page 3 of the teleport list at other
+resolutions; the X of the TELEPORT SCROLL (closing it costs no scroll, and whether the inventory stays open); the wording "Arrived: <monster>"; "Auto hunt started" in a cave;
+"1F" vs "IF" in cave names (folded, but unseen). Known limits: buffs more than doubling max HP hide a death; the Settings visit (shared FontSize phase) has no War zone check;
+a war dialog during `WarRemember` before the monster is confirmed joins before the spot is saved (the return then stops instead of guessing) - once it is
+confirmed, the dialog watch waits for the save; a war dialog while a timer read has a window open can leave it open.
+Each part logs what it saw and saves `war_*` snapshots (<= 3 per tag per Start) - the first live war gives the frames to tune from.
 
 ## 6. Settings and persistence — read this before changing defaults
 
@@ -770,10 +992,16 @@ Dry run on in the real settings).
 | `AutohuntStallMs` | 15000 | stage 5 `WatchBoss`: autohunt on, boss up, no new attack line this long → `J` off, select and attack by hand again (`stall_s5`; user, 2026-10-27); clamp 3000–120000 |
 | `HoldBeforeAutohunt` | true | stages 1–4: hold the skill key once on the boss in view before `J` (user, 2026-10-27: "on other stages, before going autohunt, try to skill hold first"; UI "Hold skill before autohunt (stages 1-4)"); off = `J` in `WaitBoss` right after the spawn wait. New bool, a saved file without it loads `true` — no migration |
 | `CtrlSkill` | true | every manual skill press (stage 5: the held press and the `ManualAttacks` taps; stages 1–4: the held press before `J`; LOD skill spam) = the skill key, then Ctrl + skill key (user, 2026-10-26); with `Lod.HoldSkill` the held key is let go for a Ctrl tap every `Lod.SkillEveryMs`. New property, so a saved file without it loads `true` — no migration (checked on this PC's settings.json) |
+| `War.*` (`WarSettings`; UI block "Auto War": Shura hold, Rebuff every, Lead time, TAB target, Buffs (one check box per buff icon), read-only "Back to") | see right | `Destination` "Bohai Outpost" (teleport list entry + minimap zone), `TribeRowText` "Bohai Outpost (Adept)", `MenuTileText` "Tribe Status", `LeadMs` 10000 (user: 10 s before zero), `DialogWaitMs` 120000, `TabTargetOption` "Enemy worth CP" (user), `BuffIcons` warbuff1, warbuff3, warbuff4, warbuff5, warbuff6 (the plain buffs; v23 removes warbuff2 from a saved list, removal only; an empty list is refilled with the defaults), `WeaponBuffIcons` warbuff2 (sword), warweapon1, warweapon2 (user, 2026-10-28; skill buffs clicked after `BuffIcons`, not with autobuff; new property), `ItemBuffIcons` waritem1 (light scroll with a glyph), waritem2 (blue scroll) (user, 2026-10-28; clicked after the weapon buffs, with every rebuff and with autobuff too; new property), `DisabledBuffs` [] (the unticked buffs of all three lists; empty = every buff on; a file without the new lists loads their defaults; `NormalizeWar` trims the three new lists, drops blanks, keeps each name once, never refills an empty one), `XBuffIcon` warbuff4, `BuffClickGapMs` 1000, `BuffEveryMs` 345000 (my call: 5 min 45 s; the user's buffs last at least 6 min), `ShuraHoldMs` 1200, `TargetGoneMs` 2000, `GateText` "Gate is Open", `ListPage` 3, `ArrivedText` "Arrived", `ArriveWaitMs` 90000, `IconMatchScore` 0.90, `HomeMap` / `HomeMonster` "" (written by Start's remember step). New block (v0.19.0, no version bump; v23 removes warbuff2 from `BuffIcons`); keys are reused (`Dungeon.SkillKey` / `CtrlSkill` / `AutohuntKey` / `TabKey`, `Lod.ShuraKey` / `BuffKey`, `Sequence.AutohuntSettingsKey`) |
 | `HomeTowns` | Piercing City, Molten City, Wandering City | every clan's home town (user, 2026-10-21): any of them on the minimap = "in town" (zone guard, LOD kill, stage 5 closed, still-in-town, re-login); the one seen (`TownIn`, remembered per Start) is where the return teleport goes |
 | `ReturnDestination` | `Piercing City` | fallback until a home town has been seen; after stage 5: `J` (autohunt off) → teleport scroll there → `Done`; only then may `Loop` start the next run |
 | `RunClickPx` / `RunStepWaitMs` / `RunMaxSteps` | 200 / 1500 / 200 | final run steering |
 | `NoPathText` | `no walkable path` | logged only, diagnostic |
+
+Keys and mouse buttons are read only by `KeyboardMouseControls` (Core, M3): the pilot asks for a
+`GameAction` (or a skill / turn / walk) and never names a key. `Input.RotateKeyReverse` and
+`Sequence.RotationMode` are no longer read by anything (their only user, `ApplyTurn`, had no callers and
+was deleted in M3); they stay in settings.json and the UI until removed with a settings migration.
 
 Input: `InputMode.ForegroundSendInput` (default) requires the bound HWND to be foreground;
 otherwise the action is suppressed + logged and retried. `BackgroundMessages` posts to the HWND —
@@ -802,7 +1030,7 @@ left down sticks for every program.
    ```
 
 4. Overlays use `DebugArtifacts.SaveFrame(frame, overlays, tag, click)`; the click point is drawn
-   as a crosshair. Note the overlay renderer fills some boxes white — that is expected.
+   as a crosshair. Overlays are drawn opaque (alpha 255) since M2; older snapshots show white or see-through boxes where the alpha was 0.
 5. Logs: the log pane, and since 2026-10-20 also `%LOCALAPPDATA%\WuxAuto\logs\wuxauto_<start time>.log`
    (one file per app start). `WuxAuto.exe --autostart` binds the detected game window and presses
    Start, so a run can be launched and followed from a terminal. The most useful lines:
@@ -899,9 +1127,18 @@ Template scores seen on real 1024×768 frames:
 ## 10. Gotchas / hard-won lessons
 
 * **Settings JSON overrides defaults** — see §6. This is the single biggest time sink so far.
-* **OpenCvSharp ships only `win-x64` natives** — the app must stay `PlatformTarget x64` (it is).
-* **Do not `Marshal.Copy` into `mat.Data`** on this machine (Windows on ARM, x64 emulation) — it
-  crashed the CLR. Use `Mat.FromPixelData(...)` over a pinned buffer, and `.Clone()` for copies.
+* **The app stays x64** (`PlatformTarget x64`, `publish.ps1 -r win-x64`). Emgu CV's runtime package
+  also carries win-x86 and win-arm64 `cvextern.dll`, but only the win-x64 build is shipped and tested
+  (OpenCvSharp, used until the M2 port, had only win-x64 natives).
+* **Never write into a Mat's memory from managed code** on this machine (Windows on ARM, x64
+  emulation): `Marshal.Copy` into OpenCvSharp's `mat.Data` crashed the CLR. With Emgu CV a frame is a
+  Mat header over the pinned capture buffer (`new Mat(rows, cols, DepthType.Cv8U, 4, ptr, stride)`,
+  `WuxEngine`), pixels are read out through OpenCV (`CvHelpers.Bytes` = `Mat.CopyTo(byte[])`) or
+  copied *from* `DataPointer` (preview, OCR), and copies are `.Clone()`.
+* **Emgu CV 5 is OpenCV 5.0**: `putText` draws its own fonts (not 4.x's Hershey strokes) and, with
+  anti-aliasing on a BGRA image, blends the alpha channel - the text comes out nearly transparent and
+  Windows OCR reads garbage from it. Synthetic test text goes on a BGR canvas, then `Bgr2Bgra`
+  (WarProbe `--tribe`, 2026-10-28). Overlay labels on the preview / debug snapshots use the new font.
 * **Desktop Duplication cannot capture exclusive fullscreen**; the game must be windowed/borderless.
 * **Hybrid-GPU laptops:** the default adapter (dGPU) cannot duplicate a monitor wired to the iGPU
   (`DXGI_ERROR_UNSUPPORTED`), so the device must be created on the output's own adapter — and with an
@@ -930,7 +1167,7 @@ Template scores seen on real 1024×768 frames:
   centre**.
 * Window-input safety: every send is gated on the bound HWND being foreground; a suppressed action
   is not a bug, it logs `Input blocked ...`.
-* Debug snapshots include overlays; a white filled box in a snapshot is the renderer, not game UI.
+* Debug snapshots include overlays; a filled box or label in a snapshot is the renderer, not game UI (snapshots before M2 show them white or see-through: alpha 0).
 * `Assets\*.png` are copied to the output on build; user overrides go to
   `%LOCALAPPDATA%\WuxAuto\templates` and win over `Assets`. That folder is currently empty.
 * Stray PNGs in the repo root are the user's original screenshots — do not delete them.

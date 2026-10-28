@@ -3,6 +3,7 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:vm="clr-namespace:WuxAuto.ViewModels"
         xmlns:core="clr-namespace:WuxAuto.Core;assembly=WuxAuto.Core"
+        xmlns:auto="clr-namespace:WuxAuto.Automation;assembly=WuxAuto.Core"
         xmlns:conv="clr-namespace:WuxAuto.Converters"
         Title="WuxAuto - Wuxen2 pilot"
         Icon="WuxAuto.ico"
@@ -87,7 +88,7 @@
                             <TextBlock Grid.Row="3" Grid.Column="1" Text="110 - 120 %  (Settings ▸ Visual)" />
 
                             <TextBlock Grid.Row="4" Grid.Column="0" Text="Tab target" Style="{StaticResource FieldLabel}" Margin="0,2,12,2" />
-                            <TextBlock Grid.Row="4" Grid.Column="1" Text="Default  (Settings ▸ Visual)" />
+                            <TextBlock Grid.Row="4" Grid.Column="1" Text="Default (Laby/LOD); Enemy worth CP in Auto War (set by the pilot)  (Settings ▸ Visual)" />
                         </Grid>
                     </StackPanel>
                 </Border>
@@ -128,6 +129,9 @@
                                 <RadioButton GroupName="RunMode" Content="Auto LOD" Style="{StaticResource ModeButton}"
                                              IsChecked="{Binding Settings.Sequence.Mode, Converter={x:Static vm:BoolConverters.EnumEquals}, ConverterParameter=AutoLod}"
                                              ToolTip="Ultimate Den of Rebirth: Bai Gu Great, respawns - fights until the map timer runs out." />
+                                <RadioButton GroupName="RunMode" Content="Auto War" Style="{StaticResource ModeButton}"
+                                             IsChecked="{Binding Settings.Sequence.Mode, Converter={x:Static vm:BoolConverters.EnumEquals}, ConverterParameter=AutoWar}"
+                                             ToolTip="Bohai Outpost war: wait in a page-3 cave, join every war, fight, come back to the same cave and monster." />
                             </StackPanel>
                         </StackPanel>
                         <StackPanel Orientation="Horizontal">
@@ -369,7 +373,7 @@
                                        ToolTip="Laby, stage 5: with the boss in view, hold the skill key (see Hold skill), then tap it this many times (300 ms or more apart, see Attack gap); the autohunt only goes on after a new 'Attack succeeded' line. 0 = autohunt straight away." />
                             <TextBox Grid.Row="3" Grid.Column="1" Style="{StaticResource WideField}" Text="{Binding Settings.Dungeon.ManualAttacks}" />
                             <TextBlock Grid.Row="3" Grid.Column="2" Text="Shura key (LOD)" Style="{StaticResource FieldLabel}"
-                                       ToolTip="Auto LOD: Shura stops the attack before a mid-fight buff and before the walk up to the boss. Its icon (shura.png) is clicked on the skill bar; when it is not found this key is tapped instead (the slot you put Shura in, default E). Empty = Space when the icon is not found." />
+                                       ToolTip="Auto LOD: Shura stops the attack before a mid-fight buff and before the walk up to the boss. Its icon (shura.png) is clicked on the skill bar; when it is not found this key is tapped instead (the slot you put Shura in, default E). Empty = Space when the icon is not found. Auto War: held at the start of every fight cycle; empty = no Shura hold." />
                             <TextBox Grid.Row="3" Grid.Column="3" Style="{StaticResource WideField}" Text="{Binding Settings.Lod.ShuraKey, UpdateSourceTrigger=PropertyChanged}" />
 
                             <TextBlock Grid.Row="4" Grid.Column="0" Text="Run key" Style="{StaticResource FieldLabel}"
@@ -413,6 +417,83 @@
                                 <CheckBox Content="Auto confirm (Ctrl + right click)" IsChecked="{Binding Settings.Sequence.AutoConfirmDialogs}"
                                           ToolTip="While the game is bound and the pilot is not running: after a Ctrl + right click on the game (selling / using items) the '... Confirm to ...?' dialog's OK is clicked the moment it shows (about 0.2 s). A plain right click leaves the dialog alone." />
                             </WrapPanel>
+                        </Grid>
+
+                        <TextBlock Text="Auto War" Style="{StaticResource SectionTitle}" Margin="0,12,0,6" />
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto" />
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                                <ColumnDefinition Width="*" />
+                            </Grid.ColumnDefinitions>
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
+                            </Grid.RowDefinitions>
+
+                            <TextBlock Grid.Row="0" Grid.Column="0" Text="Shura hold (ms)" Style="{StaticResource FieldLabel}"
+                                       ToolTip="How long the Shura key (LOD) is held at the start of each fight cycle, before the skill taps. No Shura key = no hold." />
+                            <TextBox Grid.Row="0" Grid.Column="1" Style="{StaticResource WideField}" Text="{Binding Settings.War.ShuraHoldMs}" />
+                            <TextBlock Grid.Row="0" Grid.Column="2" Text="Rebuff every (ms)" Style="{StaticResource FieldLabel}"
+                                       ToolTip="How often the war buffs are renewed while the war runs (5 min 45 s = 345000): the buff key with autobuff, else the ticked buff icons; the ticked item buffs either way." />
+                            <TextBox Grid.Row="0" Grid.Column="3" Style="{StaticResource WideField}" Text="{Binding Settings.War.BuffEveryMs}" />
+
+                            <TextBlock Grid.Row="1" Grid.Column="0" Text="Lead time (ms)" Style="{StaticResource FieldLabel}"
+                                       ToolTip="How long before the war opens the autohunt is turned off and the pilot starts waiting for the war dialog (10 s = 10000)." />
+                            <TextBox Grid.Row="1" Grid.Column="1" Style="{StaticResource WideField}" Text="{Binding Settings.War.LeadMs}" />
+                            <TextBlock Grid.Row="2" Grid.Column="0" Text="TAB target" Style="{StaticResource FieldLabel}"
+                                       ToolTip="The game's Settings > VISUAL > TAB target value the war needs; it is set when the pilot enters Bohai and left as is afterwards." />
+                            <ComboBox Grid.Row="2" Grid.Column="1" Grid.ColumnSpan="2" HorizontalAlignment="Left" Width="190" Margin="0,0,0,6" VerticalAlignment="Center"
+                                      ItemsSource="{x:Static auto:TabTargetOptions.All}"
+                                      SelectedItem="{Binding Settings.War.TabTargetOption}" />
+
+                            <!-- Buffs (user, 2026-10-28): one check box per buff icon, unticked = never clicked, not looked for at Start. -->
+                            <TextBlock Grid.Row="3" Grid.Column="0" Grid.ColumnSpan="4" Text="Buffs" Style="{StaticResource FieldLabel}" Margin="0,2,6,2"
+                                       ToolTip="Tick the buffs this character has on its skill bar. Unticked ones are never clicked and not looked for at Start; a ticked one that is not on the bar is only warned about." />
+                            <ItemsControl Grid.Row="4" Grid.Column="0" Grid.ColumnSpan="4" Margin="0,0,0,6" ItemsSource="{Binding WarBuffSwitches}">
+                                <ItemsControl.ItemsPanel>
+                                    <ItemsPanelTemplate>
+                                        <!-- Fixed slots so the boxes line up: two per row, each wide enough for "Weapon 1 (sword)" with its icon (~159 DIP). -->
+                                        <WrapPanel ItemWidth="168" />
+                                    </ItemsPanelTemplate>
+                                </ItemsControl.ItemsPanel>
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate DataType="{x:Type vm:WarBuffSwitch}">
+                                        <CheckBox IsChecked="{Binding IsOn}" ToolTip="{Binding ToolTip}" Margin="0,2,4,2">
+                                            <StackPanel Orientation="Horizontal">
+                                                <Image Source="{Binding Icon}" Width="22" Height="22" Margin="0,0,5,0"
+                                                       RenderOptions.BitmapScalingMode="HighQuality">
+                                                    <Image.Style>
+                                                        <Style TargetType="Image">
+                                                            <Style.Triggers>
+                                                                <DataTrigger Binding="{Binding Icon}" Value="{x:Null}">
+                                                                    <Setter Property="Visibility" Value="Collapsed" />
+                                                                </DataTrigger>
+                                                            </Style.Triggers>
+                                                        </Style>
+                                                    </Image.Style>
+                                                </Image>
+                                                <TextBlock Text="{Binding Label}" VerticalAlignment="Center" />
+                                            </StackPanel>
+                                        </CheckBox>
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+
+                            <TextBlock Grid.Row="5" Grid.Column="0" Grid.ColumnSpan="4" Style="{StaticResource Caption}"
+                                       Visibility="{Binding Settings.War.HomeMap, Converter={x:Static vm:BoolConverters.NotEmptyToVisibility}}"
+                                       ToolTip="Read from the screen at Start, in the cave you wait in. It is where the pilot goes back to after the war.">
+                                <Run Text="Back to: " /><Run Text="{Binding Settings.War.HomeMap, Mode=OneWay}" /><Run Text=" / " /><Run Text="{Binding Settings.War.HomeMonster, Mode=OneWay}" />
+                            </TextBlock>
+                            <TextBlock Grid.Row="5" Grid.Column="0" Grid.ColumnSpan="4" Style="{StaticResource Caption}"
+                                       Text="Back to: (not set yet - press Start in the cave)"
+                                       Visibility="{Binding Settings.War.HomeMap, Converter={x:Static vm:BoolConverters.EmptyToVisibility}}"
+                                       ToolTip="Read from the screen at Start, in the cave you wait in. It is where the pilot goes back to after the war." />
                         </Grid>
 
                         <TextBlock Text="Mini mode" Style="{StaticResource SectionTitle}" Margin="0,12,0,6" />

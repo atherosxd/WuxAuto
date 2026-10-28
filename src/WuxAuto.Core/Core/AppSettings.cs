@@ -25,6 +25,7 @@ public enum RunMode
 {
     AutoLaby = 0,
     AutoLod = 1,
+    AutoWar = 2,
 }
 
 /// <summary>Where the mini mode window opens on the screen (user: default bottom right).</summary>
@@ -76,6 +77,10 @@ public sealed class AppSettings
 
     /// <summary>Auto LOD: the Ultimate Den of Rebirth boss (<see cref="RunMode.AutoLod"/>).</summary>
     public LodSettings Lod { get; set; } = new();
+
+    /// <summary>Auto War: the tribe war in Bohai Outpost (<see cref="RunMode.AutoWar"/>).</summary>
+    public WarSettings War { get; set; } = new();
+
     public UiSettings Ui { get; set; } = new();
 
     /// <summary>Puts every screen position (regions and click fractions) back to the built-in defaults.</summary>
@@ -238,6 +243,37 @@ public sealed class RegionSettings
     /// the bar keeps roughly the same pixel size at every resolution.
     /// </summary>
     public NormRect Hotbar { get; set; } = new(0.20, 0.85, 0.60, 0.15);
+
+    /// <summary>
+    /// Auto War: the player's HP / MP box at the top left. The HP line "42833 / 42833" is the topmost
+    /// "N / M" in it (20261026_042225_228_lod_no_entries, 1920x1080: 184,36 116x15; the MP line (y 63) and
+    /// "100.000%" (y 91) are under it). The "0/3000" bar below it read inside the box on none of the 561
+    /// saved frames (1024x768 to 2304x1488, --hp probe).
+    /// </summary>
+    public NormRect PlayerHp { get; set; } = new(0.0, 0.0, 0.30, 0.10);
+
+    /// <summary>
+    /// Auto War: the target box at the top centre - the target's name with its "N / M" numbers line
+    /// under it. Name / numbers line tops: 1024x768 489,49 / 489,72 (20261021_000527_994_fail_RunToTarget),
+    /// 1273x1024 589,65 / 590,95 (20261025_124800_296_canceldialog_unread), 1920x1080 916,69 / 918,100
+    /// (20261024_152017_954_lod_approach) - y 6-7 % and 9 % at every size.
+    /// </summary>
+    public NormRect TargetBox { get; set; } = new(0.25, 0.03, 0.50, 0.12);
+
+    /// <summary>
+    /// Auto War: the band of the top-centre MENU button (three bars in a gold frame), the way into Tribe
+    /// Status. Not proportional - centre / size on the saved frames: 1024x768 499,21 43x36; 1273x1024
+    /// 581,27 58x47; 1440x900 825,25 51x42; 1920x1080 1182,29 61x50; 2302x1353 1479,37 76x63 (x 0.49-0.64,
+    /// bottom under 0.06). menubutton.png is the dark square inside the gold frame of
+    /// 20261024_170342_166_lod_no_entries (frame x 1149-1215, y 1-56; crop 1152,4 61x50).
+    /// </summary>
+    public NormRect MenuButton { get; set; } = new(0.30, 0.0, 0.40, 0.08);
+
+    /// <summary>
+    /// Auto War: the item status list at the bottom right ("[Auto buff scroll] dd.mm.yyyy", the keys, the scrolls) - the
+    /// band the Laby/LOD key check reads (inline in CheckKeysAsync).
+    /// </summary>
+    public NormRect ItemList { get; set; } = new(0.62, 0.50, 0.38, 0.50);
 }
 
 /// <summary>Auto LOD (user, 2026-10-21) - see AutomationPilot.Lod.cs.</summary>
@@ -398,6 +434,123 @@ public sealed class LodSettings
 
     /// <summary>Wait after being put back at the start before turning south.</summary>
     public int RespawnSettleMs { get; set; } = 3000;
+}
+
+/// <summary>Auto War (user, 2026-10-27): the tribe war in Bohai Outpost - see AutomationPilot.War.cs.</summary>
+public sealed class WarSettings
+{
+    /// <summary>Teleport list entry and minimap zone of the war map (user).</summary>
+    public string Destination { get; set; } = "Bohai Outpost";
+
+    /// <summary>The row of the war in the Tribe Status window (user's screenshot).</summary>
+    public string TribeRowText { get; set; } = "Bohai Outpost (Adept)";
+
+    /// <summary>The Tribe Status tile in the Menu window (user's screenshot).</summary>
+    public string MenuTileText { get; set; } = "Tribe Status";
+
+    /// <summary>How long before the war opens the pilot starts moving (user: 10 s).</summary>
+    public int LeadMs { get; set; } = 10000;
+
+    /// <summary>How long it waits for the "Confirm to move?" dialog to appear (my call: 2 min).</summary>
+    public int DialogWaitMs { get; set; } = 120000;
+
+    /// <summary>The TAB target option the war needs (user: Enemy worth CP).</summary>
+    public string TabTargetOption { get; set; } = "Enemy worth CP";
+
+    /// <summary>
+    /// The plain skill buffs clicked on the skill bar, in order, when there is no autobuff (user's crops): warbuff1, 3, 4, 5,
+    /// 6. warbuff2 is the sword's buff, in <see cref="WeaponBuffIcons"/> since settings v23 (user, 2026-10-28).
+    /// </summary>
+    public List<string> BuffIcons { get; set; } = DefaultBuffIcons();
+
+    /// <summary>
+    /// The weapon buffs (user, 2026-10-28: "the buff of different weapons"): warbuff2 (sword), warweapon1 (white-gold
+    /// lightning around dark armour), warweapon2 (blue swirl). Skill buffs, clicked after <see cref="BuffIcons"/> when
+    /// there is no autobuff. A character uses one weapon, so usually only one of them is on its bar - untick the others in
+    /// <see cref="DisabledBuffs"/>. Kept apart from BuffIcons, which a v0.19.0 copy sharing settings.json requires in full
+    /// at Start. An empty list stays empty (no refill).
+    /// </summary>
+    public List<string> WeaponBuffIcons { get; set; } = DefaultWeaponBuffIcons();
+
+    /// <summary>
+    /// Item buffs placed on the skill bar (user, 2026-10-28: "optional but item buffs can be placed on the skill bar"):
+    /// waritem1 (light scroll with a glyph), waritem2 (blue scroll); clicking one uses an item. Clicked after the skill and weapon buffs, with every rebuff, and with autobuff too (the
+    /// buff key does not use them). An empty list stays empty (no refill: the user may have taken them out).
+    /// </summary>
+    public List<string> ItemBuffIcons { get; set; } = DefaultItemBuffIcons();
+
+    /// <summary>
+    /// Buff icons (of <see cref="BuffIcons"/>, <see cref="WeaponBuffIcons"/> and <see cref="ItemBuffIcons"/>) the user
+    /// unticked in Settings > Auto War > Buffs (user, 2026-10-28): never clicked, not looked for at Start. Empty = every
+    /// buff on.
+    /// </summary>
+    public List<string> DisabledBuffs { get; set; } = [];
+
+    /// <summary>
+    /// The "X buff" (user: icon 4, the bluish-white one with an X; it drops when another player hits): clicked again on the
+    /// skill bar in every fight cycle, once a target shows, before Shura.
+    /// </summary>
+    public string XBuffIcon { get; set; } = "warbuff4";
+
+    /// <summary>Gap between two buff clicks (user: 1 s); never under 800 ms, the buff animation (user, 2026-10-28).</summary>
+    public int BuffClickGapMs { get; set; } = 1000;
+
+    /// <summary>How often the buffs are renewed (my call: 5 min 45 s; the user's buffs last at least 6 min).</summary>
+    public int BuffEveryMs { get; set; } = 345000;
+
+    /// <summary>How long the Shura key is held at the start of each fight cycle, before the skill taps (my call).</summary>
+    public int ShuraHoldMs { get; set; } = 1200;
+
+    /// <summary>How long the target must be gone before the pilot acts (my call).</summary>
+    public int TargetGoneMs { get; set; } = 2000;
+
+    /// <summary>The text that says the war gate is open, read on the whole screen (user).</summary>
+    public string GateText { get; set; } = "Gate is Open";
+
+    /// <summary>The teleport list page of the home map (user: page 3).</summary>
+    public int ListPage { get; set; } = 3;
+
+    /// <summary>The combat log word that says the character arrived (user).</summary>
+    public string ArrivedText { get; set; } = "Arrived";
+
+    /// <summary>How long it waits for the arrival line (my call).</summary>
+    public int ArriveWaitMs { get; set; } = 90000;
+
+    /// <summary>
+    /// Minimum template score of a buff icon (my call). 0.90, not 0.80: warbuff2 (the small grey streak)
+    /// scored up to 0.871 on floor texture in the skill bar band of saved frames (0.80 or more on 32 of 561,
+    /// e.g. 20261020_160055_722_nogate_s4 and the gate_view frames); the other crops stayed under 0.76.
+    /// Shura, checked with the same score, reads 0.951-1.000 on every real bar and at most 0.781 elsewhere.
+    /// </summary>
+    public double IconMatchScore { get; set; } = 0.90;
+
+    /// <summary>The map to go back to after the war, as the teleport list shows it (user; empty = not set).</summary>
+    public string HomeMap { get; set; } = "";
+
+    /// <summary>The monster to hunt on the home map (user; empty = not set).</summary>
+    public string HomeMonster { get; set; } = "";
+
+    /// <summary>The buff is ticked on: not in <see cref="DisabledBuffs"/> (any case).</summary>
+    public bool IsBuffOn(string icon) => DisabledBuffs?.Contains(icon, StringComparer.OrdinalIgnoreCase) != true;
+
+    /// <summary>
+    /// Ticks a buff on or off. A new list replaces <see cref="DisabledBuffs"/> instead of changing it: the settings panel
+    /// calls this on the UI thread while the pilot's loop thread may be going through the old one.
+    /// </summary>
+    public void SetBuffOn(string icon, bool on)
+    {
+        var disabled = DisabledBuffs ?? [];
+        if (on)
+            DisabledBuffs = [.. disabled.Where(d => !string.Equals(d, icon, StringComparison.OrdinalIgnoreCase))];
+        else if (IsBuffOn(icon))
+            DisabledBuffs = [.. disabled, icon];
+    }
+
+    internal static List<string> DefaultBuffIcons() => ["warbuff1", "warbuff3", "warbuff4", "warbuff5", "warbuff6"];
+
+    internal static List<string> DefaultWeaponBuffIcons() => ["warbuff2", "warweapon1", "warweapon2"];
+
+    internal static List<string> DefaultItemBuffIcons() => ["waritem1", "waritem2"];
 }
 
 public sealed class SequenceSettings

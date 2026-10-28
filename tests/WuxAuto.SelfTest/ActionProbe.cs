@@ -1,10 +1,11 @@
 using System.Diagnostics;
 using System.IO;
-using OpenCvSharp;
+using Emgu.CV;
 using WuxAuto.Capture;
 using WuxAuto.Core;
 using WuxAuto.Input;
 using WuxAuto.Interop;
+using WuxAuto.Vision;
 
 namespace WuxAuto.SelfTest;
 
@@ -27,7 +28,7 @@ internal static class ActionProbe
             return 1;
         }
 
-        var settings = SettingsStore.Load();
+        var settings = SettingsStore.Load(persistMigration: false);
         Console.WriteLine($"target: 0x{target.Handle:X} {target.ProcessName} client {target.ClientWidth}x{target.ClientHeight}, dry run {settings.Sequence.DryRun}");
         if (settings.Sequence.DryRun)
         {
@@ -139,15 +140,13 @@ internal static class ActionProbe
     private static async Task<Mat?> GrabAsync(DesktopCaptureService capture)
     {
         using var frame = await capture.WaitForFrameAsync(TimeSpan.FromSeconds(2), CancellationToken.None);
-        return frame == null
-            ? null
-            : Mat.FromPixelData(frame.Height, frame.Width, MatType.CV_8UC4, frame.Buffer).Clone();
+        return frame == null ? null : CaptureMats.Copy(frame);
     }
 
     private static void Save(Mat mat, string name)
     {
         string path = Path.Combine(Path.GetTempPath(), "wuxauto-" + name);
-        Cv2.ImWrite(path, mat);
+        ImageFile.Write(path, mat);
     }
 
     private static double ChangedFraction(Mat a, Mat b)
@@ -156,14 +155,14 @@ internal static class ActionProbe
             return 1;
 
         int width = a.Width, height = a.Height;
+        byte[] pa = CvHelpers.Bytes(a), pb = CvHelpers.Bytes(b);
         int changed = 0;
         for (int y = 0; y < height; y += 2)
         {
             for (int x = 0; x < width; x += 2)
             {
-                var p = a.At<Vec4b>(y, x);
-                var q = b.At<Vec4b>(y, x);
-                if (Math.Abs(p.Item0 - q.Item0) + Math.Abs(p.Item1 - q.Item1) + Math.Abs(p.Item2 - q.Item2) > 30)
+                int i = (y * width + x) * 4;
+                if (Math.Abs(pa[i] - pb[i]) + Math.Abs(pa[i + 1] - pb[i + 1]) + Math.Abs(pa[i + 2] - pb[i + 2]) > 30)
                     changed++;
             }
         }

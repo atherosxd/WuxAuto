@@ -1,4 +1,4 @@
-using OpenCvSharp;
+using Emgu.CV;
 using WuxAuto.Automation;
 using WuxAuto.Core;
 using WuxAuto.Vision;
@@ -72,7 +72,7 @@ public class LodStandStillTests
 
         long arrivedAt = 0;
         int clicksAtArrival = -1, tabsAtArrival = -1;
-        using var frame = new Mat(Height, Width, MatType.CV_8UC4, Scalar.All(0));
+        using var frame = Blank.Bgra(Height, Width);
         var run = await PilotRun.RunAsync(settings, input, ocr, frame, PilotPhase.LodRun, (_, lines) =>
         {
             if (input.Clicks > 0)
@@ -127,7 +127,7 @@ public class LodStandStillTests
     private static async Task<(PilotPhase Phase, List<string> Lines)> RunAsync(AppSettings settings, FakeGameInput input,
         FakeOcrEngine ocr, Func<AutomationPilot, bool> done)
     {
-        using var frame = new Mat(Height, Width, MatType.CV_8UC4, Scalar.All(0));
+        using var frame = Blank.Bgra(Height, Width);
         return await PilotRun.RunAsync(settings, input, ocr, frame, PilotPhase.LodRun, (pilot, _) => done(pilot));
     }
 }

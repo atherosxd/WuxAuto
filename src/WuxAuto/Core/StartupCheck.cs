@@ -1,7 +1,8 @@
 using System.IO;
 using System.Runtime.InteropServices;
 using System.Text;
-using OpenCvSharp;
+using Emgu.CV;
+using Emgu.CV.CvEnum;
 using Windows.Media.Ocr;
 
 namespace WuxAuto.Core;
@@ -18,9 +19,10 @@ public static class StartupCheck
         public bool HasProblems => Fatal.Count > 0 || Warnings.Count > 0;
     }
 
-    // Imported by OpenCvSharpExtern.dll (the native OpenCV build): if one is missing the DLL cannot load.
+    // Imported by cvextern.dll (Emgu CV's native OpenCV build; dumpbin /dependents): if one is
+    // missing the DLL cannot load. d3d11 / dxgi are the capture's too.
     private static readonly string[] MediaFoundationDlls = ["mfplat.dll", "mf.dll", "mfreadwrite.dll"];
-    private static readonly string[] OtherSystemDlls = ["d3d11.dll", "dxgi.dll", "xmllite.dll"];
+    private static readonly string[] OtherSystemDlls = ["d3d11.dll", "dxgi.dll"];
 
     public static Result Run()
     {
@@ -47,7 +49,8 @@ public static class StartupCheck
         {
             try
             {
-                _ = Cv2.GetVersionString();
+                // The first Emgu call loads cvextern.dll.
+                using var probe = new Mat(1, 1, DepthType.Cv8U, 1);
             }
             catch (Exception ex)
             {

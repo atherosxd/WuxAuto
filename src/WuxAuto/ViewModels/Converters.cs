@@ -24,11 +24,13 @@ public sealed class EnumEqualsConverter : IValueConverter
         => value is true && parameter is string name ? Enum.Parse(targetType, name) : Binding.DoNothing;
 }
 
-/// <summary>Visible for a non-empty string, collapsed for null or empty.</summary>
+/// <summary>Visible for a non-empty string, collapsed for null or empty (<see cref="Invert"/>: the other way round).</summary>
 public sealed class NotEmptyToVisibilityConverter : IValueConverter
 {
+    public bool Invert { get; init; }
+
     public object Convert(object value, Type targetType, object parameter, CultureInfo culture)
-        => value is string { Length: > 0 } ? Visibility.Visible : Visibility.Collapsed;
+        => value is string { Length: > 0 } != Invert ? Visibility.Visible : Visibility.Collapsed;
 
     public object ConvertBack(object value, Type targetType, object parameter, CultureInfo culture)
         => Binding.DoNothing;
@@ -41,6 +43,8 @@ public static class BoolConverters
     public static IValueConverter EnumEquals { get; } = new EnumEqualsConverter();
 
     public static IValueConverter NotEmptyToVisibility { get; } = new NotEmptyToVisibilityConverter();
+
+    public static IValueConverter EmptyToVisibility { get; } = new NotEmptyToVisibilityConverter { Invert = true };
 }
 
 /// <summary>Enum choices for the combo boxes.</summary>
@@ -50,6 +54,7 @@ public static class OptionLists
     {
         RunMode.AutoLaby,
         RunMode.AutoLod,
+        RunMode.AutoWar,
     };
 
     public static InputMode[] InputModes { get; } =

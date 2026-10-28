@@ -1,6 +1,10 @@
 using System.Diagnostics;
+using System.Drawing;
 using System.Text.RegularExpressions;
-using OpenCvSharp;
+using Emgu.CV;
+using Emgu.CV.CvEnum;
+using Emgu.CV.Structure;
+using WuxAuto.Automation;
 using WuxAuto.Core;
 
 namespace WuxAuto.Vision;
@@ -370,23 +374,21 @@ public sealed class ScreenAnalyzer : IDisposable
     public IReadOnlyList<PixelRect> FindGoldButtons(Mat frame, int minWidth, int minHeight, int maxHeight)
     {
         using var bgr = new Mat();
-        Cv2.CvtColor(frame, bgr, ColorConversionCodes.BGRA2BGR);
+        CvInvoke.CvtColor(frame, bgr, ColorConversion.Bgra2Bgr);
         using var hsv = new Mat();
-        Cv2.CvtColor(bgr, hsv, ColorConversionCodes.BGR2HSV);
+        CvInvoke.CvtColor(bgr, hsv, ColorConversion.Bgr2Hsv);
         using var mask = new Mat();
         // Measured on the LOG IN button: H 15-18, S 128-143, V 103-232. The sunset behind the login
         // panel has the same hue but S ~85, so saturation is what separates them.
-        Cv2.InRange(hsv, new Scalar(12, 110, 95), new Scalar(25, 255, 255), mask);
-        using var kernel = Cv2.GetStructuringElement(MorphShapes.Rect, new Size(3, 3));
-        Cv2.MorphologyEx(mask, mask, MorphTypes.Close, kernel);
+        CvHelpers.InRange(hsv, new MCvScalar(12, 110, 95), new MCvScalar(25, 255, 255), mask);
+        using var kernel = CvHelpers.StructuringElement(MorphShapes.Rectangle, new Size(3, 3));
+        CvHelpers.MorphologyEx(mask, mask, MorphOp.Close, kernel);
 
-        Cv2.FindContours(mask, out var contours, out _, RetrievalModes.External, ContourApproximationModes.ApproxSimple);
         var buttons = new List<PixelRect>();
-        foreach (var contour in contours)
+        foreach (var (box, contourArea) in CvHelpers.ExternalContours(mask))
         {
-            var box = Cv2.BoundingRect(contour);
             double aspect = box.Width / (double)Math.Max(1, box.Height);
-            double fill = Cv2.ContourArea(contour) / Math.Max(1.0, box.Width * box.Height);
+            double fill = contourArea / Math.Max(1.0, box.Width * box.Height);
             if (box.Width < minWidth || box.Height < minHeight || box.Height > maxHeight)
                 continue;
             if (aspect < 1.8 || aspect > 12 || fill < 0.5)
@@ -404,23 +406,21 @@ public sealed class ScreenAnalyzer : IDisposable
     /// </summary>
     public PixelRect? FindRedOrangeGlow(Mat frame, PixelRect roi, int minArea)
     {
-        using var crop = new Mat(frame, new Rect(roi.X, roi.Y, roi.Width, roi.Height));
+        using var crop = new Mat(frame, new Rectangle(roi.X, roi.Y, roi.Width, roi.Height));
         using var bgr = new Mat();
-        Cv2.CvtColor(crop, bgr, ColorConversionCodes.BGRA2BGR);
+        CvInvoke.CvtColor(crop, bgr, ColorConversion.Bgra2Bgr);
         using var hsv = new Mat();
-        Cv2.CvtColor(bgr, hsv, ColorConversionCodes.BGR2HSV);
+        CvInvoke.CvtColor(bgr, hsv, ColorConversion.Bgr2Hsv);
         using var low = new Mat();
         using var high = new Mat();
-        Cv2.InRange(hsv, new Scalar(0, 120, 120), new Scalar(22, 255, 255), low);
-        Cv2.InRange(hsv, new Scalar(168, 120, 120), new Scalar(180, 255, 255), high);
+        CvHelpers.InRange(hsv, new MCvScalar(0, 120, 120), new MCvScalar(22, 255, 255), low);
+        CvHelpers.InRange(hsv, new MCvScalar(168, 120, 120), new MCvScalar(180, 255, 255), high);
         using var mask = new Mat();
-        Cv2.BitwiseOr(low, high, mask);
-        using var kernel = Cv2.GetStructuringElement(MorphShapes.Ellipse, new Size(7, 7));
-        Cv2.MorphologyEx(mask, mask, MorphTypes.Close, kernel);
+        CvInvoke.BitwiseOr(low, high, mask);
+        using var kernel = CvHelpers.StructuringElement(MorphShapes.Ellipse, new Size(7, 7));
+        CvHelpers.MorphologyEx(mask, mask, MorphOp.Close, kernel);
 
-        Cv2.FindContours(mask, out var contours, out _, RetrievalModes.External, ContourApproximationModes.ApproxSimple);
-        var best = contours
-            .Select(c => (Box: Cv2.BoundingRect(c), Area: Cv2.ContourArea(c)))
+        var best = CvHelpers.ExternalContours(mask)
             .Where(t => t.Area >= minArea)
             .OrderByDescending(t => t.Area)
             .FirstOrDefault();
@@ -452,23 +452,25 @@ public sealed class ScreenAnalyzer : IDisposable
         if (roi.X < 0 || roi.Y < 0 || roi.Right > frame.Width || roi.Bottom > frame.Height || rMin < 2)
             return 0;
 
-        using var crop = new Mat(frame, new Rect(roi.X, roi.Y, roi.Width, roi.Height));
+        using var crop = new Mat(frame, new Rectangle(roi.X, roi.Y, roi.Width, roi.Height));
         using var bgr = new Mat();
-        if (crop.Channels() == 4)
-            Cv2.CvtColor(crop, bgr, ColorConversionCodes.BGRA2BGR);
+        if (crop.NumberOfChannels == 4)
+            CvInvoke.CvtColor(crop, bgr, ColorConversion.Bgra2Bgr);
         else
             crop.CopyTo(bgr);
         using var hsv = new Mat();
-        Cv2.CvtColor(bgr, hsv, ColorConversionCodes.BGR2HSV);
+        CvInvoke.CvtColor(bgr, hsv, ColorConversion.Bgr2Hsv);
 
-        var iconRect = new Rect(icon.X - roi.X, icon.Y - roi.Y, icon.Width, icon.Height);
+        var iconRect = new Rectangle(icon.X - roi.X, icon.Y - roi.Y, icon.Width, icon.Height);
         using var iconHsv = new Mat(hsv, iconRect);
-        using var value = iconHsv.ExtractChannel(2);
-        Cv2.MinMaxLoc(value, out _, out double maxValue);
+        using var value = new Mat();
+        CvInvoke.ExtractChannel(iconHsv, value, 2);
+        var (maxValue, _) = CvHelpers.MaxLoc(value);
         double minValue = Math.Max(40, 150 * maxValue / 255);
 
         using var mask = new Mat();
-        Cv2.InRange(hsv, new Scalar(15, 60, minValue), new Scalar(30, 150, 240), mask);
+        CvHelpers.InRange(hsv, new MCvScalar(15, 60, minValue), new MCvScalar(30, 150, 240), mask);
+        byte[] maskPixels = CvHelpers.Bytes(mask);
 
         const int directions = 36;
         int hits = 0;
@@ -480,7 +482,7 @@ public sealed class ScreenAnalyzer : IDisposable
             {
                 int x = (int)Math.Round(cx + r * Math.Cos(angle)) - roi.X;
                 int y = (int)Math.Round(cy + r * Math.Sin(angle)) - roi.Y;
-                hit = x >= 0 && y >= 0 && x < mask.Width && y < mask.Height && mask.At<byte>(y, x) != 0;
+                hit = x >= 0 && y >= 0 && x < mask.Width && y < mask.Height && maskPixels[y * mask.Width + x] != 0;
             }
 
             if (hit)
@@ -503,22 +505,22 @@ public sealed class ScreenAnalyzer : IDisposable
         if (roi.Width < 8 || roi.Height < 8)
             return null;
 
-        using var crop = new Mat(frame, new Rect(roi.X, roi.Y, roi.Width, roi.Height));
+        using var crop = new Mat(frame, new Rectangle(roi.X, roi.Y, roi.Width, roi.Height));
         using var bgr = new Mat();
-        if (crop.Channels() == 4)
-            Cv2.CvtColor(crop, bgr, ColorConversionCodes.BGRA2BGR);
+        if (crop.NumberOfChannels == 4)
+            CvInvoke.CvtColor(crop, bgr, ColorConversion.Bgra2Bgr);
         else
             crop.CopyTo(bgr);
         using var hsv = new Mat();
-        Cv2.CvtColor(bgr, hsv, ColorConversionCodes.BGR2HSV);
+        CvInvoke.CvtColor(bgr, hsv, ColorConversion.Bgr2Hsv);
         using var mask = new Mat();
-        Cv2.InRange(hsv, new Scalar(138, 89, 190), new Scalar(156, 255, 255), mask);
+        CvHelpers.InRange(hsv, new MCvScalar(138, 89, 190), new MCvScalar(156, 255, 255), mask);
 
-        int count = Cv2.CountNonZero(mask);
+        int count = CvInvoke.CountNonZero(mask);
         if (count < frame.Width * (double)frame.Height * minFraction)
             return null;
 
-        var box = Cv2.BoundingRect(mask);
+        var box = CvInvoke.BoundingRectangle(mask);
         return new PixelRect(roi.X + box.X, roi.Y + box.Y, box.Width, box.Height);
     }
 
@@ -537,17 +539,17 @@ public sealed class ScreenAnalyzer : IDisposable
 
         using var hsv = ToHsv(frame, roi);
         using var mask = new Mat();
-        Cv2.InRange(hsv, new Scalar(135, 35, 170), new Scalar(162, 255, 255), mask);
+        CvHelpers.InRange(hsv, new MCvScalar(135, 35, 170), new MCvScalar(162, 255, 255), mask);
         int k = Math.Max(3, frame.Height / 90) | 1;
-        using var kernel = Cv2.GetStructuringElement(MorphShapes.Ellipse, new Size(k, k));
-        Cv2.MorphologyEx(mask, mask, MorphTypes.Close, kernel);
+        using var kernel = CvHelpers.StructuringElement(MorphShapes.Ellipse, new Size(k, k));
+        CvHelpers.MorphologyEx(mask, mask, MorphOp.Close, kernel);
 
         double minPixels = frame.Width * (double)frame.Height * 1.5e-4;
         var parts = Components(mask).Where(c => c.Pixels >= minPixels / 6).ToList();
         var seed = parts
             .Where(c => c.Pixels >= minPixels && c.Box.Width >= frame.Width * 0.04 && c.Box.Width >= c.Box.Height)
             .OrderByDescending(c => c.Pixels)
-            .Select(c => (Rect?)c.Box)
+            .Select(c => (Rectangle?)c.Box)
             .FirstOrDefault();
         if (seed is not { } ring)
             return null;
@@ -565,7 +567,7 @@ public sealed class ScreenAnalyzer : IDisposable
                 if (box.Height > box.Width * 2 || !Inflate(ring, reach).IntersectsWith(box))
                     continue;
 
-                var union = ring | box;
+                var union = Rectangle.Union(ring, box);
                 parts.RemoveAt(i);
                 if (union == ring)
                     continue;
@@ -577,7 +579,7 @@ public sealed class ScreenAnalyzer : IDisposable
 
         return new PixelRect(roi.X + ring.X, roi.Y + ring.Y, ring.Width, ring.Height);
 
-        static Rect Inflate(Rect r, int by) => new(r.X - by, r.Y - by, r.Width + 2 * by, r.Height + 2 * by);
+        static Rectangle Inflate(Rectangle r, int by) => new(r.X - by, r.Y - by, r.Width + 2 * by, r.Height + 2 * by);
     }
 
     /// <summary>
@@ -615,7 +617,7 @@ public sealed class ScreenAnalyzer : IDisposable
 
         using var hsv = ToHsv(frame, roi);
         using var mask = new Mat();
-        Cv2.InRange(hsv, new Scalar(80, 120, 170), new Scalar(100, 255, 255), mask);
+        CvHelpers.InRange(hsv, new MCvScalar(80, 120, 170), new MCvScalar(100, 255, 255), mask);
 
         double unit = frame.Height / 1080.0;
         var blobs = Components(mask)
@@ -623,17 +625,17 @@ public sealed class ScreenAnalyzer : IDisposable
             .Select(c => c.Box)
             .ToList();
 
-        Rect? found = blobs
+        Rectangle? found = blobs
             .Where(b => b.Height >= frame.Height * 0.10 && b.Height >= 3 * b.Width)
             .OrderByDescending(b => b.Height)
-            .Select(b => (Rect?)b)
+            .Select(b => (Rectangle?)b)
             .FirstOrDefault();
 
         // A chain: from each patch downwards, the next patch in the same column within a gap.
         double column = frame.Height * 0.03, gap = frame.Height * 0.08;
         foreach (var top in blobs.OrderBy(b => b.Y))
         {
-            var chain = new List<Rect> { top };
+            var chain = new List<Rectangle> { top };
             var last = top;
             foreach (var next in blobs.Where(b => b.Y > last.Y).OrderBy(b => b.Y))
             {
@@ -648,14 +650,14 @@ public sealed class ScreenAnalyzer : IDisposable
                 continue;
 
             int left = chain.Min(b => b.X), right = chain.Max(b => b.Right);
-            var box = new Rect(left, top.Y, right - left, last.Bottom - top.Y);
+            var box = new Rectangle(left, top.Y, right - left, last.Bottom - top.Y);
             if (found is not { } f || box.Height > f.Height)
                 found = box;
         }
 
         return found is { } belt ? new PixelRect(roi.X + belt.X, roi.Y + belt.Y, belt.Width, belt.Height) : null;
 
-        static double CenterX(Rect r) => r.X + r.Width / 2.0;
+        static double CenterX(Rectangle r) => r.X + r.Width / 2.0;
     }
 
     /// <summary>The game world between the HUD panels, where the ring and boss detectors look.</summary>
@@ -663,17 +665,21 @@ public sealed class ScreenAnalyzer : IDisposable
         (int)(frame.Width * 0.70), (int)(frame.Height * 0.78)).Clamp(frame.Width, frame.Height);
 
     /// <summary>Connected patches of a mask: bounding box and pixel count.</summary>
-    private static List<(Rect Box, int Pixels)> Components(Mat mask)
+    private static List<(Rectangle Box, int Pixels)> Components(Mat mask)
     {
         using var labels = new Mat();
         using var stats = new Mat();
         using var centroids = new Mat();
-        int count = Cv2.ConnectedComponentsWithStats(mask, labels, stats, centroids);
-        var list = new List<(Rect, int)>(Math.Max(0, count - 1));
+        int count = CvInvoke.ConnectedComponentsWithStats(mask, labels, stats, centroids);
+        // One row per label: left, top, width, height, area.
+        int[] table = CvHelpers.Int32s(stats);
+        int columns = stats.Cols;
+        var list = new List<(Rectangle, int)>(Math.Max(0, count - 1));
         for (int i = 1; i < count; i++)
         {
-            var box = new Rect(stats.At<int>(i, 0), stats.At<int>(i, 1), stats.At<int>(i, 2), stats.At<int>(i, 3));
-            list.Add((box, stats.At<int>(i, 4)));
+            int row = i * columns;
+            var box = new Rectangle(table[row], table[row + 1], table[row + 2], table[row + 3]);
+            list.Add((box, table[row + 4]));
         }
 
         return list;
@@ -693,19 +699,18 @@ public sealed class ScreenAnalyzer : IDisposable
 
         using var hsv = ToHsv(frame, band);
         using var mask = new Mat();
-        Cv2.InRange(hsv, new Scalar(10, 70, 110), new Scalar(32, 255, 255), mask);
-        if (Cv2.CountNonZero(mask) < h)
+        CvHelpers.InRange(hsv, new MCvScalar(10, 70, 110), new MCvScalar(32, 255, 255), mask);
+        if (CvInvoke.CountNonZero(mask) < h)
             return fallback;
 
         // The rows sit ~2 px apart, so the gold frames of the boxes above and below touch this one
         // and merge into one tall outline. Its width is still the box size: the box is that square,
         // centred on the label's row.
-        Cv2.FindContours(mask, out var contours, out _, RetrievalModes.External, ContourApproximationModes.ApproxSimple);
         int labelCy = label.CenterY - band.Y;
-        var best = contours.Select(Cv2.BoundingRect)
+        var best = CvHelpers.ExternalContours(mask).Select(c => c.Box)
             .Where(r => r.Width >= h * 0.6 && r.Width <= h * 3 && r.Y <= labelCy && r.Bottom >= labelCy)
             .OrderByDescending(r => r.Right)
-            .Select(r => (Rect?)r)
+            .Select(r => (Rectangle?)r)
             .FirstOrDefault();
         if (best is not { } r0)
             return fallback;
@@ -724,10 +729,10 @@ public sealed class ScreenAnalyzer : IDisposable
         if (inner.Width < 2 || inner.Height < 2)
             return false;
 
-        using var crop = new Mat(frame, new Rect(inner.X, inner.Y, inner.Width, inner.Height));
+        using var crop = new Mat(frame, new Rectangle(inner.X, inner.Y, inner.Width, inner.Height));
         using var gray = new Mat();
-        Cv2.CvtColor(crop, gray, crop.Channels() == 4 ? ColorConversionCodes.BGRA2GRAY : ColorConversionCodes.BGR2GRAY);
-        Cv2.MinMaxLoc(gray, out _, out double max);
+        CvInvoke.CvtColor(crop, gray, crop.NumberOfChannels == 4 ? ColorConversion.Bgra2Gray : ColorConversion.Bgr2Gray);
+        var (max, _) = CvHelpers.MaxLoc(gray);
         return max > 140;
     }
 
@@ -751,16 +756,42 @@ public sealed class ScreenAnalyzer : IDisposable
         return blob ?? fallback;
     }
 
+    /// <summary>
+    /// Auto War: the X right of a window title found the way <see cref="FindCloseButtonRightOf"/> finds it (the first
+    /// button-sized bright blob in the same band), but null when there is none instead of a guessed point - a blind
+    /// click there can land in the world. The TELEPORT SCROLL's X was a blob on all 12 saved frames with the list open
+    /// (1024x768 to 2048x1152).
+    /// </summary>
+    public PixelRect? FindCloseBlobRightOf(Mat frame, PixelRect title)
+    {
+        int h = Math.Max(6, title.Height);
+        var band = new PixelRect(title.Right + 2, title.Y - h, 6 * h, title.Height + 2 * h).Clamp(frame.Width, frame.Height);
+        return ButtonBlobs(frame, band, h).OrderBy(b => b.X).Select(b => (PixelRect?)b).FirstOrDefault();
+    }
+
+    /// <summary>
+    /// Auto War: the bright blobs in <paramref name="band"/> of button size (3 px to 3 text heights each way, as
+    /// <see cref="FindCloseButtonRightOf"/> takes them).
+    /// </summary>
+    private IEnumerable<PixelRect> ButtonBlobs(Mat frame, PixelRect band, int h)
+    {
+        if (band.Width < 4 || band.Height < 4)
+            return [];
+
+        return FindBrightBlobs(frame, band)
+            .Where(b => b.Width <= 3 * h && b.Height <= 3 * h && b.Width >= 3 && b.Height >= 3);
+    }
+
     private static Mat ToHsv(Mat frame, PixelRect roi)
     {
-        using var crop = new Mat(frame, new Rect(roi.X, roi.Y, roi.Width, roi.Height));
+        using var crop = new Mat(frame, new Rectangle(roi.X, roi.Y, roi.Width, roi.Height));
         using var bgr = new Mat();
-        if (crop.Channels() == 4)
-            Cv2.CvtColor(crop, bgr, ColorConversionCodes.BGRA2BGR);
+        if (crop.NumberOfChannels == 4)
+            CvInvoke.CvtColor(crop, bgr, ColorConversion.Bgra2Bgr);
         else
             crop.CopyTo(bgr);
         var hsv = new Mat();
-        Cv2.CvtColor(bgr, hsv, ColorConversionCodes.BGR2HSV);
+        CvInvoke.CvtColor(bgr, hsv, ColorConversion.Bgr2Hsv);
         return hsv;
     }
 
@@ -771,15 +802,15 @@ public sealed class ScreenAnalyzer : IDisposable
         if (roi.Width < 4 || roi.Height < 4)
             return blobs;
 
-        using var sub = new Mat(frame, new Rect(roi.X, roi.Y, roi.Width, roi.Height));
+        using var sub = new Mat(frame, new Rectangle(roi.X, roi.Y, roi.Width, roi.Height));
         using var gray = new Mat();
-        switch (sub.Channels())
+        switch (sub.NumberOfChannels)
         {
             case 4:
-                Cv2.CvtColor(sub, gray, ColorConversionCodes.BGRA2GRAY);
+                CvInvoke.CvtColor(sub, gray, ColorConversion.Bgra2Gray);
                 break;
             case 3:
-                Cv2.CvtColor(sub, gray, ColorConversionCodes.BGR2GRAY);
+                CvInvoke.CvtColor(sub, gray, ColorConversion.Bgr2Gray);
                 break;
             default:
                 sub.CopyTo(gray);
@@ -787,15 +818,10 @@ public sealed class ScreenAnalyzer : IDisposable
         }
 
         using var mask = new Mat();
-        Cv2.Threshold(gray, mask, 0, 255, ThresholdTypes.Binary | ThresholdTypes.Otsu);
+        CvInvoke.Threshold(gray, mask, 0, 255, ThresholdType.Binary | ThresholdType.Otsu);
 
-        using var hierarchy = new Mat();
-        Cv2.FindContours(mask, out Point[][] contours, out _, RetrievalModes.External,
-            ContourApproximationModes.ApproxSimple);
-
-        foreach (var contour in contours)
+        foreach (var (box, _) in CvHelpers.ExternalContours(mask))
         {
-            var box = Cv2.BoundingRect(contour);
             if (box.Width < 2 || box.Height < 3 || box.Width * box.Height < 6)
                 continue;
 
@@ -943,20 +969,20 @@ public sealed class ScreenAnalyzer : IDisposable
     private async Task<(string Text, PixelRect Bounds)> OcrEnhancedAsync(Mat frame, PixelRect box, int up, bool binarize = true)
     {
         const int Pad = 20;
-        using var crop = new Mat(frame, new Rect(box.X, box.Y, box.Width, box.Height));
+        using var crop = new Mat(frame, new Rectangle(box.X, box.Y, box.Width, box.Height));
         using var gray = new Mat();
-        Cv2.CvtColor(crop, gray, ColorConversionCodes.BGRA2GRAY);
+        CvInvoke.CvtColor(crop, gray, ColorConversion.Bgra2Gray);
         using var big = new Mat();
-        Cv2.Resize(gray, big, new Size(), up, up, InterpolationFlags.Cubic);
+        CvInvoke.Resize(gray, big, new Size(), up, up, Inter.Cubic);
         using var binary = new Mat();
         if (binarize)
-            Cv2.Threshold(big, binary, 0, 255, ThresholdTypes.Binary | ThresholdTypes.Otsu);
+            CvInvoke.Threshold(big, binary, 0, 255, ThresholdType.Binary | ThresholdType.Otsu);
         else
             big.CopyTo(binary);
         using var padded = new Mat();
-        Cv2.CopyMakeBorder(binary, padded, Pad, Pad, Pad, Pad, BorderTypes.Constant, Scalar.Black);
+        CvInvoke.CopyMakeBorder(binary, padded, Pad, Pad, Pad, Pad, BorderType.Constant, new MCvScalar(0, 0, 0));
         using var bgra = new Mat();
-        Cv2.CvtColor(padded, bgra, ColorConversionCodes.GRAY2BGRA);
+        CvInvoke.CvtColor(padded, bgra, ColorConversion.Gray2Bgra);
 
         var words = await Ocr.RecognizeAsync(bgra, new PixelRect(0, 0, bgra.Width, bgra.Height), 1.0);
         if (words.Count == 0)
@@ -1034,6 +1060,371 @@ public sealed class ScreenAnalyzer : IDisposable
         }
 
         return found;
+    }
+
+    /// <summary>OCR words joined into their lines: one entry per line box, top to bottom.</summary>
+    public static IReadOnlyList<(string Text, PixelRect Bounds)> ToLines(IReadOnlyList<OcrWord> words)
+        => words.GroupBy(w => w.LineBounds)
+            .Select(g => (Text: g.First().LineText, Bounds: g.Key))
+            .OrderBy(l => l.Bounds.Y)
+            .ThenBy(l => l.Bounds.X)
+            .ToList();
+
+    /// <summary>
+    /// OCR of <paramref name="roi"/> with only white text kept bright: every pixel becomes the darkest of
+    /// its three colour channels, so white numbers stay white while the red HP bar, the blue MP bar and
+    /// coloured scenery turn dark. Lines in frame coordinates, top to bottom.
+    /// </summary>
+    internal async Task<IReadOnlyList<(string Text, PixelRect Bounds)>> OcrWhiteTextAsync(Mat frame, PixelRect roi, double scale)
+    {
+        using var crop = new Mat(frame, new Rectangle(roi.X, roi.Y, roi.Width, roi.Height));
+        var channels = crop.Split();
+        try
+        {
+            using var darkest = new Mat();
+            CvInvoke.Min(channels[0], channels[1], darkest);
+            CvInvoke.Min(darkest, channels[2], darkest);
+            using var bgra = new Mat();
+            CvInvoke.CvtColor(darkest, bgra, ColorConversion.Gray2Bgra);
+            var words = await Ocr.RecognizeAsync(bgra, new PixelRect(0, 0, bgra.Width, bgra.Height), scale);
+            return ToLines(words)
+                .Select(l => (l.Text, new PixelRect(roi.X + l.Bounds.X, roi.Y + l.Bounds.Y, l.Bounds.Width, l.Bounds.Height)))
+                .ToList();
+        }
+        finally
+        {
+            foreach (var channel in channels)
+                channel.Dispose();
+        }
+    }
+
+    /// <summary>
+    /// Auto War: the player's HP as "cur / max" from <see cref="RegionSettings.PlayerHp"/>: OCR x2 of the
+    /// white text only (<see cref="OcrWhiteTextAsync"/>), then plain OCR x2 when that reads none - the white
+    /// read blacks out digits that are not white, should the game tint them at low HP or at death (no frame
+    /// shows that yet). Saved frames (561): the white read alone reads 508 - every frame with the game's
+    /// HUD at the top left - and plain x2 alone 493, dropping a leading digit on three ("1073 / 41073" for
+    /// 41073); both together 511 (the fallback only adds desktop captures with the game window offset).
+    /// Null when unread.
+    /// </summary>
+    public async Task<(int Cur, int Max)?> ReadPlayerHpAsync(Mat frame)
+    {
+        var roi = _settings.Regions.PlayerHp.ToPixels(frame.Width, frame.Height);
+        return WarText.ParseHp(await OcrWhiteTextAsync(frame, roi, 2.0))
+               ?? WarText.ParseHp(ToLines(await Ocr.RecognizeAsync(frame, roi, 2.0)));
+    }
+
+    /// <summary>
+    /// Auto War: the target's name in <see cref="RegionSettings.TargetBox"/> (a name only counts with its
+    /// "N / M" line under it) and the target bar's treasure chest (monstericon, top centre), each null when
+    /// not seen. OCR x1.5, then x2 of the white text only when that names no one: the slash of the numbers
+    /// line on the red bar is often dropped. Saved frames (561): 57 named at x1.5, 114 with the second read.
+    /// </summary>
+    public async Task<(string? Name, TemplateMatch? Chest)> ReadTargetAsync(Mat frame)
+    {
+        var roi = _settings.Regions.TargetBox.ToPixels(frame.Width, frame.Height);
+        string? name = WarText.FindTargetName(ToLines(await Ocr.RecognizeAsync(frame, roi, 1.5)))
+                       ?? WarText.FindTargetName(await OcrWhiteTextAsync(frame, roi, 2.0));
+        var chest = FindIcon(frame, "monstericon", new NormRect(0.25, 0, 0.50, 0.16).ToPixels(frame.Width, frame.Height), 0.80);
+        return (name, chest);
+    }
+
+    /// <summary>R - max(G, B) above this = red text (<see cref="RedTextMask"/>): a red name reads 120-180, orange about 60.</summary>
+    internal const int RedTextMinExcess = 80;
+
+    /// <summary>
+    /// A BGR(A) image as one channel with only red kept bright: 255 where red exceeds both green and blue by more than
+    /// <see cref="RedTextMinExcess"/>, else 0. White, grey, black, orange and pale pink all turn dark.
+    /// </summary>
+    internal static Mat RedTextMask(Mat bgra)
+    {
+        var channels = bgra.Split();
+        try
+        {
+            using var greenBlue = new Mat();
+            CvInvoke.Max(channels[0], channels[1], greenBlue);
+            using var excess = new Mat();
+            CvInvoke.Subtract(channels[2], greenBlue, excess);    // 8-bit: saturates at 0
+            var mask = new Mat();
+            CvInvoke.Threshold(excess, mask, RedTextMinExcess, 255, ThresholdType.Binary);
+            return mask;
+        }
+        finally
+        {
+            foreach (var channel in channels)
+                channel.Dispose();
+        }
+    }
+
+    /// <summary>
+    /// OCR of <paramref name="roi"/> with only red text kept bright (<see cref="RedTextMask"/>): a player's red name, which
+    /// the white read blacks out. Lines in frame coordinates, top to bottom.
+    /// </summary>
+    internal async Task<IReadOnlyList<(string Text, PixelRect Bounds)>> OcrRedTextAsync(Mat frame, PixelRect roi, double scale)
+    {
+        using var crop = new Mat(frame, new Rectangle(roi.X, roi.Y, roi.Width, roi.Height));
+        using var mask = RedTextMask(crop);
+        using var bgra = new Mat();
+        CvInvoke.CvtColor(mask, bgra, ColorConversion.Gray2Bgra);
+        var words = await Ocr.RecognizeAsync(bgra, new PixelRect(0, 0, bgra.Width, bgra.Height), scale);
+        return ToLines(words)
+            .Select(l => (l.Text, new PixelRect(roi.X + l.Bounds.X, roi.Y + l.Bounds.Y, l.Bounds.Width, l.Bounds.Height)))
+            .ToList();
+    }
+
+    /// <summary>
+    /// Auto War's fight: what the target box holds (user, 2026-10-28: a player's name is red and the white read blacks it
+    /// out). The name as <see cref="ReadTargetAsync"/> finds it - OCR x1.5, then the white text at x2 - and, when neither
+    /// names one, the red text at x2 (<see cref="WarText.FindTargetName"/> on the red read alone). The HP bar's numbers
+    /// line (<see cref="WarText.TargetHpLine"/>: in the box's centre band, so the pet panel's "100/100" never counts) of any
+    /// of these reads is a target on its own, named or not; the chest as in <see cref="ReadTargetAsync"/>.
+    /// <paramref name="seenOnly"/> (the attack step, where only "is it still there" matters): stop at the first sign - the
+    /// chest, then the first read with a name or the numbers line. <see cref="ReadTargetAsync"/> itself is left as it was
+    /// (the remember step needs a real name).
+    /// </summary>
+    public async Task<WarTargetRead> ReadWarTargetAsync(Mat frame, bool seenOnly = false)
+    {
+        var roi = _settings.Regions.TargetBox.ToPixels(frame.Width, frame.Height);
+        var chest = FindIcon(frame, "monstericon", new NormRect(0.25, 0, 0.50, 0.16).ToPixels(frame.Width, frame.Height), 0.80);
+        if (seenOnly && chest != null)
+            return new WarTargetRead(null, null, chest, "chest");
+
+        var plain = ToLines(await Ocr.RecognizeAsync(frame, roi, 1.5));
+        var hpLine = WarText.TargetHpLine(plain, roi);
+        if (WarText.FindTargetName(plain) is { } name)
+            return new WarTargetRead(name, hpLine, chest, "x1.5");
+        if (seenOnly && hpLine != null)
+            return new WarTargetRead(null, hpLine, chest, "numbers");
+
+        var white = await OcrWhiteTextAsync(frame, roi, 2.0);
+        hpLine ??= WarText.TargetHpLine(white, roi);
+        if (WarText.FindTargetName(white) is { } whiteName)
+            return new WarTargetRead(whiteName, hpLine, chest, "white x2");
+        if (seenOnly && hpLine != null)
+            return new WarTargetRead(null, hpLine, chest, "numbers");
+
+        var red = await OcrRedTextAsync(frame, roi, 2.0);
+        hpLine ??= WarText.TargetHpLine(red, roi);
+        if (WarText.FindTargetName(red) is { } redName)
+            return new WarTargetRead(redName, hpLine, chest, "red x2");
+
+        string via = hpLine != null ? "numbers" : chest != null ? "chest" : "none";
+        return new WarTargetRead(null, hpLine, chest, via);
+    }
+
+    /// <summary>
+    /// Skill bar icons in <see cref="RegionSettings.Hotbar"/>: per template its <see cref="BestLeftmost"/>
+    /// hit at <paramref name="minScore"/> or more, null when it is not on the bar. In the order given.
+    /// </summary>
+    public IReadOnlyList<(string Template, TemplateMatch? Match)> FindSkillBarIcons(Mat frame, IReadOnlyList<string> templates, double minScore)
+    {
+        var bar = _settings.Regions.Hotbar.ToPixels(frame.Width, frame.Height);
+        return templates
+            .Select(template => (template, BestLeftmost(FindIcons(frame, template, bar, minScore, maxResults: 4))))
+            .ToList();
+    }
+
+    /// <summary>
+    /// The best-scoring hit; hits within 0.01 of it are a tie and the leftmost wins (the same icon can sit
+    /// in two slots of the skill bar: Shura at 1035 and 1240 on a 1920x1080 bar, both 1.00). Null when none.
+    /// </summary>
+    internal static TemplateMatch? BestLeftmost(IReadOnlyCollection<TemplateMatch> hits)
+    {
+        if (hits.Count == 0)
+            return null;
+
+        double top = hits.Max(h => h.Score);
+        return hits.Where(h => h.Score >= top - 0.01).MinBy(h => h.Bounds.CenterX);
+    }
+
+    /// <summary>
+    /// Auto War: the countdown of the Tribe Status row <paramref name="rowText"/> ("Bohai Outpost (Adept)" under
+    /// NEXT WARS) - its time or "In progress"; null when it cannot tell (never zero). <paramref name="lines"/> is a
+    /// whole-frame OCR x1 (<see cref="ToLines"/>), decided by <see cref="WarText.FindWarRow"/> first. Windows OCR
+    /// drops every "h:mm:ss" token in such a read (a synthetic "00:04:25" reads as nothing, "00: 04: 25" reads), so
+    /// when that decides nothing each candidate row line (<see cref="WarText.WarRowLines"/>: most of the row's letters,
+    /// the bare row before a chat notice naming the war) is read again: <see cref="CountdownBand"/> right of it with
+    /// a gap after each colon (<see cref="GapAfterColons"/>), OCR x2. The user's Tribe Status screenshot (795x829):
+    /// x1, x1.5 and x2 read no time, the gapped band 00:04:25.
+    /// </summary>
+    public async Task<WarCountdown?> ReadWarCountdownAsync(Mat frame, IReadOnlyList<(string Text, PixelRect Bounds)> lines, string rowText, List<string>? trace = null)
+    {
+        var row = WarText.FindWarRow(lines, rowText);
+        if (row != null)
+        {
+            trace?.Add("decided by the whole-frame read");
+            return row;
+        }
+
+        var candidates = WarText.WarRowLines(lines, rowText);
+        if (candidates.Count == 0)
+            trace?.Add($"no line carries most of '{rowText}'");
+
+        foreach (var line in candidates)
+        {
+            int h = Math.Max(4, line.Bounds.Height);
+            var band = CountdownBand(line.Bounds, frame.Width, frame.Height);
+            using var spaced = GapAfterColons(frame, band, h, out int colons);
+            var bandLines = ToLines(await Ocr.RecognizeAsync(spaced, new PixelRect(0, 0, spaced.Width, spaced.Height), 2.0))
+                .Select(l => (l.Text, new PixelRect(band.X + l.Bounds.X, band.Y + l.Bounds.Y, l.Bounds.Width, l.Bounds.Height)))
+                .ToList();
+            var decided = WarText.FindWarRow([line, .. bandLines], rowText);
+            trace?.Add($"row '{line.Text}' {line.Bounds}: {colons} colon(s), band read '{string.Join(" | ", bandLines.Select(l => l.Text))}'");
+            if (decided != null)
+                return decided;
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// Where the war row's time is read: right of the row line, half a line height above and below, at most 20
+    /// line heights long (the screenshot's time ends 10.7 heights past "Bohai Outpost (Adept)"; the rest of the
+    /// frame is other windows or the world), clamped to the frame.
+    /// </summary>
+    internal static PixelRect CountdownBand(PixelRect row, int frameWidth, int frameHeight)
+    {
+        int h = Math.Max(4, row.Height);
+        return PixelRect.FromBounds(row.Right, row.Y - h / 2, Math.Min(frameWidth, row.Right + 20 * h), row.Bottom + h / 2)
+            .Clamp(frameWidth, frameHeight);
+    }
+
+    /// <summary>
+    /// A copy of <paramref name="band"/> with a blank gap (half the text height, at least 4 px, in the band's
+    /// background colour) after each colon (<see cref="ColonCuts"/> over the Otsu-bright blobs);
+    /// <paramref name="textHeight"/> = the row's OCR line height.
+    /// </summary>
+    private static Mat GapAfterColons(Mat frame, PixelRect band, int textHeight, out int colons)
+    {
+        using var crop = new Mat(frame, new Rectangle(band.X, band.Y, band.Width, band.Height));
+        using var gray = new Mat();
+        CvInvoke.CvtColor(crop, gray, crop.NumberOfChannels == 4 ? ColorConversion.Bgra2Gray : ColorConversion.Bgr2Gray);
+        using var bright = new Mat();
+        CvInvoke.Threshold(gray, bright, 0, 255, ThresholdType.Binary | ThresholdType.Otsu);
+
+        // connectedComponentsWithStats with its defaults (8-connectivity, 32-bit labels), as Components runs it.
+        var blobs = Components(bright)
+            .Select(c => new PixelRect(c.Box.X, c.Box.Y, c.Box.Width, c.Box.Height))
+            .ToList();
+        var cuts = ColonCuts(blobs, textHeight);
+
+        colons = cuts.Count;
+        int gap = Math.Max(4, textHeight / 2);
+        using var dark = new Mat();
+        CvInvoke.BitwiseNot(bright, dark);
+        var background = CvInvoke.Mean(crop, dark);
+        // cv::Mat(rows, cols, type, scalar): allocated by OpenCV, every pixel set to the scalar.
+        var result = new Mat(crop.Rows, crop.Cols + gap * cuts.Count, crop.Depth, crop.NumberOfChannels);
+        result.SetTo(background);
+        int from = 0, to = 0;
+        foreach (int cut in cuts.Append(crop.Cols))
+        {
+            int end = Math.Min(crop.Cols, cut);
+            if (end > from)
+            {
+                using var source = new Mat(crop, new Rectangle(from, 0, end - from, crop.Rows));
+                using var target = new Mat(result, new Rectangle(to, 0, end - from, crop.Rows));
+                source.CopyTo(target);
+            }
+
+            to += end - from + gap;
+            from = end;
+        }
+
+        return result;
+    }
+
+    /// <summary>
+    /// The colons among the bright blobs of one text line (band coordinates): two dots (at most a quarter of
+    /// <paramref name="textHeight"/> each way) stacked in one column, with a glyph (half to 1.5 text heights tall,
+    /// spanning both dots; the window border is taller) within a text height on either side. Per colon the first
+    /// column right of it, sorted. A full stop, "..", or a colon at the end of a line is none.
+    /// </summary>
+    internal static IReadOnlyList<int> ColonCuts(IReadOnlyList<PixelRect> blobs, int textHeight)
+    {
+        var dots = blobs.Where(b => b.Height <= textHeight / 4.0 && b.Width <= textHeight / 4.0).ToList();
+        var glyphs = blobs.Where(b => b.Height >= textHeight / 2.0 && b.Height <= textHeight * 1.5).ToList();
+        var cuts = new List<int>();
+        foreach (var top in dots)
+        {
+            foreach (var bottom in dots)
+            {
+                bool stacked = bottom.Y >= top.Bottom && bottom.X < top.Right && bottom.Right > top.X;
+                bool inLine = glyphs.Any(g => g.Right <= top.X && top.X - g.Right <= textHeight && g.Y <= top.Y && g.Bottom >= bottom.Bottom)
+                              && glyphs.Any(g => g.X >= top.Right && g.X - top.Right <= textHeight && g.Y <= top.Y && g.Bottom >= bottom.Bottom);
+                int cut = Math.Max(top.Right, bottom.Right);
+                if (stacked && inLine && !cuts.Contains(cut))
+                    cuts.Add(cut);
+            }
+        }
+
+        cuts.Sort();
+        return cuts;
+    }
+
+    /// <summary>
+    /// Auto War: what closes the windows the war timer opened - the TRIBE STATUS window first, else the MENU:
+    /// its title in capitals (<see cref="WarText.FindWindowTitle"/>; the Menu's mixed-case "Tribe Status" tile is
+    /// not one) and the X in the window's top right corner, far further from the title than a dialog's: the
+    /// button-sized bright blob in <see cref="WarCloseBand"/> picked by <see cref="PickWarClose"/>. No such blob =
+    /// <see cref="WarWindow.Close"/> null: no blind click (with the MENU grid scrolled under the title, a point on
+    /// the title's row can be a tile, which opens another window). Null when neither title shows.
+    /// Measured on the user's screenshots (title box, X, window's right edge; title widths right of the title's
+    /// centre for the X's centre / the X's right side / the edge):
+    /// TRIBE STATUS 322-467 x 8-24 (16 px), X 753-767 x 12-26, edge 795 - 2.52 / 2.57 / 2.76; a corner ornament
+    /// (775-785 x 0-13) sits between the X and the edge. MENU (faint glyphs - the title does not read there, the grid
+    /// is scrolled under it) 171-226 x 22-35 (13 px), X 352-366 x 26-39, edge ~380 - 2.93 / 3.05 / 3.3; the tile
+    /// label "Inventory (I)" (279-361 x 28-41) shares the title's rows, left of the X.
+    /// </summary>
+    public WarWindow? FindWarWindowClose(Mat frame, IReadOnlyList<(string Text, PixelRect Bounds)> lines)
+    {
+        foreach (var (title, reach, edge, x) in new[] { (WarText.TribeStatusTitle, 22, 2.7, 2.52), (WarText.MenuTitle, 12, 3.2, 2.93) })
+        {
+            if (WarText.FindWindowTitle(lines, title) is not { } line)
+                continue;
+
+            var band = WarCloseBand(line.Bounds, reach, edge, frame.Width, frame.Height);
+            var buttons = ButtonBlobs(frame, band, Math.Max(6, line.Bounds.Height));
+            return new WarWindow(title, line.Text, line.Bounds, PickWarClose(buttons, line.Bounds, x));
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// The war window's X among the button-sized blobs right of its title: the one whose centre is nearest
+    /// <paramref name="xWidths"/> title widths right of the title's centre, and no more than one title height from
+    /// that point - neither the leftmost (the scrolled MENU grid's labels lie left of the X) nor the rightmost
+    /// (TRIBE STATUS's corner ornament lies right of it). Null when none is that close.
+    /// </summary>
+    internal static PixelRect? PickWarClose(IEnumerable<PixelRect> buttons, PixelRect title, double xWidths)
+    {
+        int h = Math.Max(6, title.Height);
+        double expected = title.CenterX + xWidths * title.Width;
+        return buttons
+            .Where(b => Math.Abs(b.CenterX - expected) <= h)
+            .OrderBy(b => Math.Abs(b.CenterX - expected))
+            .Select(b => (PixelRect?)b)
+            .FirstOrDefault();
+    }
+
+    /// <summary>
+    /// Where a war window's X is looked for: the title's rows (half a title height above and below, so the rows
+    /// under the title stay out), from just right of the title to the nearer of <paramref name="reachHeights"/>
+    /// title heights and <paramref name="edgeWidths"/> title widths right of the title's centre. The width bound
+    /// stops short of the window's right edge (measured in <see cref="FindWarWindowClose"/>), so nothing in the world
+    /// beyond it (a click there walks the character) is ever taken for the X; it holds while OCR's title box is
+    /// within a few pixels of the glyphs. The height bound keeps a mis-sized title box from reaching far. Not
+    /// everything is kept out: with the MENU grid scrolled under its title (the user's screenshot) the tile labels
+    /// share the title's rows - "Inventory (I)" at 279-361 x 28-41 lies inside the band, left of the X - and
+    /// TRIBE STATUS's corner ornament lies right of its X; <see cref="PickWarClose"/> chooses among them.
+    /// </summary>
+    internal static PixelRect WarCloseBand(PixelRect title, int reachHeights, double edgeWidths, int frameWidth, int frameHeight)
+    {
+        int h = Math.Max(6, title.Height);
+        int left = title.Right + 2;
+        int right = Math.Min(left + reachHeights * h, title.CenterX + (int)(edgeWidths * title.Width));
+        return PixelRect.FromBounds(left, title.Y - h / 2, right, title.Bottom + h / 2).Clamp(frameWidth, frameHeight);
     }
 
     /// <summary>Manual "what do the detectors see" pass used by the Test scan button.</summary>

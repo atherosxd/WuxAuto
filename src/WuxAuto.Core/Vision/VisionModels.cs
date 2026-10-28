@@ -35,6 +35,22 @@ public sealed record OcrWord(string Text, PixelRect Bounds, string LineText, Pix
 public sealed record ConfirmDialog(string Message, PixelRect MessageBounds, PixelRect Button, string How);
 
 /// <summary>
+/// An open war window (Auto War): which one (<c>Window</c>: "TRIBE STATUS" or "MENU"), its title as read, and its X -
+/// null when no close button was seen (no blind click).
+/// </summary>
+public sealed record WarWindow(string Window, string Title, PixelRect TitleBounds, PixelRect? Close);
+
+/// <summary>
+/// The Auto War fight's read of the target box (<c>ScreenAnalyzer.ReadWarTargetAsync</c>): the name when one reads, the
+/// HP bar's "N / M" line and its box (null when none), the target bar's chest, and which read decided (<c>Via</c>: "x1.5", "white x2",
+/// "red x2", "numbers", "chest" or "none"). <c>Seen</c>: any of the three - a target is in the box.
+/// </summary>
+public sealed record WarTargetRead(string? Name, (string Text, PixelRect Bounds)? HpLine, TemplateMatch? Chest, string Via)
+{
+    public bool Seen => Name != null || HpLine != null || Chest != null;
+}
+
+/// <summary>
 /// A Settings window row: label, value box, value text and number (numeric rows), and the chevrons
 /// beside the value.
 /// </summary>

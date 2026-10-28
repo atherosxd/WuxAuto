@@ -1,4 +1,7 @@
-using OpenCvSharp;
+using System.Drawing;
+using Emgu.CV;
+using Emgu.CV.CvEnum;
+using Emgu.CV.Structure;
 using WuxAuto.Core;
 
 namespace WuxAuto.Vision;
@@ -56,9 +59,9 @@ public sealed class TemplateMatcher : IDisposable
 
         // Coarse pass: the same search at 1/factor resolution, which is f² times cheaper.
         using var smallGray = new Mat();
-        Cv2.Resize(gray, smallGray,
+        CvInvoke.Resize(gray, smallGray,
             new Size(Math.Max(8, gray.Width / factor), Math.Max(8, gray.Height / factor)),
-            0, 0, InterpolationFlags.Area);
+            0, 0, Inter.Area);
 
         using var smallTemplate = GetScaled(template, scale / factor);
         if (smallTemplate.Width >= smallGray.Width || smallTemplate.Height >= smallGray.Height)
@@ -155,12 +158,12 @@ public sealed class TemplateMatcher : IDisposable
 
     public static Mat ToGray(Mat frame, PixelRect area)
     {
-        using var view = new Mat(frame, new Rect(area.X, area.Y, area.Width, area.Height));
+        using var view = new Mat(frame, new Rectangle(area.X, area.Y, area.Width, area.Height));
         var gray = new Mat();
-        if (frame.Channels() == 4)
-            Cv2.CvtColor(view, gray, ColorConversionCodes.BGRA2GRAY);
-        else if (frame.Channels() == 3)
-            Cv2.CvtColor(view, gray, ColorConversionCodes.BGR2GRAY);
+        if (frame.NumberOfChannels == 4)
+            CvInvoke.CvtColor(view, gray, ColorConversion.Bgra2Gray);
+        else if (frame.NumberOfChannels == 3)
+            CvInvoke.CvtColor(view, gray, ColorConversion.Bgr2Gray);
         else
             view.CopyTo(gray);
         return gray;
@@ -181,7 +184,7 @@ public sealed class TemplateMatcher : IDisposable
             return Array.Empty<TemplateMatch>();
 
         using var result = new Mat();
-        Cv2.MatchTemplate(gray, templ, result, TemplateMatchModes.CCoeffNormed);
+        CvInvoke.MatchTemplate(gray, templ, result, TemplateMatchingType.CcoeffNormed);
 
         var matches = new List<TemplateMatch>();
         int radius = suppressionRadius > 0
@@ -190,7 +193,7 @@ public sealed class TemplateMatcher : IDisposable
 
         for (int i = 0; i < maxResults; i++)
         {
-            Cv2.MinMaxLoc(result, out _, out double max, out _, out var location);
+            var (max, location) = CvHelpers.MaxLoc(result);
             if (!double.IsFinite(max) || max < threshold)
                 break;
 
@@ -204,7 +207,7 @@ public sealed class TemplateMatcher : IDisposable
             int y0 = Math.Max(0, location.Y - radius);
             int x1 = Math.Min(result.Width - 1, location.X + radius);
             int y1 = Math.Min(result.Height - 1, location.Y + radius);
-            Cv2.Rectangle(result, new Rect(x0, y0, x1 - x0 + 1, y1 - y0 + 1), new Scalar(-1), -1);
+            CvHelpers.DrawRectangle(result, new Rectangle(x0, y0, x1 - x0 + 1, y1 - y0 + 1), new MCvScalar(-1), -1);
         }
 
         return matches;
@@ -228,10 +231,10 @@ public sealed class TemplateMatcher : IDisposable
         if (width < templ.Width || height < templ.Height)
             return null;
 
-        using var crop = new Mat(gray, new Rect(x0, y0, width, height));
+        using var crop = new Mat(gray, new Rectangle(x0, y0, width, height));
         using var result = new Mat();
-        Cv2.MatchTemplate(crop, templ, result, TemplateMatchModes.CCoeffNormed);
-        Cv2.MinMaxLoc(result, out _, out double max, out _, out var location);
+        CvInvoke.MatchTemplate(crop, templ, result, TemplateMatchingType.CcoeffNormed);
+        var (max, location) = CvHelpers.MaxLoc(result);
         if (!double.IsFinite(max))
             return null;
 
@@ -266,7 +269,7 @@ public sealed class TemplateMatcher : IDisposable
         int width = Math.Max(2, (int)Math.Round(template.Width * scale));
         int height = Math.Max(2, (int)Math.Round(template.Height * scale));
         var resized = new Mat();
-        Cv2.Resize(template.Gray, resized, new Size(width, height), 0, 0, scale < 1 ? InterpolationFlags.Area : InterpolationFlags.Cubic);
+        CvInvoke.Resize(template.Gray, resized, new Size(width, height), 0, 0, scale < 1 ? Inter.Area : Inter.Cubic);
         _scaledCache[cacheKey] = resized;
         return resized.Clone();
     }

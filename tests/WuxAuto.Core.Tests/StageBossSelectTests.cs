@@ -1,4 +1,4 @@
-using OpenCvSharp;
+using Emgu.CV;
 using WuxAuto.Automation;
 using WuxAuto.Core;
 using WuxAuto.Vision;
@@ -43,7 +43,7 @@ public class StageBossSelectTests
     }
 
     /// <summary>
-    /// Live 2026-10-29 (v0.17): the Ctrl + skill tap right before J still printed hits ~1-2 s after
+    /// Live 2026-10-29 (v0.21.0): the Ctrl + skill tap right before J still printed hits ~1-2 s after
     /// it, the baseline was taken 1 s after J, and one of those late lines after centre click 1 read as
     /// "boss selected" - the clicks stopped at the centre while the stage 2 boss stood above it (before
     /// the hold, stage 2 always needed click 2, stage 3 click 3). The clicks must wait for a quiet log.
@@ -160,12 +160,12 @@ public class StageBossSelectTests
         try
         {
             using var analyzer = new ScreenAnalyzer(settings, ocr);
-            var pilot = new AutomationPilot(settings, analyzer, input);
+            var pilot = new AutomationPilot(settings, analyzer, new KeyboardMouseControls(settings, input));
             var lines = new List<string>();
             pilot.Log += (_, text) => lines.Add(text);
             pilot.Start(PilotPhase.WaitBoss, stageIndex: 0);
 
-            using var frame = new Mat(Height, Width, MatType.CV_8UC4, Scalar.All(0));
+            using var frame = Blank.Bgra(Height, Width);
             long deadline = Environment.TickCount64 + 15000;
             while (pilot.Phase != PilotPhase.WatchBoss && pilot.IsRunning && Environment.TickCount64 < deadline)
             {

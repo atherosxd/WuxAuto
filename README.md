@@ -3,9 +3,9 @@
 <img src="branding/WuxAuto-logo.png" alt="WuxAuto" width="160" align="right" />
 
 A small WPF pilot for the game window `Wuxen2.exe` (TwelveSky2 / Unity port). It captures the
-game with the Desktop Duplication API, finds UI elements with OpenCV template matching and the
-built-in Windows OCR engine, and then drives the **teleport-to-Labyrinth** sequence with input
-that is addressed to the bound window only.
+game with the Desktop Duplication API, finds UI elements with OpenCV template matching (through
+[Emgu CV](https://www.emgu.com/)) and the built-in Windows OCR engine, and then drives the
+**teleport-to-Labyrinth** sequence with input that is addressed to the bound window only.
 
 Everything the pilot does is visible in the app: detections are drawn on the live preview and
 every step is logged.
@@ -51,7 +51,7 @@ Do not copy `bin\Debug`: that build needs the .NET 10 Desktop Runtime installed.
 .\publish.ps1
 ```
 
-and hand over `dist\WuxAuto-win-x64.zip` (~93 MB, .NET included). The other PC unzips it
+and hand over `dist\WuxAuto-win-x64.zip` (~76 MB, .NET included). The other PC unzips it
 (right-click the zip ▸ Properties ▸ *Unblock* first, or SmartScreen asks "Windows protected your
 PC" ▸ *More info* ▸ *Run anyway*) and starts `WuxAuto.exe`.
 
@@ -175,6 +175,75 @@ AutoConfirmText` (`Confirm`) is the word that marks the dialog and `AutoConfirmB
 button - read as text, or found as the lowest gold button under the message (OK and USE ALL are
 gold, CANCEL is dark). The first dialogs of each app start are saved as `autoconfirm` snapshots.
 
+### Auto War (Bohai Outpost tribe wars)
+
+Pick **Auto War** (Mode buttons above Start; **War** in the mini window) for an alt that should join every
+Bohai Outpost war: it waits in a cave, goes in when the war opens, buffs and fights, and when the game sends it
+home it teleports back to the **same cave and the same monster**, turns the autohunt on and waits for the next war.
+
+1. Put the character in the cave you want it to hunt in. That cave must be on **page 3** of the teleport scroll
+   (setting `War > ListPage`), and the autohunt on. Bind the game, pick **Auto War**, press **Start**.
+   Starting it inside **Bohai Outpost** during a war works too: it fights right away. With no cave saved yet it says so
+   and stops after that war - start it once inside the cave so it remembers where to go back to.
+2. At Start the pilot checks the screen and stops with a message (it never guesses) when: you are not in a cave; the
+   cave's name could match **two** entries on page 3; the monster cannot be confirmed in the map's monster list (the row
+   must carry the whole name - "Goblin" is never the "Goblin Elite" row - and only one row may); or a war key (skill,
+   target, autohunt, inventory) is not set, or a key that is set (Shura too) is not a key it can press.
+   The buff icons and **Shura** are **optional**: the ticked buffs and the Shura icon (when the Shura key is set) are
+   looked for on the skill bar, and the missing ones are only a warning with their best scores - the buff rounds skip
+   them. With no Shura key the fight skips the Shura hold.
+3. It then reads the time to the next war from **Menu (the button at the top centre) > Tribe Status**, closes those
+   windows, waits, and 10 s before the war (`Lead time`) turns the autohunt off and clicks OK on the war dialog.
+   Inside it sets the game's TAB target to **Enemy worth CP**, buffs - auto-buff key `O`, or else the buff icons and then
+   the weapon buff icons one by one; then the **item buffs** on the skill bar either way (they use an item; with `O` they
+   are still clicked) - again every 5 min 45 s, then repeats: Tab to an enemy, the X buff, hold Shura, attack until the
+   target is gone. An enemy counts as targeted when its name reads in the target box at the top centre (a player's
+   **red** name has its own read) or, name unread, when its HP bar's numbers ("49293/49293") show there.
+   **Out of the respawn point:** once the war has started (not while everyone waits at the closed gate), after 5 Tabs
+   in a row without a target it Ctrl+clicks (a walk) toward the nearest name tag on screen, a quarter of the screen
+   height at most per step, then Tabs again. It looks in the game world between the game's panels: from about 31 % to
+   80 % of the width at the character's height, more higher up; never at its own tag (within 22 % of the screen
+   height of the character), the top strip, the combat log (left, 0-31 % wide, 13-56 % high), the chat and bottom bar
+   under it, the pet and minimap panels, the event notices, the item list or the skill bar. Combat-log lines, boss
+   speech and system notices are never taken for a name, and nothing is while a window (map, inventory, teleport
+   scroll, settings) is open. A word that stays at the same spot after a step is a window or
+   a chat line: it is ignored for the rest of that war. At most 6 steps, then Tab only for 20 s; 3 looks without a
+   name tag in view also mean 20 s of Tab only; at most **18 steps per war** until a target is seen, then Tab only.
+   Only while the minimap shows Bohai Outpost. Not seen in a live war yet.
+   It watches the HP numbers (top left) and rebuffs after a death. When the war is over it goes back as above - at most
+   3 times in 30 min without a war in between (a cave that keeps sending the character to town would otherwise cost a
+   teleport every round); then it stops.
+4. Safety: it never clicks a guessed spot to close a window (a window whose X it cannot read stays open, with a
+   warning); every war step that reads the screen waits while the game window is behind another window (a second game
+   client's war dialog, map or combat log is never taken for its own) - only the teleport-scroll steps and logging back
+   in keep reading then, and they cannot send anything until the game is in front; the Bohai dialog is never cancelled
+   in this mode. One game per WuxAuto - do not run it next to a Laby / LOD client on the same PC. It does not walk
+   inside Bohai.
+5. Settings (Settings panel > Auto War): **Shura hold (ms)**, **Rebuff every (ms)**, **Lead time (ms)**, **TAB target**,
+   **Buffs**, and the read-only **Back to** line (the saved cave and monster). The rest is in `settings.json` under `War`.
+   **Buffs** has one check box per buff (10), with its icon and, in its tooltip, its template file:
+   **Buff 1**-**Buff 5** (`warbuff1`, `warbuff3`, `warbuff4`, `warbuff5`, `warbuff6`; `War > BuffIcons`),
+   **Weapon 1 (sword)**, **Weapon 2**, **Weapon 3** (`warbuff2`, `warweapon1` - white-gold lightning around armour,
+   `warweapon2` - blue swirl; `War > WeaponBuffIcons`: a character uses one weapon, so usually only one of them is on its
+   bar) and **Item 1** / **Item 2** (`waritem1` - light scroll with a glyph, `waritem2` - blue scroll: items placed on the
+   skill bar; `War > ItemBuffIcons`). All
+   are ticked at first; untick the ones this character does not have: an unticked buff is never clicked and not looked for
+   at Start (`War > DisabledBuffs` in `settings.json`). The X buff is **Buff 3** (`warbuff4`): unticked, it is not
+   clicked in the fight either. A template that has no PNG yet is named as such in the warnings
+   ("no <name>.png in templates/Assets").
+
+**Upgrade note:** once Auto War is chosen, `settings.json` holds `"Mode": "AutoWar"`, which a WuxAuto from before Auto War
+cannot read - it starts with the default settings and saves them on close, and your Laby / LOD settings are gone. On a PC
+where an older copy shares `settings.json` (`%LOCALAPPDATA%\WuxAuto`), update every installed copy first, then choose Auto War.
+Settings v23 only takes `warbuff2` (the sword's buff, a weapon buff now) out of a saved `War > BuffIcons`; the weapon and
+item lists and the check boxes are new settings a v0.19.0 copy does not know - it checks the five remaining buffs at Start,
+and when it saves `settings.json` the check box choices are lost (all ticked again). Update every copy.
+
+**Not verified yet - no live war has been run.** Everything inside Bohai (the minimap title, "Gate is Open", enemy
+players in the target box, HP 0 and the revive), the buff icons on a real skill bar (the weapon and item buffs included), the Menu close geometry and whether
+the menu button toggles it shut, the "Regular War" label in the autohunt settings, and the "Arrived:" wording. Every part logs
+what it saw and saves `war_*` pictures to the debug folder the first time, so send the log and those pictures after the first war.
+
 ### Input safety
 
 By default (`Input ▸ Mode = ForegroundSendInput`, `Only while game is focused`) the pilot sends
@@ -201,7 +270,7 @@ but it also only ever talks to the bound window.
 | `Dungeon ▸ CtrlSkill` ("Ctrl + skill key too") | On (default): every manual skill press — Laby stage 5 (the held press and the `Manual attacks` taps), the stages 1-4 held press and the Auto LOD skill spam — sends the skill key and then Ctrl + skill key (`1`, then `Ctrl+1` about 60 ms later). With "Hold skill (LOD)" the held key is let go for a Ctrl + skill tap every `Lod ▸ SkillEveryMs` (0.3 s) and then held again. Off = the plain skill key only. |
 | `Lod ▸ RingCheckEveryMs` / `RingStayMax` | 3000 / 1.0: with "Walk up to the boss (LOD)" on, after the first walk up of a fight the pink ring round the boss's feet is checked every 3 s; the character further out than 1.0 ring radius (= off the ring) → Shura, Ctrl+click the ring again, attack. A walk that did not get there waits 9 s before the next check. A ring out of view counts as "under the boss" and nothing is done. `RingCheckEveryMs` 0 = only the walk after the first hit. |
 | `Lod ▸ WalkToBossSpot` ("Walk to the boss spot (LOD)") | On (default): after the south turn Auto LOD walks forward to `Lod ▸ TargetX/TargetY` (**1199, 1782**; the teleport lands at about 1195, 1578) pressing Tab every `Lod ▸ TabEveryMs` (1.5 s), then waits there tabbing until **Bai Gu Great** shows. Off = stay where the teleport put the character and only press Tab — no walk clicks. The south turn happens either way. Settings v22 turns it on and moves the old 1191, 2413 spot; a spot set by hand stays. |
-| `Lod ▸ ShuraKey` ("Shura key (LOD)") | Auto LOD stops the attack with **Shura** before a mid-fight buff and before the walk up to the boss: the `shura.png` icon is looked for on the skill bar (`Regions ▸ Hotbar`, bottom 15 %) and clicked `ShuraPresses` (3) times, `ShuraEveryMs` (200) apart. Not found → this key, the same way (default `E`, the slot Shura is in); empty → `StopAttackKey` (Space) × 15 (buff) / 3 (walk) as before. The same icon in two slots → the leftmost. |
+| `Lod ▸ ShuraKey` ("Shura key (LOD)") | Auto LOD stops the attack with **Shura** before a mid-fight buff and before the walk up to the boss: the `shura.png` icon is looked for on the skill bar (`Regions ▸ Hotbar`, bottom 15 %) and clicked `ShuraPresses` (3) times, `ShuraEveryMs` (200) apart. Not found → this key, the same way (default `E`, the slot Shura is in); empty → `StopAttackKey` (Space) × 15 (buff) / 3 (walk) as before. The same icon in two slots → the leftmost. Auto War: held each fight cycle; empty = no hold. |
 | `Sequence ▸ AutohuntOffInTown` | On (default): in town, before every teleport, the autohunt key is tapped and the combat log read (`AutohuntStartedText` / `AutohuntEndedText`, "Auto hunt started" / "Auto hunt ended"); "started" = it was off, so it is tapped again. Off = never touch it in town. |
 | `Sequence ▸ AutoConfirmDialogs` ("Auto confirm (Ctrl + right click)") / `AutoConfirmText` / `AutoConfirmButton` | On (default): while the game is bound and the pilot is not running, a Ctrl + right click on the game starts a 3 s watch for a dialog line containing `AutoConfirmText` (`Confirm`); its `AutoConfirmButton` (`OK`: the line reading exactly that under the message, else the lowest gold button under it) is clicked as soon as it shows. Off = never. |
 | `Sequence ▸ KillChime` ("Kill chime") / `KillNotification` ("Kill notification") | On (default): a chime / a Windows notification when a Labyrinth boss dies and when an LOD kill's loot step ends (see *Kill alert* below). |
@@ -333,6 +402,7 @@ tests/WuxAuto.Core.Tests     unit tests of the shared library
 tests/WuxAuto.UiShot         renders MainWindow to a PNG (no desktop session needed)
 CLAUDE.md                    developer/handoff notes: architecture, measured UI facts,
                              current state, open items and debugging workflow
+LICENSE                      GPL-3.0
 ```
 
 ## Development checks
@@ -367,3 +437,9 @@ dotnet run --project .\tests\WuxAuto.UiShot -- "$env:TEMP\ui.png"
 The self-test is the fast way to confirm a change did not break the vision stack; it asserts
 exact match positions, a 1.00 template score for the flashlight at 0/40/135/200/330 degrees and
 the OCR round-trip for the word "Labyrinth".
+
+## Licence
+
+WuxAuto is free software under the GNU General Public License v3.0 - see [LICENSE](LICENSE). Its
+image matching uses [Emgu CV](https://www.emgu.com/), whose open-source licence is the GPL v3, so
+the app, which ships Emgu CV, is GPL-3.0 as well.

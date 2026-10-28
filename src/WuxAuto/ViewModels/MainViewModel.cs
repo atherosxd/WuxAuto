@@ -65,6 +65,7 @@ public partial class MainViewModel : ObservableObject, IAsyncDisposable
     {
         _dispatcher = Dispatcher.CurrentDispatcher;
         Settings = SettingsStore.Load();
+        WarBuffSwitches = WarBuffSwitch.For(Settings);
         _engine = new WuxEngine(Settings);
 
         _engine.Log += entry => Post(() => AppendLog(entry));
@@ -74,7 +75,8 @@ public partial class MainViewModel : ObservableObject, IAsyncDisposable
             PreviewCaption = update.Caption;
         });
         _engine.StateChanged += () => Post(SyncState);
-        // The mode buttons bind through Settings: re-read them when the pilot switches the mode.
+        // The mode buttons and Auto War's "Back to:" line bind through Settings: re-read them when the pilot
+        // switches the mode or remembers the cave.
         _engine.ModeChanged += () => Post(() => OnPropertyChanged(nameof(Settings)));
         _engine.BossKilled += what => Post(() => OnBossKilled(what));
         _engine.Faulted += message => Post(() =>
@@ -275,6 +277,9 @@ public partial class MainViewModel : ObservableObject, IAsyncDisposable
     }
 
     public AppSettings Settings { get; }
+
+    /// <summary>Auto War's "Buffs" row: one check box per buff icon the pilot clicks (<see cref="WarBuffSwitch"/>).</summary>
+    public IReadOnlyList<WarBuffSwitch> WarBuffSwitches { get; }
 
     /// <summary>Re-reads every settings binding (the settings objects raise no change events).</summary>
     public void RefreshSettings() => OnPropertyChanged(nameof(Settings));

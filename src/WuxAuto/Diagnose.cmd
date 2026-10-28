@@ -19,7 +19,7 @@ reg query "HKLM\HARDWARE\DESCRIPTION\System\CentralProcessor\0" /v ProcessorName
 >> "%OUT%" echo PROCESSOR_ARCHITECTURE=%PROCESSOR_ARCHITECTURE% PROCESSOR_IDENTIFIER=%PROCESSOR_IDENTIFIER%
 >> "%OUT%" echo.
 >> "%OUT%" echo === System DLLs ===
-for %%D in (mfplat.dll mf.dll mfreadwrite.dll d3d11.dll dxgi.dll xmllite.dll icu.dll Windows.Media.Ocr.dll) do (
+for %%D in (mfplat.dll mf.dll mfreadwrite.dll d3d11.dll dxgi.dll icu.dll Windows.Media.Ocr.dll) do (
     if exist "%SystemRoot%\System32\%%D" (>> "%OUT%" echo found   %%D) else (>> "%OUT%" echo MISSING %%D)
 )
 >> "%OUT%" echo.
