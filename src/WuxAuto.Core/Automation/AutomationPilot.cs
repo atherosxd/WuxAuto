@@ -344,6 +344,9 @@ public sealed partial class AutomationPilot
         _warRefusedTeleports = 0;
         _warReturnTrips.Clear();
         _warBarChecked = false;
+        _warNoCaveTold = false;
+        _warMissingIcons.Clear();
+        _warShuraSkipTold = false;
         _warHp = default;
         _warShots.Clear();
         _runStart = Environment.TickCount64;

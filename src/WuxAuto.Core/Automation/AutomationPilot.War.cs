@@ -34,7 +34,8 @@ public sealed partial class AutomationPilot
     private bool _warSpotChecked;          // this Start is at the saved spot: remembered it, or came back to it
     private bool _warRemembering;          // Start in a cave began remembering it, not saved yet
     private int _warRefusedTeleports;      // return teleports in a row that left the character in town
-    private bool _warBarChecked;           // the skill bar held every icon (checked once per Start: buffs on cooldown after a war score lower)
+    private bool _warBarChecked;           // the skill bar was checked (once per Start: buffs on cooldown after a war score lower)
+    private bool _warNoCaveTold;           // Start in Bohai with no cave saved: said so
     private readonly List<long> _warReturnTrips = new();   // trips back to the cave since the last war (WarReturnAllowed; a war clears it)
 
     // Per run (ResetRunState clears them).
@@ -127,17 +128,18 @@ public sealed partial class AutomationPilot
     /// Start's dispatch (design §4.1, §5), the first thing of every run: every key Auto War presses must map to a key
     /// (<see cref="WarKeys"/>; an unmappable one is refused on every press, which reads like the game being behind another
     /// window - stop instead); the war windows a Stop or a Fail can leave open are closed (the war timer's close step);
-    /// then the minimap title decides - Bohai Outpost: into the
-    /// war; a home town: back to the saved cave; the Labyrinth, LOD or no title: stop; a cave: every buff icon and
-    /// Shura must be on the skill bar (once per Start), then - at the saved spot already - the autohunt on and the wait,
-    /// or the page check and the remember step. Only with the game in front: behind another window the capture shows
-    /// that window's minimap, and a cave read there would be remembered.
+    /// then the minimap title decides - Bohai Outpost: into the war (no cave saved yet: said once, the pilot stops after
+    /// the war); a home town: back to the saved cave; the Labyrinth, LOD or no title: stop; a cave: the skill bar is
+    /// checked for the buffs ticked on and Shura (<see cref="CheckWarSkillBar"/>, once per Start; missing ones are only
+    /// warned about), then - at the saved spot already - the autohunt on and the wait, or the page check and the
+    /// remember step. Only with the game in front: behind another window the capture shows that window's minimap, and a
+    /// cave read there would be remembered.
     /// </summary>
     private async Task TickWarCheckZoneAsync(Mat frame)
     {
         long now = Environment.TickCount64;
         var war = _settings.War;
-        if (WarKeyProblem(WarKeys(), _input.IsKnownKey) is { } keyProblem)
+        if (WarKeyProblem(WarKeys(_settings), _input.IsKnownKey) is { } keyProblem)
         {
             WarStop(frame, keyProblem);
             return;
@@ -180,6 +182,12 @@ public sealed partial class AutomationPilot
 
         if (ZoneMatches(title, war.Destination))
         {
+            if (!HasWarSpot && !_warNoCaveTold)
+            {
+                _warNoCaveTold = true;
+                Log?.Invoke(LogLevel.Info, "No cave saved yet - after this war the pilot stops. Start it once inside the cave to remember it.");
+            }
+
             BeginWarEnter($"Start inside {war.Destination}");
             return;
         }
@@ -208,8 +216,7 @@ public sealed partial class AutomationPilot
         _warTitle = title;
         if (!_warBarChecked)
         {
-            if (!WarSkillBarReady(frame))
-                return;
+            CheckWarSkillBar(frame);
             _warBarChecked = true;
         }
 
@@ -233,18 +240,37 @@ public sealed partial class AutomationPilot
     }
 
     /// <summary>
-    /// Every buff icon (<see cref="WarSettings.BuffIcons"/>) and Shura on the skill bar at
-    /// <see cref="WarSettings.IconMatchScore"/> (design §4.1.2: "all must be there"). Missing ones stop the pilot,
-    /// each named with its best score at any threshold - 0.90 is not proven on a real alt's bar yet, so a near miss
-    /// must show in that one line. True when all are there.
+    /// The icons Start looks for on the skill bar (<see cref="CheckWarSkillBar"/>): every buff ticked on - the skill buffs,
+    /// then the item buffs - and Shura's icon when <paramref name="shuraKey"/> is set (without it the fight skips the hold).
+    /// Each once, blanks left out.
     /// </summary>
-    private bool WarSkillBarReady(Mat frame)
+    internal static IReadOnlyList<string> WarBarIcons(WarSettings war, string shuraTemplate, string shuraKey)
     {
-        var war = _settings.War;
-        var templates = war.BuffIcons.Append(_settings.Lod.ShuraTemplate)
+        var icons = war.BuffIcons.Concat(war.ItemBuffIcons).Where(war.IsBuffOn);
+        if (!string.IsNullOrWhiteSpace(shuraKey))
+            icons = icons.Append(shuraTemplate);
+        return icons
             .Where(t => !string.IsNullOrWhiteSpace(t))
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToList();
+    }
+
+    /// <summary>
+    /// The buffs ticked on and Shura (<see cref="WarBarIcons"/>) on the skill bar at <see cref="WarSettings.IconMatchScore"/>.
+    /// Every one is optional (user, 2026-10-28: "make the skills optional, not required for pilot to start"): the missing
+    /// ones are one warning, each named with its best score at any threshold - 0.90 is not proven on a real alt's bar
+    /// yet, so a near miss must show in that line - and a <c>war_bar_missing</c> snapshot; the buff rounds skip them.
+    /// </summary>
+    private void CheckWarSkillBar(Mat frame)
+    {
+        var war = _settings.War;
+        var templates = WarBarIcons(war, _settings.Lod.ShuraTemplate, _settings.Lod.ShuraKey);
+        if (templates.Count == 0)
+        {
+            Log?.Invoke(LogLevel.Info, "Skill bar: no buff is ticked on and no Shura key is set - nothing to look for.");
+            return;
+        }
+
         var bar = _settings.Regions.Hotbar.ToPixels(frame.Width, frame.Height);
         var found = new List<string>();
         var missing = new List<(string Name, double? Best)>();
@@ -267,27 +293,29 @@ public sealed partial class AutomationPilot
         if (missing.Count == 0)
         {
             Log?.Invoke(LogLevel.Info, $"Skill bar: all {templates.Count} icons found ({string.Join(", ", found)}).");
-            return true;
+            return;
         }
 
-        WarStop(frame, $"Missing on the skill bar (score {war.IconMatchScore.ToString("0.00", CultureInfo.InvariantCulture)} needed): "
-                       + $"{DescribeMissingIcons(missing)} - put them on the bar and press Start again");
-        return false;
+        Log?.Invoke(LogLevel.Warning, $"Not on the skill bar (score {war.IconMatchScore.ToString("0.00", CultureInfo.InvariantCulture)} needed): "
+                                      + $"{DescribeMissingIcons(missing)} - carrying on without them (untick a buff this character does "
+                                      + $"not use in Settings > Auto War > Buffs){(found.Count > 0 ? $"; found {string.Join(", ", found)}" : "")}.");
+        WarShot(frame, "war_bar_missing");
     }
 
     /// <summary>
-    /// Every key Auto War presses (<see cref="WarKeyProblem"/> at Start): Shura, the skill, Tab, the autohunt and the
-    /// inventory keys must be set; the buff key and the autohunt settings key may be empty (the buff icons are clicked then).
+    /// Every key Auto War presses (<see cref="WarKeyProblem"/> at Start): the skill, Tab, the autohunt and the inventory keys
+    /// must be set; Shura (user, 2026-10-28: optional - the fight cycle skips the hold), the buff key and the autohunt settings
+    /// key may be empty (the buff icons are clicked then). A key that is set must be one the pilot can press.
     /// </summary>
-    private IEnumerable<WarKey> WarKeys() =>
+    internal static IEnumerable<WarKey> WarKeys(AppSettings settings) =>
     [
-        new("Shura key (LOD)", _settings.Lod.ShuraKey, Required: true),
-        new("Skill key", _settings.Dungeon.SkillKey, Required: true),
-        new("Target key", _settings.Dungeon.TabKey, Required: true),
-        new("Autohunt key", _settings.Dungeon.AutohuntKey, Required: true),
-        new("Inventory key", _settings.Input.InventoryKey, Required: true),
-        new("Buff key (LOD)", _settings.Lod.BuffKey, Required: false),
-        new("Sequence.AutohuntSettingsKey in settings.json", _settings.Sequence.AutohuntSettingsKey, Required: false),
+        new("Shura key (LOD)", settings.Lod.ShuraKey, Required: false),
+        new("Skill key", settings.Dungeon.SkillKey, Required: true),
+        new("Target key", settings.Dungeon.TabKey, Required: true),
+        new("Autohunt key", settings.Dungeon.AutohuntKey, Required: true),
+        new("Inventory key", settings.Input.InventoryKey, Required: true),
+        new("Buff key (LOD)", settings.Lod.BuffKey, Required: false),
+        new("Sequence.AutohuntSettingsKey in settings.json", settings.Sequence.AutohuntSettingsKey, Required: false),
     ];
 
     /// <summary>"warbuff2 (best 0.84), shura (not seen)": each missing icon with its best score, rounded down.</summary>

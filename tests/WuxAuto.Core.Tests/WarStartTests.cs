@@ -27,6 +27,39 @@ public class WarStartTests
         }
     }
 
+    // ---------------------------------------------------------------- what Start looks for on the skill bar
+
+    [Fact]
+    public void BarIcons_EveryBuffTickedOn_ThenShura_WhenItsKeyIsSet()
+        => Assert.Equal(
+            ["warbuff1", "warbuff2", "warbuff3", "warbuff4", "warbuff5", "warbuff6", "warweapon1", "warweapon2", "waritem1", "waritem2", "shura"],
+            AutomationPilot.WarBarIcons(new WarSettings(), "shura", shuraKey: "E"));
+
+    [Fact]
+    public void BarIcons_NoShuraKey_NoShura()
+        => Assert.DoesNotContain("shura", AutomationPilot.WarBarIcons(new WarSettings(), "shura", shuraKey: " "));
+
+    [Fact]
+    public void BarIcons_UntickedBuffs_AreNotLookedFor()
+    {
+        var war = new WarSettings();
+        war.SetBuffOn("warweapon2", false);
+        war.SetBuffOn("waritem1", false);
+        var icons = AutomationPilot.WarBarIcons(war, "shura", shuraKey: "E");
+        Assert.DoesNotContain("warweapon2", icons);
+        Assert.DoesNotContain("waritem1", icons);
+        Assert.Contains("warweapon1", icons);
+        Assert.Contains("waritem2", icons);
+    }
+
+    [Fact]
+    public void BarIcons_EachOnce_BlanksAndAnEmptyShuraTemplateLeftOut()
+    {
+        var war = new WarSettings { BuffIcons = ["warbuff1", "", "SHURA"], ItemBuffIcons = ["warbuff1", " "] };
+        Assert.Equal(["warbuff1", "SHURA"], AutomationPilot.WarBarIcons(war, "shura", shuraKey: "E"));
+        Assert.Equal(["warbuff1", "SHURA"], AutomationPilot.WarBarIcons(war, "", shuraKey: "E"));
+    }
+
     // ---------------------------------------------------------------- combining the reads of one list page
 
     static readonly Read Unique = new("[Dark Soul Cave IF (WD)]", false, null);
