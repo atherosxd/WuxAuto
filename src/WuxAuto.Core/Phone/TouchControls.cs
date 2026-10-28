@@ -2,13 +2,19 @@ using WuxAuto.Core;
 
 namespace WuxAuto.Phone;
 
-// Task 1 confirms (provisional until the MuMu measurements run; each one is pinned by a TouchControlsTests test):
-// * Turn(Left): the finger swipes RIGHT (the camera turns left)                    - Turn_Left_FingerSwipesRight
-// * ScrollList(n < 0), the list moves down: the finger swipes UP                   - ScrollList_Down_FingerSwipesUp
-// * Has(RunSkillKey | ShuraKey | StopAttack) = the shortcut icon was found          - Has_ShortcutAction_IsIconFound
-// * Has(OpenInventory | ToggleSettings | OpenAutohuntSettings) = the ☰ menu was found - Has_MenuAction_IsMenuFound
-// * ZoomOut: one pinch per 5 notches, at least one                                  - ZoomOut_OnePinchPerFiveNotches
-// * TiltCamera keeps the desktop's sign (negative pixels = the finger moves up)     - TiltCamera_SwipesVertically
+// Measured in MuMu 2026-10-28, see docs/superpowers/notes/2026-10-28-phone-checks.md (each one is pinned by a TouchControlsTests test):
+// * Turn(Left): the finger moves LEFT (the camera turns with the finger; the provisional rule was the opposite)  - Turn_Left_FingerMovesLeft
+// * Turns are Drags (move, then hold ~100 ms before lifting) on the right-side band, centre 0.74 w, 0.33 h  - Turn_* tests
+//   length = max(TurnDragMinPx 40, ms x SwipePxPerTurnMs) (note: px = 20 + 4.8 x degrees, 180 ms = 15 degrees); 20 px is inside the
+//   game's dead zone, so the 40 ms fine-tune tap is raised to 40 px (about 4 degrees) rather than skipped
+// * TiltCamera: vertical Drag at 0.65 w (at 0.74 w vertical drags were ignored); negative pixels = finger up = towards the horizon  - TiltCamera_*
+// * ScrollList(n < 0), the list moves down: the finger swipes UP (Settings list; the map list pages by its arrows, never by swipe)  - ScrollList_Down_FingerSwipesUp
+// * Has(RunSkillKey) = the shortcut icon was found; Has(OpenInventory | ToggleSettings) = the menu was found (both confirmed)
+// * ZoomOut: one pinch per 5 notches, at least one (360 -> 96 px, 400 ms is about x0.5, 3 pinches = full range)  - ZoomOut_OnePinchPerFiveNotches
+// * TapSettleMs 100 (a tap right after the joystick is lost up to 38 ms)
+// Still unverified (the character had no skill on the wheel; nothing was toggled in town):
+// * skill long-press (SkillDown / SkillUp), Shura = ActionDown(ShuraKey) / StopAttack icon (no stop-attack shortcut exists in the picker),
+//   Has(OpenAutohuntSettings) = menu found (which entry opens the autohunt settings is for the user to say)
 
 /// <summary>
 /// The phone's <see cref="IGameControls"/>: every action is a touch on the game's own on-screen buttons, found by
@@ -22,9 +28,14 @@ public sealed class TouchControls(AppSettings settings, ITouchInput touch, IShor
     /// <summary>How long one list-scroll swipe takes.</summary>
     public const int ListSwipeMs = 300;
 
-    /// <summary>Where turn swipes run: the ground above the character, clear of the buttons (fractions of the frame).</summary>
-    public const double TurnSwipeX = 0.5;
-    public const double TurnSwipeY = 0.35;
+    /// <summary>Where turn drags run: the clear band on the right side, away from the pet panel, minimap and buttons (fractions of the frame; measured at 1920x1080).</summary>
+    public const double TurnBandCentreX = 0.74;
+    public const double TurnBandCentreY = 0.33;
+    public const double TurnBandMinX = 0.60;
+    public const double TurnBandMaxX = 0.88;
+
+    /// <summary>Vertical (tilt) drags run at this x: at 0.74 w they were ignored.</summary>
+    public const double TiltX = 0.65;
 
     private readonly Action<int> _sleep = sleep ?? Thread.Sleep;
 
@@ -91,18 +102,30 @@ public sealed class TouchControls(AppSettings settings, ITouchInput touch, IShor
         return true;
     });
 
-    /// <summary>A sideways swipe of <paramref name="ms"/> × <see cref="PhoneSettings.SwipePxPerTurnMs"/> pixels, taking <paramref name="ms"/>.</summary>
-    public bool Turn(TurnDirection direction, int ms) => Send(() => TurnSwipe(direction, ms));
+    /// <summary>A sideways drag of <paramref name="ms"/> × <see cref="PhoneSettings.SwipePxPerTurnMs"/> pixels (see <see cref="TurnDrag"/>).</summary>
+    public bool Turn(TurnDirection direction, int ms) => Send(() => TurnDrag(direction, ms));
 
-    /// <summary>The whole sweep (<see cref="DungeonSettings.RotateLeftSweepMs"/>) as one swipe; <see cref="EndTurn"/> has nothing left to do.</summary>
-    public bool BeginTurn(TurnDirection direction) => Send(() => TurnSwipe(direction, settings.Dungeon.RotateLeftSweepMs));
+    /// <summary>The whole sweep (<see cref="DungeonSettings.RotateLeftSweepMs"/>) as one drag; <see cref="EndTurn"/> has nothing left to do.</summary>
+    public bool BeginTurn(TurnDirection direction) => Send(() => TurnDrag(direction, settings.Dungeon.RotateLeftSweepMs));
 
     public void EndTurn(TurnDirection direction)
     {
     }
 
     public bool TurnByDrag(int x, int y, int pixels, int durationMs) => Send(() => touch.Swipe(x, y, x + pixels, y, durationMs));
-    public bool TiltCamera(int x, int y, int pixels, int durationMs) => Send(() => touch.Swipe(x, y, x, y + pixels, durationMs));
+
+    /// <summary>A vertical drag at <see cref="TiltX"/> (the x argument is the desktop's and is ignored), starting at <paramref name="y"/>; negative pixels = the finger moves up.</summary>
+    public bool TiltCamera(int x, int y, int pixels, int durationMs) => Send(() =>
+    {
+        var (w, h) = shortcuts.FrameSize;
+        if (w <= 0 || h <= 0)
+            return false;
+
+        int tx = Math.Clamp((int)Math.Round(w * TiltX), 0, w - 1);
+        int y1 = Math.Clamp(y, 0, h - 1);
+        int y2 = Math.Clamp(y + pixels, 0, h - 1);
+        return touch.Drag(tx, y1, tx, y2, durationMs, Phone.TurnDragEndHoldMs);
+    });
 
     /// <summary>One pinch per 5 wheel notches (at least one), <see cref="PhoneSettings.TapSettleMs"/> apart.</summary>
     public bool ZoomOut(int x, int y, int notches) => Send(() =>
@@ -194,29 +217,35 @@ public sealed class TouchControls(AppSettings settings, ITouchInput touch, IShor
     }
 
     /// <summary>
-    /// A turn swipe centred on the ground above the character. Nothing to turn (ms &lt;= 0 or under a pixel) sends
-    /// nothing and reports true: a zero-length swipe is a tap on the ground, which could walk or attack. The end points
-    /// are kept on the frame (Task 1 tunes the length).
+    /// A turn drag centred on the right-side band, the finger moving the way the camera turns (left = finger left),
+    /// with an end hold. ms &lt;= 0 sends nothing and reports true: a zero-length drag is a tap on the ground, which could
+    /// walk or attack. A short turn is raised to <see cref="PhoneSettings.TurnDragMinPx"/>: 20 px (the desktop's 40 ms
+    /// fine-tune tap) is inside the game's dead zone and does nothing, 40 px is the least that turned (measured in
+    /// MuMu 2026-10-28), so a fine-tune tap becomes the smallest real turn rather than being skipped. A long one is
+    /// cut to the band's width.
     /// </summary>
-    private bool TurnSwipe(TurnDirection direction, int ms)
+    private bool TurnDrag(TurnDirection direction, int ms)
     {
-        double length = ms * Phone.SwipePxPerTurnMs;
-        if (ms <= 0 || length < 1)
+        if (ms <= 0)
             return true;
 
         var (w, h) = shortcuts.FrameSize;
         if (w <= 0 || h <= 0)
             return false;
 
-        int cx = (int)Math.Round(w * TurnSwipeX);
-        int cy = (int)Math.Round(h * TurnSwipeY);
+        int minX = (int)Math.Round(w * TurnBandMinX);
+        int maxX = (int)Math.Round(w * TurnBandMaxX);
+        int cx = (int)Math.Round(w * TurnBandCentreX);
+        int cy = Math.Clamp((int)Math.Round(h * TurnBandCentreY), 0, h - 1);
+        double length = Math.Clamp(Math.Max(ms * Phone.SwipePxPerTurnMs, Phone.TurnDragMinPx), 1, maxX - minX);
         int half = (int)Math.Round(length / 2);
-        int sign = direction == TurnDirection.Left ? 1 : -1; // left = the finger moves right (Task 1 confirms)
-        int x1 = Math.Clamp(cx - sign * half, 0, w - 1);
-        int x2 = Math.Clamp(cx + sign * half, 0, w - 1);
+        int sign = direction == TurnDirection.Left ? -1 : 1; // the finger moves the way the camera turns
+        int x1 = Math.Clamp(cx - sign * half, minX, maxX);
+        int x2 = Math.Clamp(cx + sign * half, minX, maxX);
         if (x1 == x2)
             return true;
-        return touch.Swipe(x1, cy, x2, cy, ms);
+        int durationMs = Math.Max(Phone.TurnDragMinMs, (int)Math.Round(length / Phone.TurnDragPxPerMs));
+        return touch.Drag(x1, cy, x2, cy, durationMs, Phone.TurnDragEndHoldMs);
     }
 
     private static bool IsMenuAction(GameAction action) =>

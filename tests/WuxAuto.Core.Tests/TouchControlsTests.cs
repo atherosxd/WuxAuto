@@ -5,7 +5,7 @@ namespace WuxAuto.Core.Tests;
 /// <summary>
 /// <see cref="TouchControls"/>: every game action maps to the touch gestures listed in Plan 2 Task 3 (a recording
 /// <see cref="ITouchInput"/> lists them in order, the injected sleep among them). Frame 1000×800: the character
-/// stands at (500, 432), turn swipes run through (500, 280).
+/// stands at (500, 432), turn drags run on the right band around (740, 264).
 /// </summary>
 public sealed class TouchControlsTests
 {
@@ -46,7 +46,7 @@ public sealed class TouchControlsTests
         Assert.Equal(["Tap:925,35,60"], h.Touch.Calls);
     }
 
-    // --- Has (provisional, Task 1 confirms) -------------------------------------------------------------------------
+    // --- Has -------------------------------------------------------------------------
 
     [Theory]
     [InlineData(GameAction.TeleportScroll)]
@@ -280,7 +280,7 @@ public sealed class TouchControlsTests
         var h = new Harness();
         h.Shortcuts.Joystick = (150, 650, 80);
         Assert.True(h.Controls.WalkTo(500, 100, forceWalk: true));
-        Assert.Equal(["Joy:150,650,0,-80,900", "Sleep:150"], h.Touch.Calls);
+        Assert.Equal(["Joy:150,650,0,-80,900", "Sleep:100"], h.Touch.Calls);
     }
 
     [Fact]
@@ -292,7 +292,7 @@ public sealed class TouchControlsTests
         h.Shortcuts.FrameSize = (2000, 1600);
         h.Shortcuts.Joystick = (300, 1300, 160);
         h.Controls.WalkTo(1000, 0, forceWalk: false);  // straight up from (1000,864)
-        Assert.Equal(["Joy:150,650,80,0,900", "Sleep:150", "Joy:300,1300,0,-160,900", "Sleep:150"], h.Touch.Calls);
+        Assert.Equal(["Joy:150,650,80,0,900", "Sleep:100", "Joy:300,1300,0,-160,900", "Sleep:100"], h.Touch.Calls);
     }
 
     [Fact]
@@ -316,63 +316,85 @@ public sealed class TouchControlsTests
 
     // --- camera -----------------------------------------------------------------------------------------------------
 
+    // Measured in MuMu 2026-10-28: the finger moves the way the camera turns; a drag on the right band (centre
+    // 0.74 w, 0.33 h = 740,264 on this 1000x800 frame) with a 100 ms hold. 200 ms x 0.5 px/ms = 100 px, 0.3 px/ms.
     [Fact]
-    public void Turn_Left_FingerSwipesRight()
-    {
-        // Provisional (Task 1 confirms): the camera turns left when the finger moves right. 200 ms × 1.0 px/ms.
-        Assert.Equal(["Swipe:400,280,600,280,200"], Run(c => c.Turn(TurnDirection.Left, 200)));
-    }
+    public void Turn_Left_FingerMovesLeft() => Assert.Equal(["Drag:790,264,690,264,333,100"], Run(c => c.Turn(TurnDirection.Left, 200)));
 
     [Fact]
-    public void Turn_Right_FingerSwipesLeft() => Assert.Equal(["Swipe:600,280,400,280,200"], Run(c => c.Turn(TurnDirection.Right, 200)));
+    public void Turn_Right_FingerMovesRight() => Assert.Equal(["Drag:690,264,790,264,333,100"], Run(c => c.Turn(TurnDirection.Right, 200)));
 
     [Fact]
     public void Turn_ScalesBySwipePxPerTurnMs()
     {
         var h = new Harness();
-        h.Settings.Phone.SwipePxPerTurnMs = 2.0;
+        h.Settings.Phone.SwipePxPerTurnMs = 1.0; // 100 ms -> 100 px
         h.Controls.Turn(TurnDirection.Left, 100);
-        Assert.Equal(["Swipe:400,280,600,280,100"], h.Touch.Calls);
+        Assert.Equal(["Drag:790,264,690,264,333,100"], h.Touch.Calls);
     }
 
     [Fact]
-    public void BeginTurn_SwipesTheSweepLength_EndTurnIsANoOp()
+    public void Turn_FineTuneTap_IsRaisedToTheMinimumLength()
+    {
+        // 40 ms x 0.5 = 20 px is inside the game's dead zone (nothing turns); 40 px is the least that did. 133 ms -> the 150 ms floor.
+        Assert.Equal(["Drag:760,264,720,264,150,100"], Run(c => c.Turn(TurnDirection.Left, 40)));
+    }
+
+    [Fact]
+    public void Turn_UsesTheDragSettings()
     {
         var h = new Harness();
-        h.Settings.Dungeon.RotateLeftSweepMs = 300;
+        h.Settings.Phone.TurnDragMinPx = 60;
+        h.Settings.Phone.TurnDragEndHoldMs = 80;
+        h.Settings.Phone.TurnDragPxPerMs = 0.1;
+        h.Controls.Turn(TurnDirection.Left, 10);
+        Assert.Equal(["Drag:770,264,710,264,600,80"], h.Touch.Calls);
+    }
+
+    [Fact]
+    public void BeginTurn_DragsTheSweepLength_EndTurnIsANoOp()
+    {
+        var h = new Harness();
+        h.Settings.Dungeon.RotateLeftSweepMs = 300; // 150 px
         Assert.True(h.Controls.BeginTurn(TurnDirection.Left));
         h.Controls.EndTurn(TurnDirection.Left);
-        Assert.Equal(["Swipe:350,280,650,280,300"], h.Touch.Calls);
+        Assert.Equal(["Drag:815,264,665,264,500,100"], h.Touch.Calls);
     }
 
     [Fact]
     public void Turn_NothingToTurn_SendsNothingAndReturnsTrue()
     {
-        // A zero-length swipe is a tap on the ground (walk / attack): ms <= 0 or under a pixel sends nothing.
+        // ms <= 0 is no turn at all (a zero-length drag is a tap on the ground: walk / attack).
         var h = new Harness();
         Assert.True(h.Controls.Turn(TurnDirection.Left, 0));
         Assert.True(h.Controls.Turn(TurnDirection.Right, -5));
         Assert.True(h.Controls.BeginTurn(TurnDirection.Left)); // RotateLeftSweepMs 0
-        h.Settings.Phone.SwipePxPerTurnMs = 0.001;
-        Assert.True(h.Controls.Turn(TurnDirection.Left, 500)); // 0.5 px
         Assert.Empty(h.Touch.Calls);
     }
 
     [Fact]
-    public void Turn_LongSwipe_StaysOnTheFrame()
+    public void Turn_LongDrag_StaysInTheBand()
     {
-        // 2000 px on a 1000 px frame: the end points are clamped to 0 .. 999.
-        Assert.Equal(["Swipe:0,280,999,280,2000"], Run(c => c.Turn(TurnDirection.Left, 2000)));
-        Assert.Equal(["Swipe:999,280,0,280,2000"], Run(c => c.Turn(TurnDirection.Right, 2000)));
+        // 2000 px: the end points are clamped to the band x 0.60-0.88 w (600 .. 880).
+        Assert.Equal(["Drag:880,264,600,264,933,100"], Run(c => c.Turn(TurnDirection.Left, 4000)));
+        Assert.Equal(["Drag:600,264,880,264,933,100"], Run(c => c.Turn(TurnDirection.Right, 4000)));
     }
 
     [Fact] public void TurnByDrag_SwipesSideways() => Assert.Equal(["Swipe:1,2,51,2,300"], Run(c => c.TurnByDrag(1, 2, 50, 300)));
-    [Fact] public void TiltCamera_SwipesVertically() => Assert.Equal(["Swipe:1,2,1,-58,300"], Run(c => c.TiltCamera(1, 2, -60, 300)));
+
+    [Fact]
+    public void TiltCamera_DragsVerticallyAt065W()
+    {
+        // Vertical drags at 0.74 w were ignored in MuMu; 0.65 w works. Negative pixels = finger up (toward the horizon).
+        Assert.Equal(["Drag:650,400,650,340,300,100"], Run(c => c.TiltCamera(1, 400, -60, 300)));
+    }
+
+    [Fact] public void TiltCamera_StaysOnTheFrame() => Assert.Equal(["Drag:650,30,650,0,300,100"], Run(c => c.TiltCamera(1, 30, -60, 300)));
 
     [Fact]
     public void ZoomOut_OnePinchPerFiveNotches()
     {
-        Assert.Equal(["Pinch:7,8,360,96,400", "Sleep:150", "Pinch:7,8,360,96,400", "Sleep:150", "Pinch:7,8,360,96,400"],
+        Assert.Equal(["Pinch:7,8,360,96,400", "Sleep:100", "Pinch:7,8,360,96,400", "Sleep:100", "Pinch:7,8,360,96,400"],
             Run(c => c.ZoomOut(7, 8, 15)));
     }
 
@@ -381,11 +403,11 @@ public sealed class TouchControlsTests
     [Fact]
     public void ScrollList_Down_FingerSwipesUp()
     {
-        // Provisional (Task 1 confirms): negative notches = the list moves down = the finger moves up. 3 × 300 / 3.
-        Assert.Equal(["Swipe:7,500,7,200,300"], Run(c => c.ScrollList(7, 500, -3)));
+        // Measured (Settings list): negative notches = the list moves down = the finger moves up. 3 × 170 / 3.
+        Assert.Equal(["Swipe:7,500,7,330,300"], Run(c => c.ScrollList(7, 500, -3)));
     }
 
-    [Fact] public void ScrollList_Up_FingerSwipesDown() => Assert.Equal(["Swipe:7,500,7,600,300"], Run(c => c.ScrollList(7, 500, 1)));
+    [Fact] public void ScrollList_Up_FingerSwipesDown() => Assert.Equal(["Swipe:7,500,7,556,300"], Run(c => c.ScrollList(7, 500, 1)));
 
     // --- the game behind / dry run ----------------------------------------------------------------------------------
 
@@ -525,6 +547,7 @@ public sealed class TouchControlsTests
 
         public bool Tap(int x, int y, int holdMs) => Record($"Tap:{x},{y},{holdMs}");
         public bool Swipe(int x1, int y1, int x2, int y2, int durationMs) => Record($"Swipe:{x1},{y1},{x2},{y2},{durationMs}");
+        public bool Drag(int x1, int y1, int x2, int y2, int durationMs, int endHoldMs) => Record($"Drag:{x1},{y1},{x2},{y2},{durationMs},{endHoldMs}");
         public bool Pinch(int cx, int cy, int fromGap, int toGap, int durationMs) => Record($"Pinch:{cx},{cy},{fromGap},{toGap},{durationMs}");
         public bool Joystick(int cx, int cy, int dx, int dy, int durationMs) => Record($"Joy:{cx},{cy},{dx},{dy},{durationMs}");
         public bool PressDown(int x, int y) => Record($"Down:{x},{y}");

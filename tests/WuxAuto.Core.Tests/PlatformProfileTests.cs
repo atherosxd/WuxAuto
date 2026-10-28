@@ -53,13 +53,13 @@ public class PlatformProfileTests
             File.WriteAllText(AppPaths.SettingsFile, "{ \"Version\": 21 }");
             var p = SettingsStore.Load().Phone;
             Assert.Equal(60, p.TapHoldMs);
-            Assert.Equal(150, p.TapSettleMs);
+            Assert.Equal(100, p.TapSettleMs);
             Assert.Equal(900, p.JoystickStepMs);
-            Assert.Equal(1.0, p.SwipePxPerTurnMs);
+            Assert.Equal(0.5, p.SwipePxPerTurnMs);
             Assert.Equal(360, p.PinchFromGap);
             Assert.Equal(96, p.PinchToGap);
             Assert.Equal(400, p.PinchMs);
-            Assert.Equal(300, p.ListSwipePx);
+            Assert.Equal(170, p.ListSwipePx);
             Assert.Equal(0.02, p.FloatingX);
             Assert.Equal(0.4, p.FloatingY);
 

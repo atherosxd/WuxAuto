@@ -8,6 +8,13 @@ public interface ITouchInput
     bool BringGameToFront();
     bool Tap(int x, int y, int holdMs);
     bool Swipe(int x1, int y1, int x2, int y2, int durationMs);
+    /// <summary>
+    /// Finger down at the start, moves to the end over <paramref name="durationMs"/>, stays there for
+    /// <paramref name="endHoldMs"/>, lifts. The game reads the finger at its frame rate, so a lift right after the move
+    /// loses part of it (MuMu 2026-10-28: the camera turns more with a 100 ms hold). <see cref="Swipe"/> has no hold.
+    /// </summary>
+    bool Drag(int x1, int y1, int x2, int y2, int durationMs, int endHoldMs);
+
     bool Pinch(int cx, int cy, int fromGap, int toGap, int durationMs);
 
     /// <summary>One joystick step; blocks until released.</summary>
