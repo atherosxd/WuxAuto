@@ -32,6 +32,7 @@ public sealed class KeyboardMouseControls(AppSettings settings, IGameInput input
 
         if (settings.Dungeon.CtrlSkill)
         {
+            // Let the game see the plain key go up before the same key goes down with Ctrl.
             Thread.Sleep(CtrlSkillGapMs);
             input.CtrlKeyTap(skill);
         }

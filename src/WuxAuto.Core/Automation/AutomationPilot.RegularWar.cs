@@ -106,13 +106,13 @@ public sealed partial class AutomationPilot
         // The autohunt settings are not open (S toggles them): press S, at most 3 times.
         if (now - _lastWarSAt > 2500)
         {
-            if (_warSPresses >= 3 || string.IsNullOrWhiteSpace(settingsKey))
+            if (_warSPresses >= 3 || !_controls.Has(GameAction.OpenAutohuntSettings))
             {
                 FinishRegularWar(frame, ticked: false, "the autohunt settings did not show a Regular War box");
                 return;
             }
 
-            if (!_input.KeyTap(settingsKey))
+            if (!_controls.Press(GameAction.OpenAutohuntSettings))
             {
                 _detail = "key blocked - waiting for the game to be in front";
                 _waitUntil = now + 300;
@@ -133,7 +133,7 @@ public sealed partial class AutomationPilot
     private void FinishRegularWar(Mat frame, bool ticked, string what)
     {
         string key = _settings.Dungeon.AutohuntKey;
-        if (!string.IsNullOrWhiteSpace(key) && !_input.KeyTap(key))
+        if (_controls.Has(GameAction.ToggleAutohunt) && !_controls.Press(GameAction.ToggleAutohunt))
         {
             _detail = "key blocked - waiting for the game to be in front";
             _waitUntil = Environment.TickCount64 + 300;
