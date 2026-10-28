@@ -186,8 +186,60 @@ internal static class WarProbe
     }
 
     /// <summary>
+    /// --warui &lt;dir&gt;: where the UI text lies, per client size, from whole-frame OCR x1 lines sorted by their words - the
+    /// combat log (attack / damage / autohunt / arrived lines, left half), the chat tabs, the item list (time(s) / min(s) /
+    /// dates, right half), the event notices ("Event", "Exp x") and the minimap title / coordinates (top right): the union
+    /// box of each, in pixels and as fractions. What the walk's UI rectangles (AutomationPilot.WarWalkBands) are measured from.
+    /// </summary>
+    public static async Task<int> UiAsync(string dir)
+    {
+        var settings = SettingsStore.Load(persistMigration: false);
+        using var analyzer = new ScreenAnalyzer(settings, new OcrService());
+        var kinds = new (string Name, Func<string, PixelRect, int, int, bool> Is)[]
+        {
+            ("log", (t, b, w, h) => b.CenterX < w / 2 && System.Text.RegularExpressions.Regex.IsMatch(t, @"attack|damage|auto ?hunt|arrived|succeeded", System.Text.RegularExpressions.RegexOptions.IgnoreCase)),
+            ("chat tabs", (t, b, w, h) => b.CenterX < w / 2 && System.Text.RegularExpressions.Regex.IsMatch(t, @"GENERAL|WHISPER|PARTY")),
+            ("items", (t, b, w, h) => b.CenterX > w / 2 && System.Text.RegularExpressions.Regex.IsMatch(t, @"\(time|\(min|\d{2}\.\d{2}\.\d{4}|Hide item")),
+            ("notices", (t, b, w, h) => b.CenterX > w / 2 && System.Text.RegularExpressions.Regex.IsMatch(t, @"Event|Exp x")),
+            ("minimap", (t, b, w, h) => b.CenterX > w / 2 && b.Y < h * 0.45 && (WarText.IsZoneTitleLine(t) || System.Text.RegularExpressions.Regex.IsMatch(t, @"^\d{3,6}\s*[,.]\s*\d{3,6}$"))),
+        };
+        var boxes = new SortedDictionary<string, Dictionary<string, (int L, int T, int R, int B, int N)>>(StringComparer.Ordinal);
+        foreach (string path in Frames(dir))
+        {
+            using var frame = Load(path);
+            if (frame == null)
+                continue;
+
+            int w = frame.Width, h = frame.Height;
+            string size = $"{w}x{h}";
+            if (!boxes.TryGetValue(size, out var bySize))
+                boxes[size] = bySize = [];
+            foreach (var (text, b) in ScreenAnalyzer.ToLines(await analyzer.Ocr.RecognizeAsync(frame, new PixelRect(0, 0, w, h), 1.0)))
+            {
+                foreach (var (name, isKind) in kinds)
+                {
+                    if (!isKind(text, b, w, h))
+                        continue;
+                    bySize[name] = bySize.TryGetValue(name, out var u)
+                        ? (Math.Min(u.L, b.X), Math.Min(u.T, b.Y), Math.Max(u.R, b.Right), Math.Max(u.B, b.Bottom), u.N + 1)
+                        : (b.X, b.Y, b.Right, b.Bottom, 1);
+                }
+            }
+        }
+
+        foreach (var (size, bySize) in boxes)
+        {
+            var wh = size.Split('x').Select(int.Parse).ToArray();
+            foreach (var (name, u) in bySize.OrderBy(kv => kv.Key))
+                Console.WriteLine($"{size} {name,-9} x {u.L}-{u.R} y {u.T}-{u.B} ({u.L / (double)wh[0]:0.00}-{u.R / (double)wh[0]:0.00} w, {u.T / (double)wh[1]:0.00}-{u.B / (double)wh[1]:0.00} h) {u.N} lines");
+        }
+
+        return 0;
+    }
+
+    /// <summary>
     /// --warwalk &lt;dir&gt;: the Auto War walk out of the respawn point on each frame, as the pilot decides it (whole-frame
-    /// OCR x1 -> AutomationPilot.WarWalkGoal outside WarWorldBands, our own name tag dropped -> WarWalkClick): the goal tag,
+    /// OCR x1 -> AutomationPilot.WarWalkGoal outside WarWalkBands, our own name tag dropped -> WarWalkClick): the goal tag,
     /// its centre and the Ctrl+click point, or "no players in view"; plus every line that passed the text rule but was
     /// dropped and why (band / own name).
     /// </summary>
@@ -205,7 +257,7 @@ internal static class WarProbe
             total++;
             int w = frame.Width, h = frame.Height;
             var lines = ScreenAnalyzer.ToLines(await analyzer.Ocr.RecognizeAsync(frame, new PixelRect(0, 0, w, h), 1.0));
-            var bands = AutomationPilot.WarWorldBands(settings.Regions, w, h);
+            var bands = AutomationPilot.WarWalkBands(w, h);
             var goal = AutomationPilot.WarWalkGoal(lines, w, h, bands);
             var dropped = lines
                 .Where(l => WarText.IsPlayerTagText(l.Text) && (goal == null || l.Bounds != goal.Value.Bounds))

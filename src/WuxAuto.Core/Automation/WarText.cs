@@ -517,11 +517,12 @@ public static class WarText
     }
 
     // Up to 9 digits: a boss's bar reads "16284125/65136500" (int holds 9 digits).
-    static readonly Regex TargetHpPair = new(@"^[^\d:]{0,3}(\d{1,9})/(\d{3,9})[^\d:]{0,3}$", RegexOptions.Compiled);
+    // The stray characters at the ends: neither letters nor digits nor ':' ("HP 100/100" never passes).
+    static readonly Regex TargetHpPair = new(@"^[^\p{L}\d:]{0,3}(\d{1,9})/(\d{3,9})[^\p{L}\d:]{0,3}$", RegexOptions.Compiled);
 
     /// <summary>
     /// The target's HP bar line in the target box: a line that is only "N / M" (spaces optional, an O read for 0, up to 3
-    /// stray characters at each end - a bar edge read as punctuation) with M at least 100. Enough for a target on its own
+    /// stray punctuation characters at each end - a bar edge - but no letter) with M at least 100. Enough for a target on its own
     /// (user, 2026-10-28: a player's red name does not read, "49293/49293" on its bar does). A date ("10/24/2026"), a time,
     /// a line with ':' or words beside the numbers never pass. The line's centre must lie in the middle half of
     /// <paramref name="box"/> (the target box): the target bar sits at about 0.52 w, while the pet / mount panel under the
@@ -545,12 +546,27 @@ public static class WarText
 
     static readonly char[] Quotes = ['"', '\'', '“', '”'];
 
+    static readonly HashSet<string> WindowTitles = new(StringComparer.Ordinal)
+    {
+        "spawns", "monstersonthismap", "inventory", "teleportscroll", "servers", "settings",
+    };
+
+    /// <summary>
+    /// A whole line that is the title of a window drawn over the game world: the map window's "Spawns" / "Monsters on this
+    /// map" header (its list rows read like name tags: "Serpent Knight" was the walk goal on 147 saved frames), INVENTORY,
+    /// TELEPORT SCROLL, SETTINGS, or the login screen's SERVERS.
+    /// </summary>
+    public static bool IsWindowTitleLine(string line) => WindowTitles.Contains(TextMatcher.Normalize(line));
+
+    // Combat-log words: such a line is the log wherever it sits (the walk's log rectangle is measured, not a 40 % band).
+    static readonly Regex CombatLogWords = new(@"attack|damage|auto ?hunt|arrived|succeeded", RegexOptions.Compiled | RegexOptions.IgnoreCase);
+
     /// <summary>
     /// A line of the game world that may be a name tag over a character ("zMADARAz", "[Guild] Name", "[PvP] (Dragon) Name"):
     /// 3+ letters, no ':', not a sentence (ending in '.', '!', '?' or ',' - quotes after it aside - or opening with a
     /// quote: a boss's speech), at most 4 words (system notices: "... has succeeded in reinforcing 120%") and not one
-    /// bracketed name alone ("[Maya Cliff]": a zone banner, or the "[Premium]" title over a name). The last three came from
-    /// the saved frames (--warwalk). Whether it lies in the game world at all (not the combat log, the minimap...) is up to
+    /// bracketed name alone ("[Maya Cliff]": a zone banner, or the "[Premium]" title over a name), no combat-log word
+    /// (attack, damage, auto hunt, arrived, succeeded). The last four came from the saved frames (--warwalk). Whether it lies in the game world at all (not the combat log, the minimap...) is up to
     /// the caller.
     /// </summary>
     public static bool IsPlayerTagText(string text)
@@ -561,7 +577,7 @@ public static class WarText
         bool speech = trimmed.Length > 0 && Quotes.Contains(trimmed[0]);
         bool bracketed = trimmed.StartsWith('[') && trimmed.IndexOf(']') == trimmed.Length - 1;
         int words = trimmed.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries).Length;
-        return !trimmed.Contains(':') && !sentence && !speech && !bracketed && words <= 4
+        return !trimmed.Contains(':') && !sentence && !speech && !bracketed && words <= 4 && !CombatLogWords.IsMatch(trimmed)
                && TextMatcher.Normalize(trimmed).Count(char.IsLetter) >= 3;
     }
 

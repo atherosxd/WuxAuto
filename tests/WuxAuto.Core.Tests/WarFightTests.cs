@@ -441,28 +441,92 @@ public class WarFightTests
     static (string, PixelRect) Tag(string text, int centreX, int centreY, int w = 100, int h = 16)
         => (text, new PixelRect(centreX - w / 2, centreY - h / 2, w, h));
 
-    static IReadOnlyList<PixelRect> Bands => AutomationPilot.WarWorldBands(new RegionSettings(), W, H);
+    static IReadOnlyList<PixelRect> Bands => AutomationPilot.WarWalkBands(W, H);
+
+    static bool InAny(IReadOnlyList<PixelRect> bands, double fx, double fy, int w = W, int h = H)
+    {
+        int x = (int)(fx * w), y = (int)(fy * h);
+        return bands.Any(b => x >= b.X && x < b.Right && y >= b.Y && y < b.Bottom);
+    }
 
     [Fact]
-    public void WorldBands_TheTopStrip_TheMinimap_TheCombatLog_TheSkillBar_TheItemList()
+    public void WalkBands_MeasuredUi_NotTheWideReadingRegions()
     {
-        var regions = new RegionSettings();
-        var bands = AutomationPilot.WarWorldBands(regions, W, H);
-        Assert.Contains(new PixelRect(0, 0, W, (int)(0.13 * H)), bands);
-        Assert.Contains(regions.Minimap.ToPixels(W, H), bands);
-        Assert.Contains(regions.AttackMessage.ToPixels(W, H), bands);
-        Assert.Contains(regions.Hotbar.ToPixels(W, H), bands);
-        Assert.Contains(regions.ItemList.ToPixels(W, H), bands);
+        // Measured with --warui on the saved frames (1024 to 2304 wide): combat log text 0.00-0.30 w, 0.20-0.55 h; chat
+        // 0.01-0.38 w, 0.66-0.96 h; minimap panel 0.76-0.98 w, 0.06-0.36 h and the pet panel 0.57-0.74 w, 0.06-0.22 h;
+        // event notices 0.83-1.00 w, 0.37-0.58 h; item list 0.72-1.00 w, 0.56-1.00 h; skill bar bottom centre.
+        var bands = Bands;
+        Assert.True(InAny(bands, 0.15, 0.40));     // combat log
+        Assert.True(InAny(bands, 0.20, 0.80));     // chat
+        Assert.True(InAny(bands, 0.30, 0.98));     // bottom bar, left
+        Assert.True(InAny(bands, 0.85, 0.20));     // minimap panel
+        Assert.True(InAny(bands, 0.65, 0.15));     // pet panel
+        Assert.True(InAny(bands, 0.90, 0.45));     // event notices
+        Assert.True(InAny(bands, 0.85, 0.80));     // item list
+        Assert.True(InAny(bands, 0.50, 0.92));     // skill bar
+        Assert.True(InAny(bands, 0.50, 0.05));     // top strip
+        // The world at the character's height reaches from 0.31 w to 0.80 w (was 0.40-0.60 with the reading regions).
+        foreach (double fx in new[] { 0.32, 0.35, 0.45, 0.65, 0.75, 0.79 })
+            Assert.False(InAny(bands, fx, 0.54), $"x {fx}");
+        Assert.True(InAny(bands, 0.30, 0.54));
+        Assert.True(InAny(bands, 0.81, 0.54));
+        // Distant tags up the screen and to the sides.
+        Assert.False(InAny(bands, 0.35, 0.20));
+        Assert.False(InAny(bands, 0.45, 0.70));
+        Assert.False(InAny(bands, 0.65, 0.40));
     }
 
     [Fact]
     public void WalkGoal_TheEventNoticesBetweenTheMinimapAndTheItemList_DoNotCount()
     {
-        // A saved 1024x768 Labyrinth frame: "EXP x 2 Event" ... "Mount Exp x 0.050" right-aligned under the minimap panel,
-        // the last two below Regions.Minimap (0.42 h) and above Regions.ItemList (0.50 h).
-        var bands = AutomationPilot.WarWorldBands(new RegionSettings(), 1024, 768);
+        // A saved 1024x768 Labyrinth frame: "EXP x 2 Event" ... "Mount Exp x 0.050" right-aligned under the minimap panel.
         var lines = new[] { Tag("Pet Exp x 2%", 960, 335, 98, 12), Tag("Mount Exp x 0.050", 950, 350, 118, 12) };
-        Assert.Null(AutomationPilot.WarWalkGoal(lines, 1024, 768, bands));
+        Assert.Null(AutomationPilot.WarWalkGoal(lines, 1024, 768, AutomationPilot.WarWalkBands(1024, 768)));
+    }
+
+    [Fact]
+    public void WalkGoal_ChatAndBottomBarLines_DoNotCount()
+    {
+        // 1024x768: the chat's "• OFFER" / trade ads and the tabs line, bottom left.
+        var lines = new[] { Tag("• OFFER", 120, 690, 60, 12), Tag("SELLING TRADE", 200, 705, 150, 12), Tag("GENERAL WORLD CLAN", 200, 652, 300, 12) };
+        Assert.Null(AutomationPilot.WarWalkGoal(lines, 1024, 768, AutomationPilot.WarWalkBands(1024, 768)));
+    }
+
+    [Theory]
+    [InlineData("Spawns")]                  // the map window's monster list (its rows read as "Serpent Knight", "Kitfo Warrior"...)
+    [InlineData("Monsters on this map")]
+    [InlineData("INVENTORY")]
+    [InlineData("TELEPORT SCROLL")]
+    [InlineData("SERVERS")]                 // the login screen's server list
+    [InlineData("SETTINGS")]
+    public void WalkGoal_AWindowOverTheWorld_NoGoal(string title)
+    {
+        // --warwalk on the saved frames: with the map open its rows were the goal on 244 frames.
+        var lines = new[] { Tag(title, 1300, 300, 120, 16), Tag("Serpent Knight", 1282, 583, 120, 12), Tag("zMADARAz", SpotX + 120, SpotY + 260) };
+        Assert.Null(AutomationPilot.WarWalkGoal(lines, W, H, Bands));
+    }
+
+    [Fact]
+    public void WalkGoal_IgnoredTexts_AreSkipped_TheNextNearestWins()
+    {
+        var lines = new[] { Tag("PAGE 2", SpotX + 100, SpotY + 260), Tag("zMADARAz", SpotX + 300, SpotY - 300) };
+        Assert.Equal("PAGE 2", AutomationPilot.WarWalkGoal(lines, W, H, Bands)?.Text);
+        var ignored = new HashSet<string> { AutomationPilot.WarWalkKey("PAGE 2") };
+        Assert.Equal("zMADARAz", AutomationPilot.WarWalkGoal(lines, W, H, Bands, ignored)?.Text);
+    }
+
+    [Fact]
+    public void WalkStatic_TheSameTextAtTheSameSpotAfterAStep_IsUi()
+    {
+        var goal = Tag("PAGE 2", 1200, 300);
+        // Within 2 % of the screen (38 x 21 px at 1920x1080) after the step: a window's word, not a player.
+        Assert.True(AutomationPilot.WarWalkStatic(goal, [Tag("PAGE 2", 1210, 310)], W, H));
+        Assert.True(AutomationPilot.WarWalkStatic(goal, [Tag("page 2", 1200, 300)], W, H));
+        // A player moves on the screen when the character walks.
+        Assert.False(AutomationPilot.WarWalkStatic(goal, [Tag("PAGE 2", 1260, 300)], W, H));
+        Assert.False(AutomationPilot.WarWalkStatic(goal, [Tag("PAGE 2", 1200, 340)], W, H));
+        Assert.False(AutomationPilot.WarWalkStatic(goal, [Tag("zMADARAz", 1200, 300)], W, H));
+        Assert.False(AutomationPilot.WarWalkStatic(goal, [], W, H));
     }
 
     [Fact]
@@ -483,9 +547,9 @@ public class WarFightTests
         // Saved frames (--warwalk): our own "[Premium]" / name tags sit up to 0.176 h from the spot (1024x768: "Premium)"
         // centred at 512,280, 135 px above 512,415; 2048x1152: 191 px) - 0.12 h took them for other players.
         var lines = new[] { Tag("Premium)", 512, 280, 49, 11), Tag("SHCorp", 492, 294, 40, 12) };
-        Assert.Null(AutomationPilot.WarWalkGoal(lines, 1024, 768, AutomationPilot.WarWorldBands(new RegionSettings(), 1024, 768)));
+        Assert.Null(AutomationPilot.WarWalkGoal(lines, 1024, 768, AutomationPilot.WarWalkBands(1024, 768)));
         Assert.Null(AutomationPilot.WarWalkGoal([Tag("Premium", 1018, 431, 80, 14)], 2048, 1152,
-            AutomationPilot.WarWorldBands(new RegionSettings(), 2048, 1152)));
+            AutomationPilot.WarWalkBands(2048, 1152)));
     }
 
     [Fact]
@@ -510,12 +574,25 @@ public class WarFightTests
     {
         Assert.Equal(5, AutomationPilot.WarWalkAfterTabs);
         Assert.Equal(6, AutomationPilot.WarWalkMaxSteps);
-        Assert.False(AutomationPilot.WarWalkDue(noTargetTabs: 4, walkSteps: 0, clockNow: Now, restUntil: 0));
-        Assert.True(AutomationPilot.WarWalkDue(noTargetTabs: 5, walkSteps: 0, clockNow: Now, restUntil: 0));
-        Assert.True(AutomationPilot.WarWalkDue(noTargetTabs: 10, walkSteps: 5, clockNow: Now, restUntil: 0));
-        Assert.False(AutomationPilot.WarWalkDue(noTargetTabs: 11, walkSteps: 6, clockNow: Now, restUntil: 0));
-        Assert.False(AutomationPilot.WarWalkDue(noTargetTabs: 20, walkSteps: 0, clockNow: Now, restUntil: Now + 1));
-        Assert.True(AutomationPilot.WarWalkDue(noTargetTabs: 20, walkSteps: 0, clockNow: Now + 1, restUntil: Now + 1));
+        Assert.False(AutomationPilot.WarWalkDue(true, noTargetTabs: 4, walkSteps: 0, totalSteps: 0, clockNow: Now, restUntil: 0));
+        Assert.True(AutomationPilot.WarWalkDue(true, noTargetTabs: 5, walkSteps: 0, totalSteps: 0, clockNow: Now, restUntil: 0));
+        Assert.True(AutomationPilot.WarWalkDue(true, noTargetTabs: 10, walkSteps: 5, totalSteps: 5, clockNow: Now, restUntil: 0));
+        Assert.False(AutomationPilot.WarWalkDue(true, noTargetTabs: 11, walkSteps: 6, totalSteps: 6, clockNow: Now, restUntil: 0));
+        Assert.False(AutomationPilot.WarWalkDue(true, noTargetTabs: 20, walkSteps: 0, totalSteps: 6, clockNow: Now, restUntil: Now + 1));
+        Assert.True(AutomationPilot.WarWalkDue(true, noTargetTabs: 20, walkSteps: 0, totalSteps: 6, clockNow: Now + 1, restUntil: Now + 1));
+    }
+
+    [Fact]
+    public void WalkDue_NotBeforeTheWarHasStarted()
+        // Before the gate opens everyone stands at the closed gate: no walking there.
+        => Assert.False(AutomationPilot.WarWalkDue(false, noTargetTabs: 20, walkSteps: 0, totalSteps: 0, clockNow: Now, restUntil: 0));
+
+    [Fact]
+    public void WalkDue_AtMostEighteenStepsAWar()
+    {
+        Assert.Equal(18, AutomationPilot.WarWalkMaxTotalSteps);
+        Assert.True(AutomationPilot.WarWalkDue(true, noTargetTabs: 20, walkSteps: 5, totalSteps: 17, clockNow: Now, restUntil: 0));
+        Assert.False(AutomationPilot.WarWalkDue(true, noTargetTabs: 20, walkSteps: 0, totalSteps: 18, clockNow: Now, restUntil: 0));
     }
 
     [Fact]

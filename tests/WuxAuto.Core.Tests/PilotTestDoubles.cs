@@ -68,7 +68,10 @@ sealed class FakeGameInput : IGameInput
     /// <summary>Whether the game window is in front.</summary>
     public bool InFront { get; set; } = true;
 
-    public bool IsDryRun => false;
+    /// <summary>A dry run: the pilot is expected to send nothing (its calls are still recorded).</summary>
+    public bool DryRun { get; set; }
+
+    public bool IsDryRun => DryRun;
     public bool IsTargetForeground => InFront;
     public bool TryFocus(int timeoutMs = 1200) => true;
 

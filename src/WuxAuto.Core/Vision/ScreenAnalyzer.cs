@@ -1175,30 +1175,37 @@ public sealed class ScreenAnalyzer : IDisposable
     /// <summary>
     /// Auto War's fight: what the target box holds (user, 2026-10-28: a player's name is red and the white read blacks it
     /// out). The name as <see cref="ReadTargetAsync"/> finds it - OCR x1.5, then the white text at x2 - and, when neither
-    /// names one, the red text at x2 (the name from the red read, its "N / M" line from the red or the white read). The HP
-    /// bar's numbers line (<see cref="WarText.TargetHpLine"/>: in the box's centre band, so the pet panel's "100/100" never
-    /// counts) of any of these reads is a target on its own, named or not;
-    /// the chest as in <see cref="ReadTargetAsync"/>. <see cref="ReadTargetAsync"/> itself is left as it was (the
-    /// remember step needs a real name).
+    /// names one, the red text at x2 (<see cref="WarText.FindTargetName"/> on the red read alone). The HP bar's numbers
+    /// line (<see cref="WarText.TargetHpLine"/>: in the box's centre band, so the pet panel's "100/100" never counts) of any
+    /// of these reads is a target on its own, named or not; the chest as in <see cref="ReadTargetAsync"/>.
+    /// <paramref name="seenOnly"/> (the attack step, where only "is it still there" matters): stop at the first sign - the
+    /// chest, then the first read with a name or the numbers line. <see cref="ReadTargetAsync"/> itself is left as it was
+    /// (the remember step needs a real name).
     /// </summary>
-    public async Task<WarTargetRead> ReadWarTargetAsync(Mat frame)
+    public async Task<WarTargetRead> ReadWarTargetAsync(Mat frame, bool seenOnly = false)
     {
         var roi = _settings.Regions.TargetBox.ToPixels(frame.Width, frame.Height);
         var chest = FindIcon(frame, "monstericon", new NormRect(0.25, 0, 0.50, 0.16).ToPixels(frame.Width, frame.Height), 0.80);
+        if (seenOnly && chest != null)
+            return new WarTargetRead(null, null, chest, "chest");
 
         var plain = ToLines(await Ocr.RecognizeAsync(frame, roi, 1.5));
         var hpLine = WarText.TargetHpLine(plain, roi);
         if (WarText.FindTargetName(plain) is { } name)
             return new WarTargetRead(name, hpLine, chest, "x1.5");
+        if (seenOnly && hpLine != null)
+            return new WarTargetRead(null, hpLine, chest, "numbers");
 
         var white = await OcrWhiteTextAsync(frame, roi, 2.0);
         hpLine ??= WarText.TargetHpLine(white, roi);
         if (WarText.FindTargetName(white) is { } whiteName)
             return new WarTargetRead(whiteName, hpLine, chest, "white x2");
+        if (seenOnly && hpLine != null)
+            return new WarTargetRead(null, hpLine, chest, "numbers");
 
         var red = await OcrRedTextAsync(frame, roi, 2.0);
         hpLine ??= WarText.TargetHpLine(red, roi);
-        if (WarText.FindTargetName([.. red, .. white]) is { } redName)
+        if (WarText.FindTargetName(red) is { } redName)
             return new WarTargetRead(redName, hpLine, chest, "red x2");
 
         string via = hpLine != null ? "numbers" : chest != null ? "chest" : "none";

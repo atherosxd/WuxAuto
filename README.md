@@ -199,11 +199,17 @@ home it teleports back to the **same cave and the same monster**, turns the auto
    are still clicked) - again every 5 min 45 s, then repeats: Tab to an enemy, the X buff, hold Shura, attack until the
    target is gone. An enemy counts as targeted when its name reads in the target box at the top centre (a player's
    **red** name has its own read) or, name unread, when its HP bar's numbers ("49293/49293") show there.
-   **Out of the respawn point:** after 5 Tabs in a row without a target it Ctrl+clicks (a walk) toward the nearest
-   name tag on screen - never its own, never one in the minimap, the event notices under it, the combat log on the
-   left, the skill bar or the item list - a quarter of the screen height at most per step, then Tabs again; at most
-   6 steps, then Tab only for 20 s. No name tag in view: no click (the log says "no players in view" once). Players on
-   the left 40 % of the screen (the combat log's band) are not walked to. Not seen in a live war yet.
+   **Out of the respawn point:** once the war has started (not while everyone waits at the closed gate), after 5 Tabs
+   in a row without a target it Ctrl+clicks (a walk) toward the nearest name tag on screen, a quarter of the screen
+   height at most per step, then Tabs again. It looks in the game world between the game's panels: from about 31 % to
+   80 % of the width at the character's height, more higher up; never at its own tag (within 22 % of the screen
+   height of the character), the top strip, the combat log (left, 0-31 % wide, 13-56 % high), the chat and bottom bar
+   under it, the pet and minimap panels, the event notices, the item list or the skill bar. Combat-log lines, boss
+   speech and system notices are never taken for a name, and nothing is while a window (map, inventory, teleport
+   scroll, settings) is open. A word that stays at the same spot after a step is a window or
+   a chat line: it is ignored for the rest of that war. At most 6 steps, then Tab only for 20 s; 3 looks without a
+   name tag in view also mean 20 s of Tab only; at most **18 steps per war** until a target is seen, then Tab only.
+   Only while the minimap shows Bohai Outpost. Not seen in a live war yet.
    It watches the HP numbers (top left) and rebuffs after a death. When the war is over it goes back as above - at most
    3 times in 30 min without a war in between (a cave that keeps sending the character to town would otherwise cost a
    teleport every round); then it stops.

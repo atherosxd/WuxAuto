@@ -551,6 +551,8 @@ public class WarTextTests
     [InlineData("297")]                                   // a bare number
     [InlineData("zMADARAz")]
     [InlineData("12:30/1500")]
+    [InlineData("HP 100/100")]                            // words at the ends: letters never pass
+    [InlineData("100/100 Lv")]
     [InlineData("Lv 120 1500/1500 Spawns")]               // a map list row, not the bar's own line
     public void TargetHpLine_NotNumbersLines(string text) => Assert.Null(WarText.TargetHpLine([L(text, 900, 80)], TargetBox1920));
 
@@ -571,7 +573,12 @@ public class WarTextTests
     [InlineData("12345", false)]
     [InlineData("Gate is Open.", false)]              // a sentence
     [InlineData("Ver: 0.2.492.1", false)]             // ':' lines
-    [InlineData("Attack succeeded!Normal damage(+50)", true)]   // text rules alone do not know the combat log: the bands do
+    // Combat-log lines, wherever they sit (the walk's log rectangle is measured, not the 40 % reading band).
+    [InlineData("Attack succeeded!Normal damage(+50)", false)]
+    [InlineData("Auto hunt started", false)]
+    [InlineData("Autohunt ended", false)]
+    [InlineData("Arrived Goblin", false)]
+    [InlineData("Critical damage(+4120)", false)]
     [InlineData("  ", false)]
     [InlineData("[PvP] (Dragon) Delisya", true)]    // a player's tag in a saved frame
     [InlineData("[Guild] zMADARAz", true)]

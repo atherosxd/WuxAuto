@@ -98,6 +98,10 @@ int targetIndex = Array.IndexOf(args, "--target");
 if (targetIndex >= 0 && targetIndex + 1 < args.Length)
     return await WarProbe.TargetAsync(args[targetIndex + 1]);
 
+int uiIndex = Array.IndexOf(args, "--warui");
+if (uiIndex >= 0 && uiIndex + 1 < args.Length)
+    return await WarProbe.UiAsync(args[uiIndex + 1]);
+
 int walkIndex = Array.IndexOf(args, "--warwalk");
 if (walkIndex >= 0 && walkIndex + 1 < args.Length)
     return await WarProbe.WalkAsync(args[walkIndex + 1]);
