@@ -49,7 +49,9 @@ run (Laby only). Destination for this mode = `Blossom.Destination` (the `Destina
 at the middle between them (`war-inputs\blossom_pillars_view.webp`: one pillar top-left, one top-right, the
 character centred under the gap).
 
-- Template `redpillar.png` (the user's 174x103 crop of a pillar base, copied into `Assets`).
+- Template `blossompillar.png` in `Assets`: the left pillar's grey base (96x42) cropped at 788,270 from the user's
+  zoomed-out lined-up frame below. The user's first crop (`redpillar.png`, 174x103) came from a closer camera,
+  about 1.4x larger than the zoomed-out view.
 - The user's lined-up frame (`war-inputs\blossom_lined_up.png`, 2000x1168 window incl. a ~44 px title bar,
   zoomed out, 2026-10-29): the left pillar is dark red, the right one green-tinted (a glow over it) - the grey
   stone bases look alike. Bases at x ~835 and ~1245, y ~290 (~0.22 h of the client); ~410 px = 0.205 w apart;
