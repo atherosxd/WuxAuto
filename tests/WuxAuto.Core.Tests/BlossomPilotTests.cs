@@ -340,6 +340,47 @@ public class BlossomPilotTests
     }
 
     [Fact]
+    public async Task SlidingAlongAWall_LongAfterTheHeadingWasLearnt_DoesNotRelearnIt()
+    {
+        // Live run 10: blocked by the bridge, the moves slid along the railing, three of them read as "steps that went
+        // elsewhere" and the heading was re-learnt as +90 - the walk then went east, away from the route. Re-learning is for a
+        // bad first sample right after the heading was set, not for a wall met many steps later.
+        int x = 15000, y = 18000, seen = 0;   // the view looks north; at y <= 15700 every click slides east along a wall
+        FakeGameInput? sent = null;
+        var (settings, input, ocr) = Harness(() =>
+        {
+            var clicks = sent!.Calls.Where(c => c.StartsWith("Click ", StringComparison.Ordinal)).ToList();
+            for (; seen < clicks.Count; seen++)
+            {
+                var p = clicks[seen]["Click ".Length..].Split(',').Select(int.Parse).ToArray();
+                double dx = (p[0] - Width / 2.0) * 0.5, dy = (p[1] - Height / 2.0) * 0.5;
+                if (y <= 15700)
+                {
+                    x += (int)Math.Round(Math.Sqrt(dx * dx + dy * dy));
+                    continue;
+                }
+
+                x += (int)Math.Round(dx);
+                y += (int)Math.Round(dy);
+            }
+
+            return $"{x} , {y}";
+        });
+        sent = input;
+        settings.Blossom.Waypoints = ["15000,18000", "15000,12000", "15000,10000"];
+        settings.Blossom.LoopFrom = 1;
+        settings.Blossom.WaypointTurns = [];
+        settings.Blossom.WaypointWaitMs = 0;
+        settings.Blossom.WalkReadEveryMs = 200;
+        settings.Blossom.WalkClickEveryMs = 100;
+
+        var run = await RunAsync(settings, input, ocr, PilotPhase.BlossomWalk, (_, _) => y <= 15700 && x > 16500, 20000);
+
+        string log = string.Join("\n", run.Lines);
+        Assert.True(y <= 15700, "never reached the wall:\n" + log);
+        Assert.DoesNotContain(run.Lines, l => l.Contains("re-learnt", StringComparison.Ordinal));
+    }
+    [Fact]
     public async Task Waypoint_TooManyClicks_IsSkipped()
     {
         int n = 0;

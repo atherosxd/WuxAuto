@@ -25,6 +25,7 @@ public sealed partial class AutomationPilot
     private const int BlossomGiveUpIgnoreMs = 10000;
     private const double BlossomHeadingMissRad = 0.6;
     private const int BlossomHeadingMissesToRelearn = 3;
+    private const int BlossomRelearnWindow = 6;   // steps after the heading was set in which it may be re-learnt
     private const int BlossomNoProgressSteps = 15;
     private const int BlossomTargetCheckMs = 700;
     private const double BlossomNearDistance = 300;   // from here the walk homes in on the waypoint
@@ -45,6 +46,7 @@ public sealed partial class AutomationPilot
     private bool _blossomBuffThenTurn;
     private bool _blossomHuntOffChecked;
     private int _blossomHeadingMisses;
+    private int _blossomHeadingAge;   // steps (>= 60 units) since the heading was set
     private long _blossomIgnoreTargetsUntil;
     private int _blossomWaypointSteps;          // reads in a row without getting closer to the waypoint
     private double _blossomBestDistance = double.MaxValue;
@@ -527,12 +529,15 @@ public sealed partial class AutomationPilot
                 else if (Math.Abs(Math.IEEERemainder(angle - _headingError, 2 * Math.PI)) > BlossomHeadingMissRad)
                 {
                     // Far from what the heading says: a wall or a mob pushed one step - or the first step was such a push
-                    // and the heading is wrong. Several in a row = the heading (LearnHeadingError never moves it that far).
-                    if (++_blossomHeadingMisses >= BlossomHeadingMissesToRelearn)
+                    // and the heading is wrong. Several in a row soon after the heading was set = the heading
+                    // (LearnHeadingError never moves it that far). Later, misses are a wall to slide along, not the camera
+                    // (live run 10: sliding along the bridge's railing re-learnt +90 and the walk went east, off the route).
+                    if (++_blossomHeadingAge <= BlossomRelearnWindow && ++_blossomHeadingMisses >= BlossomHeadingMissesToRelearn)
                         SetBlossomHeading(angle, $"re-learnt after {_blossomHeadingMisses} steps that went elsewhere");
                 }
                 else
                 {
+                    _blossomHeadingAge++;
                     _blossomHeadingMisses = 0;
                     LearnHeadingError((cx, cy), moved);
                 }
@@ -660,6 +665,7 @@ public sealed partial class AutomationPilot
         _headingSamples = 1;
         _blossomHeadingKnown = true;
         _blossomHeadingMisses = 0;
+        _blossomHeadingAge = 0;
         Log?.Invoke(LogLevel.Info, $"Heading {how}: the view is turned {angle * 180 / Math.PI:0} deg from north.");
     }
 
