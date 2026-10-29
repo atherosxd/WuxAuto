@@ -184,7 +184,10 @@ home it teleports back to the **same cave and the same monster**, turns the auto
 1. Put the character in the cave you want it to hunt in. That cave must be on **page 3** of the teleport scroll
    (setting `War > ListPage`), and the autohunt on. Bind the game, pick **Auto War**, press **Start**.
    Starting it inside **Bohai Outpost** during a war works too: it fights right away. With no cave saved yet it says so
-   and stops after that war - start it once inside the cave so it remembers where to go back to.
+   and waits in town for the next war afterwards - start it once inside the cave so it remembers where to go back to.
+   **Starting it in a home town** (Piercing City, Molten City, Wandering City) also works: it waits there for every
+   war, joins it, and after the war just waits in town again - no cave trip and no autohunt (a saved cave is left as
+   it is, for a Start in the cave). Not tested live yet.
 2. At Start the pilot checks the screen and stops with a message (it never guesses) when: you are not in a cave; the
    cave's name could match **two** entries on page 3; the monster cannot be confirmed in the map's monster list (the row
    must carry the whole name - "Goblin" is never the "Goblin Elite" row - and only one row may); or a war key (skill,

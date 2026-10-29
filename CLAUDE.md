@@ -782,8 +782,7 @@ do not run); the 5 s Bohai-dialog Cancel is skipped in this mode (the OK is what
 `WarRemember, WarWait, WarJoin, WarEnter, WarBuff, WarFight, WarDead, WarBack, WarArrive, WarHuntOn`.
 
 * **Start (`WarRemember`).** Zone must be a cave (not a home town, Labyrinth, LOD or Bohai) - else warning "Auto War
-  must be started inside a cave on page 3 of the teleport scroll, or inside Bohai Outpost" (`StartPlaceMessage`; the cave-only
-  `NotACaveMessage` is left for the stop after a war with no cave saved) and stop. Keys (`WarKeys(settings)` / `WarKeyProblem`): Skill, Target, Autohunt,
+  must be started inside a cave on page 3 of the teleport scroll, in a home town, or inside Bohai Outpost" (`StartPlaceMessage`) and stop. Keys (`WarKeys(settings)` / `WarKeyProblem`): Skill, Target, Autohunt,
   Inventory required; Shura, Buff and the autohunt settings key optional; any key that is set must be pressable (`IsKnownKey`) -
   else warning + stop. **Buffs and Shura are optional (user, 2026-10-28: "make the skills optional, not required for pilot to
   start")**: `CheckWarSkillBar`, once per Start (`_warBarChecked`), looks for `WarBarIcons` - the buffs ticked on (`BuffIcons`,
@@ -801,9 +800,15 @@ do not run); the 5 s Bohai-dialog Cancel is skipped in this mode (the OK is what
   the list's spelling is saved), saves `War.HomeMap` / `War.HomeMonster` (settings.json; the read-only "Back to:" line in the
   UI refreshes through `ModeChanged`, "(not set yet - press Start in the cave)" while empty).
   Start inside Bohai (user, 2026-10-28: supported) -> straight to the enter step, no skill bar check, nothing on that path needs
-  the buff icons or Shura; with no cave saved one Info "No cave saved yet - after this war the pilot stops. Start it once inside
-  the cave to remember it." (`_warNoCaveTold`, once per Start) and after the war `BeginWarReturn` stops ("No cave is saved to go
-  back to ..."). In a home town with a saved spot -> `WarBack`; else stop.
+  the buff icons or Shura; with no cave saved one Info "No cave saved - after this war the pilot waits in town for the next one.
+  ..." (`_warNoCaveTold`, once per Start) and after the war it waits in town (below).
+  **Start in a home town (user, 2026-10-29: "allow auto war in city most are afk in town anyway")** -> `WarWaitInTown`: this
+  Start's home is that town (`_warTownHome`, `WarStaysInTown`; "Auto War waits for the wars in <town> this Start (no cave trip,
+  no autohunt)."), the skill bar check, `WarWait`. A saved cave is ignored this Start (kept in settings). Only the Start's first
+  zone read counts (`_warZoneDispatched`): a restart that lands in town of a cave / Bohai Start goes on as after a war. Town home
+  changes: the join skips the autohunt off (J in town starts a Smart Farm journey) and, with no dialog, the autohunt back on;
+  after the war (or sent to town while waiting) -> `WarWait` again, no teleport; another zone where the trip back would start
+  (`BeginWarReturn`) -> stop. Pinned by `WarTickTests.Start_InTown_*` / `Join_InTown_*`. Not seen live.
 * **Wait (`WarWait`, `.WarTimer.cs`).** The menu is the ☰ button at the top centre (`menubutton.png`; **no key**) ->
   "Tribe Status" tile (`MenuTileText`) -> row `TribeRowText` "Bohai Outpost (Adept)" -> `hh:mm:ss` or `In progress`;
   then closes TRIBE STATUS (`PickWarClose`: only the X read in the title row, tolerance 16 px - **never a blind click**) and
@@ -904,7 +909,8 @@ do not run); the 5 s Bohai-dialog Cancel is skipped in this mode (the OK is what
   only** - an old one from an earlier trip is ignored; 90 s then carry on); `J` confirmed by "Auto hunt started" (<= 3 taps) -> back to `WarWait`. At most
   **3 trips back in 30 min without a war in between** (`WarReturnAllowed`; `BeginWarEnter` clears the count), then stop - a cave that takes the teleport but
   sends the alt back to town would loop, a teleport a round.
-* Restart / reconnect land by zone: the saved cave -> `WarHuntOn` (the autohunt on, read-confirmed) -> wait; Bohai -> enter; town -> back. After a re-login
+* Restart / reconnect land by zone: the saved cave -> `WarHuntOn` (the autohunt on, read-confirmed) -> wait; Bohai -> enter; town -> wait there
+  (town home, or no cave saved), else back. After a re-login
   the reconnect counts the war map or any zone title on the minimap as back in (`WarReloginZone`; the cave is `Destination`, but a re-login during the war
   lands in Bohai), not while a login screen still shows.
   Dry run never clicks the dialog OK, so `WarEnter` times out (60 s) and restarts - expected.

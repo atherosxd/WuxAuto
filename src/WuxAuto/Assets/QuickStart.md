@@ -54,7 +54,8 @@ Everything it does is drawn on its preview and written to its log.
   (Buff 1-5; Weapon 1 (sword), Weapon 2, Weapon 3 - a character uses one weapon, so usually only one of these; Item 1-2,
   items on the skill bar that are clicked with every rebuff, auto-buff too); a ticked one missing from the bar is only a
   warning. No Shura key = no Shura hold in the fight.
-  Started inside Bohai Outpost it fights right away; with no cave saved yet it stops after that war.
+  Started inside Bohai Outpost it fights right away; with no cave saved yet it waits in town after that war.
+  Started in a **home town** it waits there for every war and goes back to waiting in town after it (no cave, no autohunt).
   Update every WuxAuto on the PC before choosing it: an older copy cannot read the Auto War setting and resets all settings
   (and does not know the Buffs check boxes).
 

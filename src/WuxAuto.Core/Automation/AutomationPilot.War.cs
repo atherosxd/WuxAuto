@@ -36,6 +36,8 @@ public sealed partial class AutomationPilot
     private int _warRefusedTeleports;      // return teleports in a row that left the character in town
     private bool _warBarChecked;           // the skill bar was checked (once per Start: buffs on cooldown after a war score lower)
     private bool _warNoCaveTold;           // Start in Bohai with no cave saved: said so
+    private bool _warZoneDispatched;       // the Start dispatch has read a zone once this Start (later ones are restarts)
+    private string? _warTownHome;          // this Start waits for the wars in this home town (Start in town, or no cave saved)
     private readonly List<long> _warReturnTrips = new();   // trips back to the cave since the last war (WarReturnAllowed; a war clears it)
 
     // Per run (ResetRunState clears them).
@@ -65,11 +67,42 @@ public sealed partial class AutomationPilot
     /// <summary>A cave and a monster are saved to go back to.</summary>
     private bool HasWarSpot => !string.IsNullOrWhiteSpace(_settings.War.HomeMap) && !string.IsNullOrWhiteSpace(_settings.War.HomeMonster);
 
-    /// <summary>The cave-only wording, where only a cave helps: the stop after a war with no cave saved to go back to.</summary>
+    /// <summary>The cave-only wording: what a cave start needs.</summary>
     private string NotACaveMessage => $"Auto War must be started inside a cave on page {_settings.War.ListPage} of the teleport scroll";
 
-    /// <summary>Where Start works: a cave, or inside the war map during a war (the Start dispatch's stops).</summary>
-    private string StartPlaceMessage => $"{NotACaveMessage}, or inside {_settings.War.Destination}";
+    /// <summary>Where Start works: a cave, a home town, or inside the war map during a war (the Start dispatch's stops).</summary>
+    private string StartPlaceMessage => $"{NotACaveMessage}, in a home town, or inside {_settings.War.Destination}";
+
+    /// <summary>
+    /// This Start waits for the wars in a home town (user, 2026-10-29: "allow auto war in city, most are afk in town anyway"):
+    /// no trip to a cave, no autohunt around the war.
+    /// </summary>
+    private bool WarStaysInTown => _warTownHome != null;
+
+    /// <summary>
+    /// The character is in <paramref name="town"/>: Start there, the war over, or sent there while waiting. A town home
+    /// (Start in town), or no cave to go back to (Start in Bohai with none saved), waits there for the next war and
+    /// returns true; a cave home returns false (the caller goes back to the cave). <paramref name="startHere"/>: Start in
+    /// town, which makes the town this Start's home whatever cave is saved.
+    /// </summary>
+    private bool WarWaitInTown(Mat frame, string town, string why, bool startHere = false)
+    {
+        if (!startHere && !WarStaysInTown && (HasWarSpot || _warRemembering))
+            return false;
+
+        if (_warTownHome == null)
+            Log?.Invoke(LogLevel.Info, $"Auto War waits for the wars in {town} this Start (no cave trip, no autohunt).");
+        _warTownHome = town;
+        if (!_warBarChecked)
+        {
+            CheckWarSkillBar(frame);
+            _warBarChecked = true;
+        }
+
+        ReleaseSweepKey();
+        BeginWarWait($"{why} - staying in {town}");
+        return true;
+    }
 
     /// <summary>What the teleport list is paged for, as the chevron step names it (Start's cave check has no destination).</summary>
     private string ListPagingTarget => IsWar && _warListCheck
@@ -184,28 +217,26 @@ public sealed partial class AutomationPilot
             return;
         }
 
+        bool firstZone = !_warZoneDispatched;     // the Start itself, not a restart of it
+        _warZoneDispatched = true;
         if (ZoneMatches(title, war.Destination))
         {
-            if (!HasWarSpot && !_warNoCaveTold)
+            if (!HasWarSpot && !WarStaysInTown && !_warNoCaveTold)
             {
                 _warNoCaveTold = true;
-                Log?.Invoke(LogLevel.Info, "No cave saved yet - after this war the pilot stops. Start it once inside the cave to remember it.");
+                Log?.Invoke(LogLevel.Info, "No cave saved - after this war the pilot waits in town for the next one. Start it once inside a cave to hunt there between wars.");
             }
 
             BeginWarEnter($"Start inside {war.Destination}");
             return;
         }
 
-        if (TownIn(title) != null)
+        if (TownIn(title) is { } town)
         {
-            if (HasWarSpot)
-            {
-                BeginWarReturn(frame, "Start in town");
-                return;
-            }
-
-            Log?.Invoke(LogLevel.Info, $"In {HomeTown} with no cave saved to go back to.");
-            WarStop(frame, StartPlaceMessage);
+            // Only the Start itself in town makes the town home; a restart that lands in town (a Start in a cave or in
+            // Bohai) goes on as after a war: back to the saved cave, else wait in town.
+            if (!WarWaitInTown(frame, town, firstZone ? "Start in town" : "restarted in town", startHere: firstZone))
+                BeginWarReturn(frame, "restarted in town");
             return;
         }
 
@@ -948,6 +979,13 @@ public sealed partial class AutomationPilot
     private void BeginWarReturn(Mat? frame, string why)
     {
         var war = _settings.War;
+        if (WarStaysInTown)
+        {
+            // Only reached outside town (the town call sites wait there): a zone that is neither the war nor a town.
+            WarStop(frame, $"Not in {_warTownHome} ({why}) - Auto War waits in town this Start; press Start again in town");
+            return;
+        }
+
         if (_warRemembering)
         {
             WarStop(frame, $"Sent to town ({why}) before this cave and its monster were remembered - press Start again inside the cave");
