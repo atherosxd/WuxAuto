@@ -156,7 +156,7 @@ Buffs). Shared settings: `War.BuffIcons` / `WeaponBuffIcons` / `ItemBuffIcons` /
 - Settings panel, new block "Auto Blossom": Target name, Waypoint pause (s), Loot time (s). Waypoints, pillar score,
   tolerances only via settings.json **(my call)**.
 - `AppSettings.Blossom` (`BlossomSettings`): Destination "Blossom Garden", ListPage 1, PillarTemplate "redpillar",
-  PillarMatchScore 0.70, PillarCenterTolerance 0.06, TurnKey "D", TurnTapMs 100, TurnTaps 7, Waypoints (the 17),
+  PillarMatchScore 0.70, PillarCenterTolerance 0.06, TurnTapMs 100, TurnTaps 7, TurnMaxTaps 50, Waypoints (the 17),
   LoopFrom 6, WaypointTolerance 60, WaypointWaitMs 3000, TabEveryMs 1000, TargetName "[S]Jaso Practitioner",
   TargetGoneMs 2000, FightMaxMs 120000, LootDelayMs 1000, LootMs 5000, LootEveryMs 200. New block, no version bump
   (a file without it loads the defaults). `Normalize` clamps them.

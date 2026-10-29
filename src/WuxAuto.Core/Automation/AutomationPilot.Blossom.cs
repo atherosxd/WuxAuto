@@ -19,9 +19,12 @@ public sealed partial class AutomationPilot
     private const int BlossomFineTapMs = 40;
     private const int BlossomMaxFineTaps = 12;
     private const int BlossomTurnSettleMs = 350;
-    private const int BlossomMaxStalls = 8;
+    private const int BlossomMaxStalls = 5;   // ~5-6 s against a wall: the AFK checker kicks idle characters (user)
     private const int BlossomMaxUnread = 40;
     private const int BlossomRebuffOverdueMs = 30000;
+    private const int BlossomGiveUpIgnoreMs = 10000;
+    private const double BlossomHeadingMissRad = 0.6;
+    private const int BlossomHeadingMissesToRelearn = 3;
 
     private IReadOnlyList<(int X, int Y)> _blossomRoute = [];
     private int _blossomWaypoint = -1;
@@ -32,6 +35,10 @@ public sealed partial class AutomationPilot
     private bool _blossomHeadingKnown;
     private bool _blossomHeadingUnknown;   // a fight began before any turn (Start inside the map): turn after it
     private bool _blossomBuffThenTurn;
+    private bool _blossomHuntOffChecked;
+    private int _blossomHeadingMisses;
+    private long _blossomIgnoreTargetsUntil;
+    private readonly Dictionary<string, int> _blossomShots = [];
 
     private int _blossomTurnTaps;
     private int _blossomFineTaps;
@@ -67,6 +74,9 @@ public sealed partial class AutomationPilot
         _blossomUnread = 0;
         _blossomHeadingKnown = false;
         _blossomHeadingUnknown = false;
+        _blossomHeadingMisses = 0;
+        _blossomHuntOffChecked = false;
+        _blossomIgnoreTargetsUntil = 0;
     }
 
     /// <summary>In Blossom Garden after the teleport, a restart or a death: the buffs, then the turn to the pillars.</summary>
@@ -106,7 +116,7 @@ public sealed partial class AutomationPilot
         long now = Environment.TickCount64;
         if (BlossomRebuffDue(now))
         {
-            BeginBlossomBuff($"{Clock(now - _warBuffedAt)} since the last buff, {where}", thenTurn: false);
+            BeginBlossomBuff(_warBuffedAt == 0 ? $"no buff yet this Start, {where}" : $"{Clock(now - _warBuffedAt)} since the last buff, {where}", thenTurn: false);
             return;
         }
 
@@ -190,7 +200,7 @@ public sealed partial class AutomationPilot
         if (_blossomTurnTaps >= b.TurnMaxTaps)
         {
             Log?.Invoke(LogLevel.Warning, $"Turned {_blossomTurnTaps} taps and no pillars lined up - walking anyway; the heading is learnt from the walk.");
-            DebugArtifacts.SaveFrame(frame, _overlays, "blossom_no_pillars");
+            BlossomShot(frame, "blossom_no_pillars");
             StartBlossomWalk();
             return;
         }
@@ -298,7 +308,8 @@ public sealed partial class AutomationPilot
             return;
         }
 
-        if (await FindBlossomTargetAsync(frame) is { } target)
+        // After a fight given up, targets are ignored for a while: the same one would only start the same fight again.
+        if (now >= _blossomIgnoreTargetsUntil && await FindBlossomTargetAsync(frame) is { } target)
         {
             BeginBlossomFight(target);
             return;
@@ -308,6 +319,28 @@ public sealed partial class AutomationPilot
         if (now - (_warBuffedAt + _settings.War.BuffEveryMs) >= BlossomRebuffOverdueMs)
         {
             ResumeBlossomWalkOrRebuff("on the walk");
+            return;
+        }
+
+        // At a reached waypoint: no coordinate read needed, so an unreadable minimap cannot stretch the pause past the AFK
+        // checker's limit. A rebuff that falls due here goes now, and the walk then heads for the next waypoint.
+        if (_blossomPauseSince > 0)
+        {
+            if (BlossomRebuffDue(now))
+            {
+                AdvanceBlossomWaypoint($"Waypoint {_blossomWaypoint + 1} done");
+                ResumeBlossomWalkOrRebuff("at a waypoint");
+                return;
+            }
+
+            if (now - _blossomPauseSince < b.WaypointWaitMs)
+            {
+                _detail = $"at waypoint {_blossomWaypoint + 1}, tabbing ({(now - _blossomPauseSince) / 1000.0:0.0}s of {b.WaypointWaitMs / 1000.0:0.#}s)";
+                _waitUntil = Math.Min(now + 300, _blossomPauseSince + b.WaypointWaitMs);
+                return;
+            }
+
+            AdvanceBlossomWaypoint($"Waypoint {_blossomWaypoint + 1} done");
             return;
         }
 
@@ -342,47 +375,34 @@ public sealed partial class AutomationPilot
         {
             var moved = ((double)(coords.X - px), (double)(coords.Y - py));
             double step = Math.Sqrt(moved.Item1 * moved.Item1 + moved.Item2 * moved.Item2);
-            if (!_blossomHeadingKnown && step >= 60)
+            if (step >= 60)
             {
-                // Screen-up went this way in the world: the angle from the click to the movement is the heading.
+                // The angle from the (corrected) click to the movement: the whole screen-to-world heading.
                 double cross = cx * moved.Item2 - cy * moved.Item1;
                 double dot = cx * moved.Item1 + cy * moved.Item2;
-                _headingBase = Math.Atan2(cross, dot);
-                _headingError = _headingBase;
-                _headingSamples = 1;
-                _blossomHeadingKnown = true;
-                Log?.Invoke(LogLevel.Info, $"Heading learnt from the first step: the view is turned {_headingBase * 180 / Math.PI:0} deg from north.");
-            }
-            else if (_blossomHeadingKnown)
-            {
-                LearnHeadingError((cx, cy), moved);
+                double angle = Math.Atan2(cross, dot);
+                if (!_blossomHeadingKnown)
+                {
+                    SetBlossomHeading(angle, "learnt from the first step");
+                }
+                else if (Math.Abs(Math.IEEERemainder(angle - _headingError, 2 * Math.PI)) > BlossomHeadingMissRad)
+                {
+                    // Far from what the heading says: a wall or a mob pushed one step - or the first step was such a push
+                    // and the heading is wrong. Several in a row = the heading (LearnHeadingError never moves it that far).
+                    if (++_blossomHeadingMisses >= BlossomHeadingMissesToRelearn)
+                        SetBlossomHeading(angle, $"re-learnt after {_blossomHeadingMisses} steps that went elsewhere");
+                }
+                else
+                {
+                    _blossomHeadingMisses = 0;
+                    LearnHeadingError((cx, cy), moved);
+                }
             }
 
             _blossomStalls = step < 20 ? _blossomStalls + 1 : 0;
         }
 
         _lastCoords = (coords.X, coords.Y);
-
-        if (_blossomPauseSince > 0)
-        {
-            // Standing at a reached waypoint anyway: the rebuff goes here when due, and the walk then heads for the next one.
-            if (BlossomRebuffDue(now))
-            {
-                AdvanceBlossomWaypoint($"Waypoint {_blossomWaypoint + 1} done");
-                ResumeBlossomWalkOrRebuff("at a waypoint");
-                return;
-            }
-
-            if (now - _blossomPauseSince < b.WaypointWaitMs)
-            {
-                _detail = $"at waypoint {_blossomWaypoint + 1}, tabbing ({(now - _blossomPauseSince) / 1000.0:0.0}s of {b.WaypointWaitMs / 1000.0:0.#}s)";
-                _waitUntil = now + 300;
-                return;
-            }
-
-            AdvanceBlossomWaypoint($"Waypoint {_blossomWaypoint + 1} done");
-            return;
-        }
 
         if (distance <= b.WaypointTolerance)
         {
@@ -402,7 +422,7 @@ public sealed partial class AutomationPilot
         if (_blossomStalls >= BlossomMaxStalls)
         {
             Log?.Invoke(LogLevel.Warning, $"Not moving for {_blossomStalls} steps at {coords} on the way to waypoint {_blossomWaypoint + 1} - skipping it.");
-            DebugArtifacts.SaveFrame(frame, _overlays, "blossom_stuck");
+            BlossomShot(frame, "blossom_stuck");
             AdvanceBlossomWaypoint($"Waypoint {_blossomWaypoint + 1} skipped");
             return;
         }
@@ -452,6 +472,27 @@ public sealed partial class AutomationPilot
         _lastClick = (clickX, clickY, now);
         _detail = $"{coords} -> waypoint {_blossomWaypoint + 1} ({distance:0} left)";
         _waitUntil = now + _settings.Dungeon.RunDashWaitMs;
+    }
+
+    /// <summary>The view's world direction (screen-up turned <paramref name="angle"/> from world north); the heading fix restarts there.</summary>
+    private void SetBlossomHeading(double angle, string how)
+    {
+        _headingBase = angle;
+        _headingError = angle;
+        _headingSamples = 1;
+        _blossomHeadingKnown = true;
+        _blossomHeadingMisses = 0;
+        Log?.Invoke(LogLevel.Info, $"Heading {how}: the view is turned {angle * 180 / Math.PI:0} deg from north.");
+    }
+
+    /// <summary>A debug snapshot, at most 3 per tag per Start (a wall on the loop would save one every lap).</summary>
+    private void BlossomShot(Mat frame, string tag)
+    {
+        int n = _blossomShots.GetValueOrDefault(tag);
+        if (n >= 3)
+            return;
+        _blossomShots[tag] = n + 1;
+        DebugArtifacts.SaveFrame(frame, _overlays, tag);
     }
 
     private void AdvanceBlossomWaypoint(string what)
@@ -515,7 +556,7 @@ public sealed partial class AutomationPilot
                 {
                     ReleaseHeldSkill();
                     Log?.Invoke(LogLevel.Warning, $"Moved to {coords} (from {ax},{ay}) during the fight - killed? Lining up again.");
-                    DebugArtifacts.SaveFrame(frame, _overlays, "blossom_died");
+                    BlossomShot(frame, "blossom_died");
                     _lastCoords = null;
                     Advance(PilotPhase.BlossomRespawn, lod.RespawnSettleMs);
                     return;
@@ -539,10 +580,11 @@ public sealed partial class AutomationPilot
         if (now - _blossomFightStart > b.FightMaxMs)
         {
             ReleaseHeldSkill();
-            Log?.Invoke(LogLevel.Warning, $"'{_blossomTarget}' still targeted after {b.FightMaxMs / 1000}s - giving it up, walking on.");
-            DebugArtifacts.SaveFrame(frame, _overlays, "blossom_fight_long");
+            Log?.Invoke(LogLevel.Warning, $"'{_blossomTarget}' still targeted after {b.FightMaxMs / 1000}s - giving it up, walking on (targets ignored for {BlossomGiveUpIgnoreMs / 1000}s).");
+            BlossomShot(frame, "blossom_fight_long");
             _controls.Press(GameAction.TargetNearest);
             _blossomTabAt = now;
+            _blossomIgnoreTargetsUntil = now + BlossomGiveUpIgnoreMs;
             ResumeBlossomWalk();
             return;
         }
@@ -596,6 +638,16 @@ public sealed partial class AutomationPilot
     private async Task TickBlossomCheckZoneAsync(Mat frame)
     {
         _zoneConfirmedAt = Environment.TickCount64;
+
+        // Start inside with the autohunt running: it would fight everything beside the walk. The newest autohunt line in
+        // the combat log decides (J is a toggle), as at the Laby's final boss; ticked until it is off or given up.
+        if (!_blossomHuntOffChecked && !_controls.IsDryRun && _controls.Has(GameAction.ToggleAutohunt))
+        {
+            if (!await EnsureAutohuntOffAsync(frame, $"in {Destination}", trustVisibleLine: true))
+                return;
+            _blossomHuntOffChecked = true;
+        }
+
         if (await FindBlossomTargetAsync(frame) is { } target)
         {
             _blossomHeadingUnknown = true;

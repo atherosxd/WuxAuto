@@ -307,6 +307,11 @@ public sealed partial class AutomationPilot
         PilotPhase.LodApproach => "walking up to the LOD boss (Ctrl+click on its ring)",
         PilotPhase.LodRespawn => "back at the start - settling",
         PilotPhase.LodLoot => "looting the LOD boss",
+        PilotPhase.BlossomTurn => "turning to the Blossom pillars",
+        PilotPhase.BlossomWalk => "walking the Blossom route, pressing Tab",
+        PilotPhase.BlossomAttack => "attacking the Jaso Practitioner",
+        PilotPhase.BlossomLoot => "looting the Jaso Practitioner",
+        PilotPhase.BlossomRespawn => "back after a death - settling",
         PilotPhase.ReturnToTown => "autohunt off, returning to town",
         PilotPhase.Reconnect => "disconnected - logging back in",
         PilotPhase.RegularWarOn => "turning the auto war on",
@@ -342,6 +347,7 @@ public sealed partial class AutomationPilot
         _homeTown = null;
         _lodKills = 0;
         _blossomKills = 0;
+        _blossomShots.Clear();
         _warHasAutoBuff = null;   // Auto Blossom asks once per Start (Auto War asks again on each war's entry)
         _warBuffedAt = 0;
         _lodBuffAt = 0;
@@ -627,6 +633,12 @@ public sealed partial class AutomationPilot
                 string? title = await ReadMinimapTitleAsync(frame);
                 string zone = title == null ? string.Empty : TextMatcher.Normalize(title);
                 string? townSeen = TownIn(title);
+
+                // Auto Blossom's buffs: the autohunt settings or the AUTO BUFF dialog may cover the minimap title for longer
+                // than the 6 s hold - an unread title goes on there, as Auto War's buff steps let it (a town or another zone
+                // still counts below).
+                if (title == null && IsBlossom && _phase == PilotPhase.WarBuff)
+                    _zoneConfirmedAt = now;
 
                 // Auto War: the cave itself, never a sibling sharing its first 10 letters (WarText.SameZone).
                 if (IsWar ? WarText.SameZone(title, Destination) : ZoneMatches(title, Destination))

@@ -264,7 +264,8 @@ Blossom Garden needs no key.
    checker kicks idle characters to town, and from town it teleports back in).
 5. **[S]Jaso Practitioner** in the target bar (or a target showing the chest): the skill (Ctrl + skill, as LOD) until
    the target is gone 2 s, then 1 s later the loot key every 0.2 s for **Loot time** (5 s), then on to the waypoint it
-   was heading for. A fight that never ends is given up after 2 minutes.
+   was heading for. A fight that never ends is given up after 2 minutes (then targets are ignored for 10 s). Stuck against
+   a wall for 5 steps: on to the next waypoint. Started inside Blossom Garden, it first makes sure the autohunt is off.
 6. Rebuff when **Rebuff every** (Auto War) is due - after a loot or at a waypoint, never mid-fight.
 
 Same upgrade note as Auto War: an older WuxAuto cannot read `"Mode": "AutoBlossom"` and resets the settings - update every copy first.

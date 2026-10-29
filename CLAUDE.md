@@ -968,22 +968,29 @@ teleport in again (LOD's rule); still in town after the teleport = "destination 
   taps, direction flipped when the offset grew (D's direction is not assumed), <= 12. No Tab while turning.
 * **Walk:** `BlossomRoute` (17 user waypoints, 1-5 then 6-17 looped, `LoopFrom` 6), starting at the **nearest** waypoint (arrival
   19148,19062 -> waypoint 1). The first step after a turn clicks **straight up**; the movement sets `_headingBase` (the view's
-  world direction is unknown), then `LearnHeadingError`. Tab every `TabEveryMs` 1000. Reached (<= 60) -> stand + Tab <=
-  `WaypointWaitMs` 3000 (clamped <= 5000, AFK checker), then the next. 8 still steps -> warning, `blossom_stuck`, next waypoint.
-  40 unread coordinates -> fail.
+  world direction is unknown), then `LearnHeadingError`; 3 steps in a row > 0.6 rad off the heading (>= 60 units each) =
+  the first sample was a wall push -> heading re-learnt from the latest step (final review: one bad first sample locked
+  in a wrong heading for the run). Tab every `TabEveryMs` 1000. Reached (<= 60) -> stand + Tab <= `WaypointWaitMs` 3000
+  (clamped <= 5000, AFK checker; the pause reads no coordinates, so an unreadable minimap cannot stretch it), then the next.
+  5 still steps -> warning, `blossom_stuck`, next waypoint. 40 unread coordinates -> fail. Snapshots: <= 3 per tag per Start.
+* **Start inside:** the autohunt is made off first (`EnsureAutohuntOffAsync`, `trustVisibleLine: true`; skipped in a dry run).
 * **Target:** whole-screen OCR line in the target-bar band (y < 13 % h, |x - 50 %| < 22 % w) containing the name after its "[S]"
   ("jasopractitioner") or >= 0.85 like `TargetName`, else `monstericon` >= 0.80 at the top centre (user: the Jaso shows the chest).
   Anything else is not attacked.
 * **Fight / loot:** as LOD (skill every `Lod.SkillEveryMs`, Ctrl + skill, `Lod.HoldSkill`); gone `TargetGoneMs` 2000 = kill ->
   `LootDelayMs` 1000 -> loot key every `LootEveryMs` 200 for `LootMs` 5000, no Tab -> the walk (a fight met during a waypoint
-  pause moves on to the next waypoint). `FightMaxMs` 120000 -> give up (user: a Jaso dies within 2 min). Coordinate jump >
+  pause moves on to the next waypoint). `FightMaxMs` 120000 -> give up (user: a Jaso dies within 2 min), Tab, and targets are
+  ignored for 10 s so the same one does not start the same fight again. Coordinate jump >
   `Lod.TeleportJump` -> `BlossomRespawn` (settle) -> arrival again.
 * **Rebuff:** the Auto War buff steps (`TickWarBuffAsync`, no Bohai zone check in this mode; `FinishWarBuffAsync` ->
   `AfterBlossomBuff`), timer `War.BuffEveryMs`; `Start` resets `_warHasAutoBuff` / `_warBuffedAt`. Due -> after a loot or at a
-  waypoint pause; 30 s overdue -> on the walk. Never mid-fight.
+  waypoint pause; 30 s overdue -> on the walk. Never mid-fight. In `WarBuff` an unread minimap title counts as Blossom Garden
+  (the autohunt settings / AUTO BUFF dialog may cover it for longer than the guard's 6 s); a town or another zone still counts.
 * Pinned by `BlossomRouteTests`, `PillarPairTests`, `BlossomPilotTests` (first click up, nearest start, pause <= wait, Jaso ->
   attack -> loot -> walk with no click / Tab in between, another target ignored, turn gives up, rebuff after the loot, arrival
-  buffs before the first `D`). **Not seen live:** which way `D` turns, the live pillar scores at other resolutions, walls between
+  buffs before the first `D`; final review: a given-up fight walks on, a wrong first heading is re-learnt, Start inside turns
+  the autohunt off, the buff finishes with the title unread, the status names the phase, 5 still steps skip with <= 3
+  snapshots, the pause ends on time with the coordinates unread). **Not seen live:** which way `D` turns, the live pillar scores at other resolutions, walls between
   waypoints, the Jaso name in the target bar, the AFK kick.
 
 ## 6. Settings and persistence — read this before changing defaults
