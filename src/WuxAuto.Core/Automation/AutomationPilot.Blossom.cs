@@ -25,7 +25,7 @@ public sealed partial class AutomationPilot
     private const int BlossomGiveUpIgnoreMs = 10000;
     private const double BlossomHeadingMissRad = 0.6;
     private const int BlossomHeadingMissesToRelearn = 3;
-    private const int BlossomMaxStepsPerWaypoint = 40;
+    private const int BlossomNoProgressSteps = 15;
     private const int BlossomTargetCheckMs = 700;
 
     private IReadOnlyList<(int X, int Y)> _blossomRoute = [];
@@ -40,7 +40,9 @@ public sealed partial class AutomationPilot
     private bool _blossomHuntOffChecked;
     private int _blossomHeadingMisses;
     private long _blossomIgnoreTargetsUntil;
-    private int _blossomWaypointSteps;
+    private int _blossomWaypointSteps;          // reads in a row without getting closer to the waypoint
+    private double _blossomBestDistance = double.MaxValue;
+    private bool _blossomFocusTold;
     private (double X, double Y)? _blossomDir;   // the walk click (screen offset) until the next coordinate read
     private long _blossomClickAt;
     private long _blossomReadAt;
@@ -330,8 +332,20 @@ public sealed partial class AutomationPilot
             _lastCoords = null;
             _blossomDir = null;
             _detail = "waiting for the game window to be in front";
+            if (!_blossomFocusTold)
+            {
+                _blossomFocusTold = true;
+                Log?.Invoke(LogLevel.Warning, "The game is behind another window - the walk waits until it is back in front (no clicks).");
+            }
+
             _waitUntil = now + 500;
             return;
+        }
+
+        if (_blossomFocusTold)
+        {
+            _blossomFocusTold = false;
+            Log?.Invoke(LogLevel.Info, "The game is back in front - walking on.");
         }
 
         // The camera turn when leaving a waypoint (user), one tap per tick.
@@ -463,6 +477,7 @@ public sealed partial class AutomationPilot
         if (_blossomWaypoint < 0)
         {
             _blossomWaypointSteps = 0;
+            _blossomBestDistance = double.MaxValue;
             _blossomZoomedOutAgain = false;
             _blossomWaypoint = BlossomRoute.Nearest(_blossomRoute, coords.X, coords.Y);
             var start = _blossomRoute[_blossomWaypoint];
@@ -531,10 +546,17 @@ public sealed partial class AutomationPilot
             return false;
         }
 
-        // Moving, but never getting there (round an obstacle and back): a waypoint gets so many steps, then the next one.
-        if (++_blossomWaypointSteps > BlossomMaxStepsPerWaypoint)
+        // Moving, but no closer (round an obstacle and back): skipped after BlossomNoProgressSteps reads without getting 30
+        // units closer. Not a fixed step count - live 2026-10-29 the 3200-unit leg to waypoint 2 was skipped after 40 steps
+        // while it was still closing in.
+        if (distance < _blossomBestDistance - 30)
         {
-            Log?.Invoke(LogLevel.Warning, $"Waypoint {_blossomWaypoint + 1} is taking too long ({BlossomMaxStepsPerWaypoint} steps, at {coords}, {distance:0} away) - skipping it.");
+            _blossomBestDistance = distance;
+            _blossomWaypointSteps = 0;
+        }
+        else if (++_blossomWaypointSteps >= BlossomNoProgressSteps)
+        {
+            Log?.Invoke(LogLevel.Warning, $"Waypoint {_blossomWaypoint + 1} is taking too long (no closer than {_blossomBestDistance:0} in {BlossomNoProgressSteps} steps, at {coords}) - skipping it.");
             BlossomShot(frame, "blossom_too_long");
             AdvanceBlossomWaypoint($"Waypoint {_blossomWaypoint + 1} skipped");
             return false;
@@ -617,6 +639,7 @@ public sealed partial class AutomationPilot
         _blossomPauseSince = 0;
         _blossomStalls = 0;
         _blossomWaypointSteps = 0;
+        _blossomBestDistance = double.MaxValue;
         _blossomZoomedOutAgain = false;
         _simpleClick = null;
         _lastCoords = null;

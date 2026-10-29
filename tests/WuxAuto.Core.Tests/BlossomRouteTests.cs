@@ -12,8 +12,8 @@ public class BlossomRouteTests
         var b = new AppSettings().Blossom;
         var route = BlossomRoute.Parse(b.Waypoints);
         Assert.Equal(17, route.Count);
-        Assert.Equal((19136, 18463), route[0]);
-        Assert.Equal((13947, 14697), route[5]);
+        Assert.Equal((19107, 18424), route[0]);
+        Assert.Equal((13964, 14686), route[5]);
         Assert.Equal((14359, 14565), route[16]);
         Assert.Equal(6, b.LoopFrom);
         Assert.Equal("Blossom Garden", b.Destination);
@@ -53,14 +53,30 @@ public class BlossomRouteTests
     {
         // User, 2026-10-29: "In waypoint 1, do a left turn / 4x A, then on waypoint 2 do right turn / D 5x".
         var turns = BlossomRoute.ParseTurns(new AppSettings().Blossom.WaypointTurns);
-        Assert.Equal(2, turns.Count);
-        Assert.Equal((TurnDirection.Left, 4), turns[1]);
+        Assert.Equal(4, turns.Count);
+        Assert.Equal((TurnDirection.Left, 5), turns[1]); // after the 4th live run: "try 5A instead of 4A"
         Assert.Equal((TurnDirection.Right, 5), turns[2]);
+        Assert.Equal((TurnDirection.Left, 5), turns[3]);
+        Assert.Equal((TurnDirection.Right, 5), turns[4]);
     }
 
     [Fact]
     public void Turns_SkipJunk() =>
         Assert.Equal([3], BlossomRoute.ParseTurns(["", "x:A4", "1:Q4", "2:D0", " 3 : d 2 "]).Keys);
+
+    [Fact]
+    public void Turns_CountFirstToo() // the user writes "1:5A"
+        => Assert.Equal((TurnDirection.Left, 5), BlossomRoute.ParseTurns(["1:5A"])[1]);
+
+    [Fact]
+    public void TurnsText_RoundTrips()
+    {
+        var b = new AppSettings().Blossom;
+        Assert.Equal("1:A5, 2:D5, 3:A5, 4:D5", b.WaypointTurnsText);
+        b.WaypointTurnsText = "1:5A; 2:5D,  7:2a";
+        Assert.Equal(["1:5A", "2:5D", "7:2a"], b.WaypointTurns);
+        Assert.Equal((TurnDirection.Left, 2), BlossomRoute.ParseTurns(b.WaypointTurns)[7]);
+    }
 
     [Fact]
     public void Parse_SkipsJunk() => Assert.Equal([(1, 2)], BlossomRoute.Parse(["", "x,y", " 1 , 2 ", "3"]));

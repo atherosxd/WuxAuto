@@ -974,7 +974,7 @@ teleport in again (LOD's rule); still in town after the teleport = "destination 
   staggered and not every click is checked"): the same walk click goes out every `WalkClickEveryMs` 350, `WalkClickPx`
   260 from the centre; the coordinates are read every `WalkReadEveryMs` 900 and decide the next click (a "step" = one
   read); the target bar is read every 700 ms; Tab never holds the tick. **Camera turns** (user: "In waypoint 1, do a
-  left turn / 4x A, then on waypoint 2 do right turn / D 5x"): `WaypointTurns` "1:A4", "2:D5" - when leaving that waypoint
+  left turn / 4x A, then on waypoint 2 do right turn / D 5x"): `WaypointTurns` "1:A5", "2:D5", "3:A5", "4:D5" (user, with the new waypoints 1-6 after the 4th live run; "N:KC" or "N:CK", edited in the app as "Camera turns" = `WaypointTurnsText`) - when leaving that waypoint
   the walk taps the key (`TurnTapMs`), then learns the heading again from the next step. Game behind another window ->
   the walk clicks and counts nothing. Tab every `TabEveryMs` 1000. Reached (<= `WaypointTolerance` **100**; live 2026-10-29
   waypoints 2, 4, 5 lie just past a railing / pond edge and the walk stopped 86, 67, 71 short at the old 60) -> stand + Tab

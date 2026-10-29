@@ -324,9 +324,23 @@ public sealed class BlossomSettings
     /// <summary>
     /// Camera turns when leaving a waypoint, "N:KC" = after waypoint N tap key K (A = left, D = right) C times
     /// (<see cref="TurnTapMs"/> each). User, 2026-10-29: "In waypoint 1, do a left turn / 4x A, then on waypoint 2 do right
-    /// turn / D 5x". The walk learns its heading again from the next step.
+    /// turn / D 5x", then 5x A at 1, and with the new waypoints 1:5A, 2:5D, 3:5A, 4:5D. The walk learns its heading again
+    /// from the next step. Edited in the app as <see cref="WaypointTurnsText"/>.
     /// </summary>
-    public List<string> WaypointTurns { get; set; } = ["1:A4", "2:D5"];
+    public List<string> WaypointTurns { get; set; } = ["1:A5", "2:D5", "3:A5", "4:D5"];
+
+    /// <summary>
+    /// <see cref="WaypointTurns"/> as one line for the settings panel (user: "add a settings in the app ... 1:5A like that"):
+    /// entries split by commas, semicolons or spaces between entries. Not saved itself.
+    /// </summary>
+    [JsonIgnore]
+    public string WaypointTurnsText
+    {
+        get => string.Join(", ", WaypointTurns);
+        set => WaypointTurns = (value ?? "")
+            .Split([',', ';', '\n'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .ToList();
+    }
 
     /// <summary>
     /// The walk clicks this often, the same way, so the character keeps running (user, 2026-10-29: "continuously click to
@@ -363,7 +377,7 @@ public sealed class BlossomSettings
 
     public static List<string> DefaultWaypoints() =>
     [
-        "19136,18463", "15923,18292", "15916,16184", "14883,16026", "13953,15970", "13947,14697",
+        "19107,18424", "15917,18388", "15967,15981", "13956,16015", "13953,15038", "13964,14686",
         "13370,14493", "13085,13906", "12944,13692", "12987,13184", "13557,12775", "14101,12622",
         "14546,12826", "14837,13243", "14923,13591", "14838,14013", "14359,14565",
     ];

@@ -516,7 +516,14 @@
                             <Grid.RowDefinitions>
                                 <RowDefinition Height="Auto" />
                                 <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
                             </Grid.RowDefinitions>
+
+                            <!-- User, 2026-10-29: "add a settings in the app just like you showed 1:5A". Applied on the next Start. -->
+                            <TextBlock Grid.Row="2" Grid.Column="0" Text="Camera turns" Style="{StaticResource FieldLabel}"
+                                       ToolTip="Camera turns when leaving a waypoint: waypoint:count+key, A = left, D = right, separated by commas. E.g. 1:5A, 2:5D, 3:5A, 4:5D = after waypoint 1 tap A five times, after waypoint 2 tap D five times... Used from the next Start." />
+                            <TextBox Grid.Row="2" Grid.Column="1" Grid.ColumnSpan="3" Style="{StaticResource WideField}"
+                                     Text="{Binding Settings.Blossom.WaypointTurnsText, UpdateSourceTrigger=LostFocus}" />
 
                             <TextBlock Grid.Row="0" Grid.Column="0" Text="Target name" Style="{StaticResource FieldLabel}"
                                        ToolTip="The monster attacked when Tab selects it (the target bar). A target showing the chest counts too." />

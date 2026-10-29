@@ -23,7 +23,7 @@ public static class BlossomRoute
     }
 
     /// <summary>
-    /// The camera turns per waypoint: "N:KC" (1-based waypoint, A = left / D = right, tap count) -> N -> (direction, count).
+    /// The camera turns per waypoint: "N:KC" or "N:CK" (1-based waypoint, A = left / D = right, tap count) -> N -> (direction, count).
     /// Entries that do not parse, or have a count below 1, are skipped; a waypoint named twice keeps the first.
     /// </summary>
     public static IReadOnlyDictionary<int, (TurnDirection Direction, int Taps)> ParseTurns(IEnumerable<string>? turns)
@@ -36,11 +36,17 @@ public static class BlossomRoute
                 || !int.TryParse(parts[0].Trim(), NumberStyles.Integer, CultureInfo.InvariantCulture, out int waypoint))
                 continue;
 
+            // "A5" or "5A" (the user writes the count first), "x" between allowed ("5xA").
             string rest = parts[1].Replace(" ", "", StringComparison.Ordinal);
-            if (rest.Length < 2 || !int.TryParse(rest[1..], NumberStyles.Integer, CultureInfo.InvariantCulture, out int taps) || taps < 1)
+            if (rest.Length < 2)
+                continue;
+            bool keyFirst = char.IsLetter(rest[0]);
+            char keyChar = keyFirst ? rest[0] : rest[^1];
+            string count = (keyFirst ? rest[1..] : rest[..^1]).TrimEnd('x', 'X').TrimStart('x', 'X');
+            if (!int.TryParse(count, NumberStyles.Integer, CultureInfo.InvariantCulture, out int taps) || taps < 1)
                 continue;
 
-            TurnDirection? direction = char.ToUpperInvariant(rest[0]) switch
+            TurnDirection? direction = char.ToUpperInvariant(keyChar) switch
             {
                 'A' => TurnDirection.Left,
                 'D' => TurnDirection.Right,

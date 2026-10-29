@@ -41,7 +41,7 @@ public class BlossomPilotTests
     [Fact]
     public async Task Waypoint_PausesAtMostWaypointWaitMs_ThenNext()
     {
-        var (settings, input, ocr) = Harness(() => "13947 , 14697"); // on waypoint 6
+        var (settings, input, ocr) = Harness(() => "13964 , 14686"); // on waypoint 6
         settings.Blossom.WaypointWaitMs = 1000;
         long reachedAt = 0, nextAt = 0;
 
@@ -272,7 +272,7 @@ public class BlossomPilotTests
     public async Task Pause_EndsOnTime_EvenWithTheCoordinatesUnread()
     {
         bool reached = false;
-        var (settings, input, ocr) = Harness(() => reached ? "" : "13947 , 14697"); // on waypoint 6, then unreadable
+        var (settings, input, ocr) = Harness(() => reached ? "" : "13964 , 14686"); // on waypoint 6, then unreadable
         settings.Blossom.WaypointWaitMs = 1000;
         long reachedAt = 0, nextAt = 0;
 
@@ -397,21 +397,39 @@ public class BlossomPilotTests
     }
 
     [Fact]
-    public async Task Waypoint1_TurnsTheCameraLeft4_ThenRelearnsTheHeading()
+    public async Task Waypoint1_TurnsTheCameraLeft5_ThenRelearnsTheHeading()
     {
-        var (settings, input, ocr) = Harness(() => "19136 , 18463"); // on waypoint 1
+        var (settings, input, ocr) = Harness(() => "19107 , 18424"); // on waypoint 1
         settings.Blossom.WaypointWaitMs = 500;
 
         var run = await RunAsync(settings, input, ocr, PilotPhase.BlossomWalk, (_, _) => input.Clicks > 0);
 
         string log = string.Join("\n", run.Lines);
-        Assert.Equal(4, input.Calls.Count(c => c == "KeyDown A"));
+        Assert.Equal(5, input.Calls.Count(c => c == "KeyDown A"));
         Assert.DoesNotContain("KeyDown D", input.Calls);
         int lastTurn = input.Calls.LastIndexOf("KeyUp A");
         int click = input.Calls.FindIndex(c => c.StartsWith("Click ", StringComparison.Ordinal));
         Assert.True(lastTurn >= 0 && click > lastTurn, log);
         Assert.StartsWith($"Click {Width / 2},", input.Calls[click]); // heading unknown again: straight up
         Assert.Contains(run.Lines, l => l.Contains("turned the camera", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task LongLeg_StillGettingCloser_IsNotSkipped()
+    {
+        // Live 2026-10-29: the 3200-unit leg to waypoint 2 was skipped after 40 steps while it was still closing in.
+        int reads = 0;
+        var (settings, input, ocr) = Harness(() => $"{17400 - 25 * reads++} , 18388"); // slowly west, nearest waypoint 2
+        settings.Blossom.WalkReadEveryMs = 100;
+        settings.Blossom.WalkClickEveryMs = 100;
+
+        var run = await RunAsync(settings, input, ocr, PilotPhase.BlossomWalk,
+            (_, lines) => lines.Any(l => l.StartsWith("Waypoint 2 reached", StringComparison.Ordinal)), 25000);
+
+        string log = string.Join("\n", run.Lines);
+        Assert.Contains(run.Lines, l => l.StartsWith("Walking the route from waypoint 2", StringComparison.Ordinal));
+        Assert.True(run.Lines.Any(l => l.StartsWith("Waypoint 2 reached", StringComparison.Ordinal)), log);
+        Assert.DoesNotContain(run.Lines, l => l.Contains("taking too long", StringComparison.Ordinal));
     }
 
     /// <summary>OCR that misses the minimap title in a tall read (the whole minimap band) and reads it in a small one.</summary>
