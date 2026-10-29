@@ -47,4 +47,14 @@ public interface IShortcutSource
 
     /// <summary>A press of the skill button found none. Default: <see cref="InvalidateSkill"/> (see <see cref="Missed(GameAction)"/>).</summary>
     void MissedSkill(string skill) => InvalidateSkill(skill);
+
+    /// <summary>
+    /// The button a skill press (tap or hold) uses. Default: <see cref="Skill"/>(<paramref name="skill"/>). The phone's
+    /// <see cref="ShortcutMap"/> ignores the name and returns the first attack skill icon found on the hotbar or the skill
+    /// wheel (user, 2026-10-29: "instead of relying on Key1, use the attack icons").
+    /// </summary>
+    PixelRect? AttackSkill(string skill) => Skill(skill);
+
+    /// <summary>A skill press found no button (<see cref="AttackSkill"/> null). Default: <see cref="MissedSkill"/>.</summary>
+    void MissedAttackSkill(string skill) => MissedSkill(skill);
 }

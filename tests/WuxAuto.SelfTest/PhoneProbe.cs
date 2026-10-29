@@ -180,6 +180,49 @@ internal static class PhoneProbe
         return best;
     }
 
+    /// <summary>
+    /// The attack skill icons only (fast, no OCR): per PNG, every phone_attack template's best score and box in each of
+    /// its zones (hotbar, cluster round the sword) at any scale, and which one <see cref="ShortcutMap.AttackSkill"/>
+    /// picks. Run with: --phoneattack &lt;dir&gt; [--recurse]
+    /// </summary>
+    public static int Attack(string dir, bool recurse)
+    {
+        string? assets = FindPhoneAssets();
+        if (assets == null)
+        {
+            Console.WriteLine("src\\WuxAuto.Mobile\\Assets\\phone not found above " + AppContext.BaseDirectory);
+            return 1;
+        }
+
+        AppPaths.Configure(AppPaths.Root, assets);
+        using var analyzer = new ScreenAnalyzer(new AppSettings(), new OcrService());
+        Console.WriteLine($"threshold {ShortcutMap.DefaultThreshold:0.00}; zones: hotbar | cluster");
+        foreach (string path in Directory.GetFiles(dir, "*.png", recurse ? SearchOption.AllDirectories : SearchOption.TopDirectoryOnly).Order())
+        {
+            using var frame = ReadBgra(path);
+            if (frame == null || frame.Width < 640)
+                continue;
+
+            analyzer.ResetScaleCache();
+            var map = new ShortcutMap(analyzer);
+            map.Refresh(frame);
+            var pick = map.AttackSkill("1");
+            string picked = pick is { } p
+                ? map.Matches.First(m => ShortcutMap.AttackTemplates.Contains(m.Key) && m.Value.Bounds == p).Key
+                : "-";
+            Console.WriteLine($"== {Path.GetRelativePath(dir, path)} {frame.Width}x{frame.Height} pick: {picked} {pick?.ToString() ?? ""}");
+            foreach (string t in ShortcutMap.AttackTemplates)
+            {
+                var parts = ShortcutMap.ZonesFor(t, frame.Width, frame.Height)
+                    .Select((z, i) => analyzer.FindIconAnyScale(frame, i == 1 ? t + TemplateLibrary.WheelSuffix : t, z, 0.0).Match)
+                    .Select(m => m == null ? "-" : $"{m.Score:0.000} {m.Bounds} x{m.Scale:0.00}");
+                Console.WriteLine($"  {t,-14} {string.Join(" | ", parts)}");
+            }
+        }
+
+        return 0;
+    }
+
     private static Mat? ReadBgra(string path)
     {
         using var source = ImageFile.Read(path, ImreadModes.Unchanged);

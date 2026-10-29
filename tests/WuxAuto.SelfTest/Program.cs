@@ -142,6 +142,10 @@ if (parityIndex >= 0)
     return await ParityProbe.RunAsync(args[parityIndex + 1]);
 }
 
+int phoneAttackIndex = Array.IndexOf(args, "--phoneattack");
+if (phoneAttackIndex >= 0 && phoneAttackIndex + 1 < args.Length)
+    return PhoneProbe.Attack(args[phoneAttackIndex + 1], args.Contains("--recurse"));
+
 int phoneIndex = Array.IndexOf(args, "--phone");
 if (phoneIndex >= 0 && phoneIndex + 1 < args.Length)
     return await PhoneProbe.RunAsync(args[phoneIndex + 1]);

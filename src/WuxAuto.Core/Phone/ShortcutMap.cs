@@ -54,7 +54,22 @@ public sealed class ShortcutMap(ScreenAnalyzer analyzer, double threshold = Shor
         ["1"] = "phone_skill1",
         ["2"] = "phone_skill2",
         ["3"] = "phone_skill3",
+        ["attack1"] = "phone_attack1",
+        ["attack2"] = "phone_attack2",
+        ["attack3"] = "phone_attack3",
+        ["attack4"] = "phone_attack4",
+        ["attack5"] = "phone_attack5",
+        ["attack6"] = "phone_attack6",
+        ["attack7"] = "phone_attack7",
     };
+
+    /// <summary>
+    /// The attack skill icons (the user's crops, 2026-10-29), in order of preference: a skill press uses the first one
+    /// found on the hotbar or the skill wheel (<see cref="AttackSkill"/>). Also in <see cref="SkillTemplates"/> as
+    /// "attack1".."attack7".
+    /// </summary>
+    public static IReadOnlyList<string> AttackTemplates { get; } =
+        ["phone_attack1", "phone_attack2", "phone_attack3", "phone_attack4", "phone_attack5", "phone_attack6", "phone_attack7"];
 
     // The search zones (see ZonesFor), measured at 1920x1080.
     private static readonly (int X, int Y, int W, int H, PhoneAnchor Anchor) Ring = (0, 540, 560, 540, PhoneAnchor.Left);
@@ -108,8 +123,10 @@ public sealed class ShortcutMap(ScreenAnalyzer analyzer, double threshold = Shor
         long now = _clock();
         foreach (string template in AllTemplates)
         {
+            // An absent attack icon is not looked for on the cool-down by itself: only a skill press that found none
+            // asks again (MissedAttackSkill) - seven full searches every 10 s would cost the loop for nothing.
             bool due = _stale.Contains(template)
-                       || (_absentSince.TryGetValue(template, out long since) && now - since >= AbsentRetryMs);
+                       || (!IsAttack(template) && _absentSince.TryGetValue(template, out long since) && now - since >= AbsentRetryMs);
             if (due)
                 Search(frame, template);
         }
@@ -133,6 +150,7 @@ public sealed class ShortcutMap(ScreenAnalyzer analyzer, double threshold = Shor
             "phone_autobuff" => [RightCluster, Ring],
             "phone_runskill" => [RightCluster, Hotbar],
             "phone_shura" => [Hotbar, RightCluster],
+            var t when IsAttack(t) => [Hotbar, RightCluster], // a hotbar slot or a round button of the skill wheel
             _ => [RightCluster], // the sword, the skill wheel
         };
         return zones.Select(z => PhoneLayout.ToPixels(z.X, z.Y, z.W, z.H, z.Anchor, width, height)).ToList();
@@ -147,6 +165,33 @@ public sealed class ShortcutMap(ScreenAnalyzer analyzer, double threshold = Shor
 
     public PixelRect? Skill(string skill) =>
         SkillTemplates.TryGetValue(skill, out string? template) ? Box(template) : null;
+
+    /// <summary>The first attack icon (<see cref="AttackTemplates"/> order) found; the skill name is ignored.</summary>
+    public PixelRect? AttackSkill(string skill)
+    {
+        foreach (string template in AttackTemplates)
+            if (Box(template) is { } box)
+                return box;
+        return null;
+    }
+
+    /// <summary>
+    /// A skill press found no attack icon: every attack icon searched less than <see cref="AbsentRetryMs"/> ago is left
+    /// alone, the others (never searched, or longer ago) are looked for on the next <see cref="Refresh"/> - once, since
+    /// that search records them absent again.
+    /// </summary>
+    public void MissedAttackSkill(string skill)
+    {
+        long now = _clock();
+        foreach (string template in AttackTemplates)
+        {
+            if (_found.ContainsKey(template))
+                continue;
+            if (_absentSince.TryGetValue(template, out long since) && now - since < AbsentRetryMs)
+                continue;
+            Forget(template);
+        }
+    }
 
     public (int Cx, int Cy, int Radius)? Joystick =>
         _found.TryGetValue(JoystickTemplate, out var m)
@@ -207,6 +252,8 @@ public sealed class ShortcutMap(ScreenAnalyzer analyzer, double threshold = Shor
             Forget(template);
     }
 
+    private static bool IsAttack(string template) => template.StartsWith("phone_attack", StringComparison.OrdinalIgnoreCase);
+
     private PixelRect? Box(string template) => _found.TryGetValue(template, out var m) ? m.Bounds : null;
 
     private void Search(Mat frame, string template)
@@ -218,9 +265,15 @@ public sealed class ShortcutMap(ScreenAnalyzer analyzer, double threshold = Shor
 
         SearchCount++;
         TemplateMatch? best = null;
-        foreach (var roi in ZonesFor(template, frame.Width, frame.Height))
+        var zones = ZonesFor(template, frame.Width, frame.Height);
+        for (int i = 0; i < zones.Count; i++)
         {
-            var hits = analyzer.FindIcons(frame, template, roi, threshold, maxResults: 1);
+            var roi = zones[i];
+            // An attack icon on the skill wheel (its second zone) is drawn bigger and round: its wheel variant is matched there.
+            string name = IsAttack(template) && i == 1 && analyzer.Library.Get(template + TemplateLibrary.WheelSuffix) != null
+                ? template + TemplateLibrary.WheelSuffix
+                : template;
+            var hits = analyzer.FindIcons(frame, name, roi, threshold, maxResults: 1);
             if (hits.Count > 0 && (best == null || hits[0].Score > best.Score))
                 best = hits[0];
         }

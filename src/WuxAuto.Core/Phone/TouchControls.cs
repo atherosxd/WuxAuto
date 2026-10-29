@@ -76,12 +76,14 @@ public sealed class TouchControls(AppSettings settings, ITouchInput touch, IShor
     public bool Tap(int x, int y) => Send(() => touch.Tap(x, y, Phone.TapHoldMs));
     public bool UseItem(int x, int y) => Send(() => touch.Tap(x, y, Phone.TapHoldMs));
 
-    public bool SkillTap(string skill) => Send(() => TapCentre(shortcuts.Skill(skill), () => shortcuts.MissedSkill(skill)));
+    /// <summary>Taps the attack skill button (<see cref="IShortcutSource.AttackSkill"/>: on the phone the first attack icon found, whatever the name).</summary>
+    public bool SkillTap(string skill) => Send(() => TapCentre(shortcuts.AttackSkill(skill), () => shortcuts.MissedAttackSkill(skill)));
 
     /// <summary>No Ctrl on the phone: the same tap as <see cref="SkillTap"/>.</summary>
     public bool SkillCtrlTap(string skill) => SkillTap(skill);
 
-    public bool SkillDown(string skill) => Send(() => Hold(SkillHold(skill), shortcuts.Skill(skill), () => shortcuts.MissedSkill(skill)));
+    /// <summary>Holds the attack skill button (see <see cref="SkillTap"/>).</summary>
+    public bool SkillDown(string skill) => Send(() => Hold(SkillHold(skill), shortcuts.AttackSkill(skill), () => shortcuts.MissedAttackSkill(skill)));
     /// <summary>Lets go of the skill if it is held; a dry run reports true like <c>WindowInput.KeyUp</c> (nothing went down).</summary>
     public bool SkillUp(string skill) => LetGo(SkillHold(skill)) || touch.IsDryRun;
 
