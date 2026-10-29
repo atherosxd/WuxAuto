@@ -524,6 +524,35 @@ public sealed class ScreenAnalyzer : IDisposable
         return new PixelRect(roi.X + box.X, roi.Y + box.Y, box.Width, box.Height);
     }
 
+    /// <summary>The top of the minimap panel, where its zone title sits ("[Blossom Garden" at 1725-1880, 70-95 of 2048x1152).</summary>
+    public static readonly NormRect MinimapTitleStrip = new(0.76, 0.03, 0.23, 0.08);
+
+    /// <summary>
+    /// The text lines of the minimap band (<see cref="RegionSettings.Minimap"/>, OCR x2), for the zone title. Live
+    /// 2026-10-29: over Blossom Garden's bright yellow map the whole-band read returned no words at all, while a small crop
+    /// round the title read "[Blossom Garden" cleanly - so without a title-like line ('[', 4+ letters, no digits) the
+    /// <see cref="MinimapTitleStrip"/> is read too, x2 then x3. Dark minimaps (the Labyrinth, LOD) read in the band as before.
+    /// </summary>
+    public async Task<IReadOnlyList<string>> ReadMinimapLinesAsync(Mat frame)
+    {
+        var band = _settings.Regions.Minimap.ToPixels(frame.Width, frame.Height);
+        var lines = (await Ocr.RecognizeAsync(frame, band, 2.0)).Select(w => w.LineText.Trim()).Distinct().ToList();
+        if (lines.Any(IsTitleLike))
+            return lines;
+
+        var strip = MinimapTitleStrip.ToPixels(frame.Width, frame.Height);
+        foreach (double scale in new[] { 2.0, 3.0 })
+        {
+            lines.AddRange((await Ocr.RecognizeAsync(frame, strip, scale)).Select(w => w.LineText.Trim()).Where(l => !lines.Contains(l)).Distinct());
+            if (lines.Any(IsTitleLike))
+                break;
+        }
+
+        return lines;
+
+        static bool IsTitleLike(string line) => line.Contains('[') && !line.Any(char.IsDigit) && TextMatcher.Normalize(line).Length >= 4;
+    }
+
     /// <summary>Where the Blossom pillars are looked for: above the character, left of the minimap panel.</summary>
     public static readonly NormRect PillarBand = new(0.15, 0.05, 0.62, 0.45);
 

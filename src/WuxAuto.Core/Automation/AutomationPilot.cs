@@ -5146,9 +5146,7 @@ public sealed partial class AutomationPilot
     /// </summary>
     private async Task<string?> ReadMinimapTitleAsync(Mat frame)
     {
-        var band = _settings.Regions.Minimap.ToPixels(frame.Width, frame.Height);
-        var words = await _analyzer.Ocr.RecognizeAsync(frame, band, 2.0);
-        var lines = words.Select(w => w.LineText.Trim()).Distinct().ToList();
+        var lines = await _analyzer.ReadMinimapLinesAsync(frame);
         return lines.FirstOrDefault(l => ZoneMatches(l, Destination))
                ?? lines.FirstOrDefault(l => IsWar
                    ? WarText.IsZoneTitleLine(l)
@@ -5218,9 +5216,7 @@ public sealed partial class AutomationPilot
         if (TextMatcher.Normalize(text).Length == 0)
             return false;
 
-        var band = _settings.Regions.Minimap.ToPixels(frame.Width, frame.Height);
-        var words = await _analyzer.Ocr.RecognizeAsync(frame, band, 2.0);
-        return words.Any(w => ZoneMatches(w.LineText, text));
+        return (await _analyzer.ReadMinimapLinesAsync(frame)).Any(l => ZoneMatches(l, text));
     }
 
     /// <summary>

@@ -315,7 +315,11 @@ public sealed class BlossomSettings
     /// <summary>1-based waypoint the route loops back to after the last one (user: 17 -> 6).</summary>
     public int LoopFrom { get; set; } = 6;
 
-    public int WaypointTolerance { get; set; } = 60;
+    /// <summary>
+    /// Reached within this many units. Live 2026-10-29: waypoints 2, 4 and 5 lie just past a railing or a pond edge and the
+    /// walk stopped 86, 67 and 71 short; at 60 each was skipped as "not moving".
+    /// </summary>
+    public int WaypointTolerance { get; set; } = 100;
 
     /// <summary>At most this long standing at a reached waypoint, tabbing (user: 5 s or less - the AFK checker).</summary>
     public int WaypointWaitMs { get; set; } = 3000;

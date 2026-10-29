@@ -22,6 +22,8 @@ public class BlossomRouteTests
         Assert.Equal("[S]Jaso Practitioner", b.TargetName);
         Assert.Equal(7, b.TurnTaps);
         Assert.Equal(100, b.TurnTapMs);
+        // Live 2026-10-29: waypoints 2 and 4 lie just past a railing - the walk stopped 86 and 67 units short.
+        Assert.Equal(100, b.WaypointTolerance);
     }
 
     [Theory]

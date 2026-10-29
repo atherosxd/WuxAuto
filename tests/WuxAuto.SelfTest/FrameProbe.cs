@@ -34,10 +34,8 @@ internal static class FrameProbe
             else
                 CvInvoke.CvtColor(source, frame, ColorConversion.Bgr2Bgra);
 
-            var band = settings.Regions.Minimap.ToPixels(frame.Width, frame.Height);
-            // Same rule as AutomationPilot.ReadMinimapTitleAsync.
-            var lines = (await analyzer.Ocr.RecognizeAsync(frame, band, 2.0))
-                .Select(w => w.LineText.Trim()).Distinct().ToList();
+            // Same reads and rule as AutomationPilot.ReadMinimapTitleAsync (the band, then the title strip).
+            var lines = await analyzer.ReadMinimapLinesAsync(frame);
             string labyrinth = TextMatcher.Normalize(settings.Sequence.DestinationText);
             string title = lines.FirstOrDefault(l => TextMatcher.Normalize(l).Contains(labyrinth, StringComparison.Ordinal))
                            ?? lines.FirstOrDefault(l => l.StartsWith('[') && !l.Any(char.IsDigit) && TextMatcher.Normalize(l).Length >= 4)

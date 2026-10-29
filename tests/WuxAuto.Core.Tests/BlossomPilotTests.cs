@@ -1,3 +1,4 @@
+using Emgu.CV;
 using WuxAuto.Automation;
 using WuxAuto.Core;
 using WuxAuto.Vision;
@@ -290,6 +291,79 @@ public class BlossomPilotTests
         Assert.InRange(nextAt - reachedAt, 800, 2500);
     }
 
+    // ---- live test 2026-10-29: Blossom Garden's bright yellow minimap - the whole-band OCR read no title at all
+
+    [Fact]
+    public async Task Arrival_TitleOnlyReadableInASmallStrip_StillZoomsOut()
+    {
+        var (settings, input, ocr) = Harness(() => "19148 , 19062");
+        var blind = new BandBlindOcr(ocr, maxHeight: Height / 5);
+
+        using var frame = Blank.Bgra(Height, Width);
+        var run = await PilotRun.RunAsync(settings, input, blind, frame, PilotPhase.ZoomOut,
+            (_, lines) => lines.Any(l => l.StartsWith("Zoomed out", StringComparison.Ordinal)), 8000);
+
+        Assert.True(run.Lines.Any(l => l.StartsWith("Zoomed out", StringComparison.Ordinal)), string.Join("\n", run.Lines));
+    }
+
+    // Live 2026-10-29: stuck against the side of the bridge (camera zoomed in there) - every waypoint was skipped in turn.
+
+    [Fact]
+    public async Task Blocked_ZoomsOutAndSidesteps_BeforeSkipping()
+    {
+        int y = 15700, clicks = 0;
+        FakeGameInput? sent = null;
+        var (settings, input, ocr) = Harness(() =>
+        {
+            int now = sent!.Clicks;
+            if (clicks == 0 && now > 0)
+                y -= 150;      // the first step goes north: the heading is learnt
+            clicks = now;      // then it never moves again
+            return $"13947 , {y}";
+        });
+        sent = input;
+        settings.Dungeon.RunDashWaitMs = 100;
+
+        var run = await RunAsync(settings, input, ocr, PilotPhase.BlossomWalk,
+            (_, lines) => lines.Any(l => l.StartsWith("Not moving for", StringComparison.Ordinal)), 20000);
+
+        string log = string.Join("\n", run.Lines);
+        int skip = run.Lines.FindIndex(l => l.StartsWith("Not moving for", StringComparison.Ordinal));
+        int right = run.Lines.FindIndex(l => l.Contains("sidestepping right", StringComparison.Ordinal));
+        int left = run.Lines.FindIndex(l => l.Contains("sidestepping left", StringComparison.Ordinal));
+        int back = run.Lines.FindIndex(l => l.Contains("stepping back", StringComparison.Ordinal));
+        Assert.True(skip > 0 && right >= 0 && right < left && left < back && back < skip, log);
+        Assert.Contains(input.Calls, c => c.StartsWith("CtrlWheel", StringComparison.Ordinal)); // zoomed out again
+    }
+
+    [Fact]
+    public async Task Waypoint_TooManyClicks_IsSkipped()
+    {
+        int n = 0;
+        var (settings, input, ocr) = Harness(() => (n++ / 2) % 2 == 0 ? "16500 , 17000" : "16600 , 17000"); // moves, never arrives
+        settings.Dungeon.RunDashWaitMs = 100;
+
+        var run = await RunAsync(settings, input, ocr, PilotPhase.BlossomWalk,
+            (_, lines) => lines.Any(l => l.Contains("taking too long", StringComparison.Ordinal)), 25000);
+
+        Assert.True(run.Lines.Any(l => l.Contains("taking too long", StringComparison.Ordinal)), string.Join("\n", run.Lines));
+    }
+
+    /// <summary>OCR that misses the minimap title in a tall read (the whole minimap band) and reads it in a small one.</summary>
+    private sealed class BandBlindOcr(FakeOcrEngine inner, int maxHeight) : IOcrEngine
+    {
+        public string Status => inner.Status;
+        public bool IsAvailable => true;
+        public double LastDurationMs => 0;
+        public bool EnsureInitialized() => true;
+
+        public async Task<IReadOnlyList<OcrWord>> RecognizeAsync(Mat bgra, PixelRect area, double upscale)
+        {
+            var words = await inner.RecognizeAsync(bgra, area, upscale);
+            return area.Height <= maxHeight ? words : words.Where(w => !w.LineText.StartsWith('[')).ToList();
+        }
+    }
+
     private static int Tabs(FakeGameInput input) => input.Calls.Count(c => c == "KeyTap Tab");
 
     private static int SkillTaps(FakeGameInput input) => input.Calls.Count(c => c == "KeyTap 1");
@@ -314,7 +388,7 @@ public class BlossomPilotTests
                 FakeOcrEngine.Line(coords(), 1100, 200, 120),
             };
             if (title)
-                words.Add(FakeOcrEngine.Line("[Blossom Garden]", 1000, 10));
+                words.Add(FakeOcrEngine.Line("[Blossom Garden]", 1130, 55)); // where the live 2048x1152 frame has it, scaled
             if (log?.Invoke(input) is { } lines)
             {
                 // the combat log, left side (Regions.AttackMessage)

@@ -970,9 +970,16 @@ teleport in again (LOD's rule); still in town after the teleport = "destination 
   19148,19062 -> waypoint 1). The first step after a turn clicks **straight up**; the movement sets `_headingBase` (the view's
   world direction is unknown), then `LearnHeadingError`; 3 steps in a row > 0.6 rad off the heading (>= 60 units each) =
   the first sample was a wall push -> heading re-learnt from the latest step (final review: one bad first sample locked
-  in a wrong heading for the run). Tab every `TabEveryMs` 1000. Reached (<= 60) -> stand + Tab <= `WaypointWaitMs` 3000
-  (clamped <= 5000, AFK checker; the pause reads no coordinates, so an unreadable minimap cannot stretch it), then the next.
-  5 still steps -> warning, `blossom_stuck`, next waypoint. 40 unread coordinates -> fail. Snapshots: <= 3 per tag per Start.
+  in a wrong heading for the run). Tab every `TabEveryMs` 1000. Reached (<= `WaypointTolerance` **100**; live 2026-10-29
+  waypoints 2, 4, 5 lie just past a railing / pond edge and the walk stopped 86, 67, 71 short at the old 60) -> stand + Tab
+  <= `WaypointWaitMs` 3000 (clamped <= 5000, AFK checker; the pause reads no coordinates, so an unreadable minimap cannot
+  stretch it), then the next. **Blocked** (live: wedged against the side of the bridge at ~13900, 15140 between waypoints 5
+  and 6, where the camera had zoomed in): 2nd still step -> zoom out again (once per waypoint) + a full-length click to the
+  right of the way, 3rd -> left, 4th -> back, 5th -> warning, `blossom_stuck`, next waypoint; 40 clicks on one waypoint ->
+  `blossom_too_long`, next. 40 unread coordinates -> fail. Snapshots: <= 3 per tag per Start.
+* **Minimap title:** `ScreenAnalyzer.ReadMinimapLinesAsync` (all modes): the band read, and without a title-like line the
+  `MinimapTitleStrip` (0.76, 0.03, 0.23, 0.08) x2 then x3 - live 2026-10-29 the whole-band OCR over Blossom Garden's bright
+  yellow map read **no words at all** and the arrival failed "never showed on the minimap" twice.
 * **Start inside:** the autohunt is made off first (`EnsureAutohuntOffAsync`, `trustVisibleLine: true`; skipped in a dry run).
 * **Target:** whole-screen OCR line in the target-bar band (y < 13 % h, |x - 50 %| < 22 % w) containing the name after its "[S]"
   ("jasopractitioner") or >= 0.85 like `TargetName`, else `monstericon` >= 0.80 at the top centre (user: the Jaso shows the chest).

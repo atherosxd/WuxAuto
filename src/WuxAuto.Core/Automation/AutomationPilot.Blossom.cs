@@ -25,6 +25,7 @@ public sealed partial class AutomationPilot
     private const int BlossomGiveUpIgnoreMs = 10000;
     private const double BlossomHeadingMissRad = 0.6;
     private const int BlossomHeadingMissesToRelearn = 3;
+    private const int BlossomMaxClicksPerWaypoint = 40;
 
     private IReadOnlyList<(int X, int Y)> _blossomRoute = [];
     private int _blossomWaypoint = -1;
@@ -38,6 +39,8 @@ public sealed partial class AutomationPilot
     private bool _blossomHuntOffChecked;
     private int _blossomHeadingMisses;
     private long _blossomIgnoreTargetsUntil;
+    private int _blossomWaypointClicks;
+    private bool _blossomZoomedOutAgain;
     private readonly Dictionary<string, int> _blossomShots = [];
 
     private int _blossomTurnTaps;
@@ -361,6 +364,8 @@ public sealed partial class AutomationPilot
         _blossomUnread = 0;
         if (_blossomWaypoint < 0)
         {
+            _blossomWaypointClicks = 0;
+            _blossomZoomedOutAgain = false;
             _blossomWaypoint = BlossomRoute.Nearest(_blossomRoute, coords.X, coords.Y);
             var start = _blossomRoute[_blossomWaypoint];
             Log?.Invoke(LogLevel.Info, $"Walking the route from waypoint {_blossomWaypoint + 1} ({start.X},{start.Y}), at {coords}.");
@@ -427,6 +432,15 @@ public sealed partial class AutomationPilot
             return;
         }
 
+        // Moving, but never getting there (round an obstacle and back): a waypoint gets so many clicks, then the next one.
+        if (++_blossomWaypointClicks > BlossomMaxClicksPerWaypoint)
+        {
+            Log?.Invoke(LogLevel.Warning, $"Waypoint {_blossomWaypoint + 1} is taking too long ({BlossomMaxClicksPerWaypoint} clicks, at {coords}, {distance:0} away) - skipping it.");
+            BlossomShot(frame, "blossom_too_long");
+            AdvanceBlossomWaypoint($"Waypoint {_blossomWaypoint + 1} skipped");
+            return;
+        }
+
         int centerX = frame.Width / 2;
         int centerY = frame.Height / 2;
         double reach = _settings.Dungeon.RunClickPx * Math.Clamp(distance / 300.0, 0.45, 1.0);
@@ -444,11 +458,7 @@ public sealed partial class AutomationPilot
             double c = Math.Cos(_headingError), sn = Math.Sin(_headingError);
             (ox, oy) = (ox * c + oy * sn, -ox * sn + oy * c);
             if (_blossomStalls >= 2)
-            {
-                double shorter = _blossomStalls >= 4 ? 0.3 : 0.5;
-                ox *= shorter;
-                oy *= shorter;
-            }
+                (ox, oy) = BlossomUnblock(frame, coords, ox, oy);
         }
 
         double scale = 1;
@@ -472,6 +482,32 @@ public sealed partial class AutomationPilot
         _lastClick = (clickX, clickY, now);
         _detail = $"{coords} -> waypoint {_blossomWaypoint + 1} ({distance:0} left)";
         _waitUntil = now + _settings.Dungeon.RunDashWaitMs;
+    }
+
+    /// <summary>
+    /// Blocked (live 2026-10-29: against the side of the bridge, where the camera had zoomed in - a 200 px click is a much
+    /// shorter walk then): on the 2nd still step the camera is zoomed out again (once per waypoint) and the click goes to the
+    /// right of the way, on the 3rd to the left, on the 4th back; the 5th skips the waypoint. A full-length click each time.
+    /// </summary>
+    private (double X, double Y) BlossomUnblock(Mat frame, GameCoordinates coords, double ox, double oy)
+    {
+        double len = Math.Max(1, Math.Sqrt(ox * ox + oy * oy));
+        double ux = ox / len * _settings.Dungeon.RunClickPx, uy = oy / len * _settings.Dungeon.RunClickPx;
+        if (!_blossomZoomedOutAgain && _settings.Dungeon.ZoomOutNotches > 0
+            && _controls.ZoomOut(frame.Width / 2, (int)(frame.Height * 0.40), _settings.Dungeon.ZoomOutNotches))
+        {
+            _blossomZoomedOutAgain = true;
+            Log?.Invoke(LogLevel.Info, $"Blocked at {coords} - zoomed out again.");
+        }
+
+        var (x, y, how) = _blossomStalls switch
+        {
+            2 => (-uy, ux, "sidestepping right"),
+            3 => (uy, -ux, "sidestepping left"),
+            _ => (-ux, -uy, "stepping back"),
+        };
+        Log?.Invoke(LogLevel.Info, $"Blocked at {coords} ({_blossomStalls} still steps towards waypoint {_blossomWaypoint + 1}) - {how}.");
+        return (x, y);
     }
 
     /// <summary>The view's world direction (screen-up turned <paramref name="angle"/> from world north); the heading fix restarts there.</summary>
@@ -502,6 +538,8 @@ public sealed partial class AutomationPilot
         Log?.Invoke(LogLevel.Info, $"{what} - on to waypoint {_blossomWaypoint + 1} ({next.X},{next.Y}).");
         _blossomPauseSince = 0;
         _blossomStalls = 0;
+        _blossomWaypointClicks = 0;
+        _blossomZoomedOutAgain = false;
         _simpleClick = null;
         _lastCoords = null;
         _waitUntil = Environment.TickCount64;
