@@ -112,7 +112,7 @@ static class PilotRun
 {
     public static async Task<(PilotPhase Phase, List<string> Lines)> RunAsync(AppSettings settings, IGameInput input,
         IOcrEngine ocr, Mat frame, PilotPhase startAt, Func<AutomationPilot, IReadOnlyList<string>, bool> done, int timeoutMs = 15000,
-        Action<string>? assets = null)
+        Action<string>? assets = null, Action? beforeTick = null)
     {
         string root = Path.Combine(Path.GetTempPath(), "wux-core-" + Guid.NewGuid());
         AppPaths.IsolateThisFlow(); // this run's folders are its own (test classes run in parallel)
@@ -134,6 +134,7 @@ static class PilotRun
             long deadline = Environment.TickCount64 + timeoutMs;
             while (!done(pilot, lines) && pilot.IsRunning && Environment.TickCount64 < deadline)
             {
+                beforeTick?.Invoke();
                 await pilot.TickAsync(frame, CancellationToken.None);
                 await Task.Delay(20);
             }
