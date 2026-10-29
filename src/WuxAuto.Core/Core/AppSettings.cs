@@ -26,6 +26,7 @@ public enum RunMode
     AutoLaby = 0,
     AutoLod = 1,
     AutoWar = 2,
+    AutoBlossom = 3,
 }
 
 /// <summary>Where the mini mode window opens on the screen (user: default bottom right).</summary>
@@ -80,6 +81,9 @@ public sealed class AppSettings
 
     /// <summary>Auto War: the tribe war in Bohai Outpost (<see cref="RunMode.AutoWar"/>).</summary>
     public WarSettings War { get; set; } = new();
+
+    /// <summary>Auto Blossom: the Jaso Practitioner route in Blossom Garden (<see cref="RunMode.AutoBlossom"/>).</summary>
+    public BlossomSettings Blossom { get; set; } = new();
 
     public UiSettings Ui { get; set; } = new();
 
@@ -274,6 +278,73 @@ public sealed class RegionSettings
     /// band the Laby/LOD key check reads (inline in CheckKeysAsync).
     /// </summary>
     public NormRect ItemList { get; set; } = new(0.62, 0.50, 0.38, 0.50);
+}
+
+/// <summary>
+/// Auto Blossom (user, 2026-10-29) - see AutomationPilot.Blossom.cs and docs/superpowers/specs/2026-10-29-auto-blossom-design.md.
+/// Teleport to Blossom Garden, line up on the two pillars, walk the waypoints, kill and loot every Jaso Practitioner.
+/// </summary>
+public sealed class BlossomSettings
+{
+    /// <summary>Teleport list entry and minimap zone.</summary>
+    public string Destination { get; set; } = "Blossom Garden";
+
+    /// <summary>The teleport list page it is on (user: page 1).</summary>
+    public int ListPage { get; set; } = 1;
+
+    /// <summary>The pillar base template (Assets): two of them side by side = lined up.</summary>
+    public string PillarTemplate { get; set; } = "blossompillar";
+
+    public double PillarMatchScore { get; set; } = 0.70;
+
+    /// <summary>Lined up = the midpoint of the two pillars within this fraction of the client width of its centre.</summary>
+    public double PillarCenterTolerance { get; set; } = 0.06;
+
+    /// <summary>One D tap (user: 100 ms).</summary>
+    public int TurnTapMs { get; set; } = 100;
+
+    /// <summary>The taps the user expects to need (7); past them the turn goes on to <see cref="TurnMaxTaps"/>.</summary>
+    public int TurnTaps { get; set; } = 7;
+
+    /// <summary>Give up turning after this many taps (about a full turn) and walk anyway.</summary>
+    public int TurnMaxTaps { get; set; } = 50;
+
+    /// <summary>The route, "x,y" world coordinates in order (user). From the last one it goes back to <see cref="LoopFrom"/>.</summary>
+    public List<string> Waypoints { get; set; } = DefaultWaypoints();
+
+    /// <summary>1-based waypoint the route loops back to after the last one (user: 17 -> 6).</summary>
+    public int LoopFrom { get; set; } = 6;
+
+    public int WaypointTolerance { get; set; } = 60;
+
+    /// <summary>At most this long standing at a reached waypoint, tabbing (user: 5 s or less - the AFK checker).</summary>
+    public int WaypointWaitMs { get; set; } = 3000;
+
+    /// <summary>Tab while walking and pausing (user: "keep tabbing").</summary>
+    public int TabEveryMs { get; set; } = 1000;
+
+    /// <summary>The monster to kill (the target bar); its chest counts too (user).</summary>
+    public string TargetName { get; set; } = "[S]Jaso Practitioner";
+
+    /// <summary>The target gone this long = dead.</summary>
+    public int TargetGoneMs { get; set; } = 2000;
+
+    /// <summary>A fight whose target never goes is given up after this long (user: a Jaso dies within 2 min).</summary>
+    public int FightMaxMs { get; set; } = 120000;
+
+    /// <summary>Loot this long after the kill (user: 1 s), every <see cref="LootEveryMs"/> (0.2 s) for <see cref="LootMs"/> (5 s).</summary>
+    public int LootDelayMs { get; set; } = 1000;
+
+    public int LootMs { get; set; } = 5000;
+
+    public int LootEveryMs { get; set; } = 200;
+
+    public static List<string> DefaultWaypoints() =>
+    [
+        "19136,18463", "15923,18292", "15916,16184", "14883,16026", "13953,15970", "13947,14697",
+        "13370,14493", "13085,13906", "12944,13692", "12987,13184", "13557,12775", "14101,12622",
+        "14546,12826", "14837,13243", "14923,13591", "14838,14013", "14359,14565",
+    ];
 }
 
 /// <summary>Auto LOD (user, 2026-10-21) - see AutomationPilot.Lod.cs.</summary>
