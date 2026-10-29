@@ -30,6 +30,9 @@ public sealed partial class AutomationPilot
     private const double BlossomNearDistance = 300;   // from here the walk homes in on the waypoint
     private const int BlossomNearReadMs = 450;
     private const double BlossomCloseEnough = 150;    // blocked this close to a waypoint = reached
+    private const double BlossomLookAhead = 250;      // world units ahead on the leg's line the walk aims at
+    private const double BlossomPxPerUnit = 1.8;      // screen px per world unit of a walk click (LOD: 200 px walked 80-140)
+    private const double BlossomMinNearClickPx = 80;  // a click closer to the feet lands on the character's own body
 
     private IReadOnlyList<(int X, int Y)> _blossomRoute = [];
     private int _blossomWaypoint = -1;
@@ -48,6 +51,8 @@ public sealed partial class AutomationPilot
     private bool _blossomFocusTold;
     private (double X, double Y)? _blossomDir;   // the walk click (screen offset) until the next coordinate read
     private bool _blossomNear;                   // within BlossomNearDistance of the waypoint: one click per read
+    private (int X, int Y)? _blossomLegFrom;     // where the current leg starts: the waypoint just left
+    private (int X, int Y)? _blossomJumpCandidate;
     private long _blossomClickAt;
     private long _blossomReadAt;
     private long _blossomTargetAt;
@@ -86,6 +91,8 @@ public sealed partial class AutomationPilot
         _blossomRoute = BlossomRoute.Parse(_settings.Blossom.Waypoints);
         _blossomTurns = BlossomRoute.ParseTurns(_settings.Blossom.WaypointTurns);
         _blossomCamTaps = 0;
+        _blossomLegFrom = null;
+        _blossomJumpCandidate = null;
         _blossomDir = null;
         _blossomClickAt = 0;
         _blossomReadAt = 0;
@@ -310,6 +317,7 @@ public sealed partial class AutomationPilot
         _blossomSkillAt = 0;
         _blossomCoordsAt = 0;
         _blossomAttackCoords = null;
+        _blossomJumpCandidate = null;
         Log?.Invoke(LogLevel.Success, $"Jaso Practitioner targeted ('{target}') - attacking with {SkillText(_settings.Dungeon.SkillKey)} ({_blossomKills} kill(s) so far).");
         Advance(PilotPhase.BlossomAttack, 0);
     }
@@ -426,7 +434,8 @@ public sealed partial class AutomationPilot
         if (_blossomDir is (double ox, double oy) && now >= _blossomClickAt)
         {
             int centerX = frame.Width / 2;
-            int centerY = frame.Height / 2;
+            // Near a waypoint the click is measured from the character's feet (0.55 h), elsewhere from the middle.
+            int centerY = _blossomNear ? (int)(frame.Height * 0.55) : frame.Height / 2;
             double scale = 1;
             double roomLeft = centerX - frame.Width * 0.25, roomRight = frame.Width * RunClickRight - centerX;
             double roomUp = centerY - frame.Height * RunClickTop, roomDown = frame.Height * 0.78 - centerY;
@@ -485,6 +494,7 @@ public sealed partial class AutomationPilot
             _blossomBestDistance = double.MaxValue;
             _blossomZoomedOutAgain = false;
             _blossomWaypoint = BlossomRoute.Nearest(_blossomRoute, coords.X, coords.Y);
+            _blossomLegFrom = _blossomWaypoint > 0 ? _blossomRoute[_blossomWaypoint - 1] : (coords.X, coords.Y);
             var start = _blossomRoute[_blossomWaypoint];
             Log?.Invoke(LogLevel.Info, $"Walking the route from waypoint {_blossomWaypoint + 1} ({start.X},{start.Y}), at {coords}.");
         }
@@ -528,7 +538,8 @@ public sealed partial class AutomationPilot
                 }
             }
 
-            _blossomStalls = step < 20 ? _blossomStalls + 1 : 0;
+            // Near a waypoint the clicks are short, so a smaller step still counts as moving.
+            _blossomStalls = step < (_blossomNear ? 8 : 20) ? _blossomStalls + 1 : 0;
         }
 
         _lastCoords = (coords.X, coords.Y);
@@ -584,8 +595,25 @@ public sealed partial class AutomationPilot
         }
         else
         {
-            double reach = b.WalkClickPx * Math.Clamp(distance / BlossomNearDistance, 0.3, 1.0);
-            double ox = needX / distance * reach, oy = needY / distance * reach;
+            double ox, oy;
+            if (_blossomNear)
+            {
+                // Homing in: click the waypoint's own spot, measured from the character's feet (the click base is the feet
+                // then, see the walk tick) - never a short click just under them, which lands on the character's body and
+                // does nothing (live run 7: "close enough" 52 off, the click back south never walked).
+                double clickPx = Math.Clamp(distance * BlossomPxPerUnit, BlossomMinNearClickPx, b.WalkClickPx);
+                (ox, oy) = (needX / distance * clickPx, needY / distance * clickPx);
+            }
+            else
+            {
+                // Along the leg: aim BlossomLookAhead units ahead on the line from the waypoint just left to this one (user:
+                // "not aligned by the dirt road ... goes straight to the water beside the bridge") - drift is pulled back
+                // onto the line, which the user laid along the road.
+                var (tx, ty) = BlossomRoute.LookAhead(_blossomLegFrom ?? (coords.X, coords.Y), goal, (coords.X, coords.Y), BlossomLookAhead);
+                double ax = tx - coords.X, ay = ty - coords.Y, len = Math.Max(1, Math.Sqrt(ax * ax + ay * ay));
+                (ox, oy) = (ax / len * b.WalkClickPx, ay / len * b.WalkClickPx);
+            }
+
             double c = Math.Cos(_headingError), sn = Math.Sin(_headingError);
             (ox, oy) = (ox * c + oy * sn, -ox * sn + oy * c);
             if (_blossomStalls >= 2)
@@ -648,6 +676,7 @@ public sealed partial class AutomationPilot
     private void AdvanceBlossomWaypoint(string what)
     {
         int left = _blossomWaypoint + 1;
+        _blossomLegFrom = _blossomRoute[_blossomWaypoint];   // the next leg runs from the waypoint just left
         _blossomWaypoint = BlossomRoute.Next(_blossomWaypoint, _blossomRoute.Count, _settings.Blossom.LoopFrom);
         var next = _blossomRoute[_blossomWaypoint];
         Log?.Invoke(LogLevel.Info, $"{what} - on to waypoint {_blossomWaypoint + 1} ({next.X},{next.Y}).");
@@ -716,8 +745,23 @@ public sealed partial class AutomationPilot
             var coords = await _analyzer.ReadCoordinatesAsync(frame);
             if (coords != null)
             {
-                if (_blossomAttackCoords is (int ax, int ay) && coords.DistanceTo(ax, ay) > lod.TeleportJump)
+                // A jump counts only when the next read agrees with it (live run 7: "12757, 1352" was 13521 with a digit
+                // dropped - the pilot took it for a death mid-fight and turned back to the pillars).
+                bool jumped = _blossomAttackCoords is (int ax0, int ay0) && coords.DistanceTo(ax0, ay0) > lod.TeleportJump;
+                bool confirmed = jumped && _blossomJumpCandidate is (int jx, int jy) && coords.DistanceTo(jx, jy) <= 200;
+                if (jumped && !confirmed)
                 {
+                    _blossomJumpCandidate = (coords.X, coords.Y);
+                    _blossomCoordsAt = now - 1000;   // check again in 0.5 s
+                }
+                else if (!jumped)
+                {
+                    _blossomJumpCandidate = null;
+                }
+
+                if (confirmed && _blossomAttackCoords is (int ax, int ay))
+                {
+                    _blossomJumpCandidate = null;
                     ReleaseHeldSkill();
                     Log?.Invoke(LogLevel.Warning, $"Moved to {coords} (from {ax},{ay}) during the fight - killed? Lining up again.");
                     BlossomShot(frame, "blossom_died");
@@ -726,7 +770,8 @@ public sealed partial class AutomationPilot
                     return;
                 }
 
-                _blossomAttackCoords = (coords.X, coords.Y);
+                if (!jumped)
+                    _blossomAttackCoords = (coords.X, coords.Y);
             }
         }
 

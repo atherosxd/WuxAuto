@@ -260,7 +260,7 @@ Blossom Garden needs no key.
    after 50 taps: it walks anyway.
 4. The walk: 17 waypoints (`Blossom > Waypoints` in settings.json) - 1 to 5 once, then 6 to 17 over and over - starting at
    the nearest one. The first click goes straight up the screen; where the character went tells which way the camera
-   looks. It clicks every 0.35 s so the character keeps running, and reads the coordinates about once a second. When it
+   looks. It stays on the line between two waypoints (lay them along the road) and clicks every 0.35 s so the character keeps running, and reads the coordinates about once a second. When it
    leaves a waypoint it can turn the camera - Settings > Auto Blossom > **Camera turns**, default `1:A5, 2:D5, 3:A5, 4:D5`
    (`1:5A` works too: after waypoint 1 tap `A` five times, after waypoint 2 `D` five times, ...) - and learns the camera's
    direction again from the next step. `Tab` every second. At a reached waypoint it stands at most **Waypoint pause** (3 s; at most 5 s - the AFK

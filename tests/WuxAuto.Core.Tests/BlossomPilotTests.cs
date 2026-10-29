@@ -466,6 +466,92 @@ public class BlossomPilotTests
     }
 
     [Fact]
+    public async Task OffTheLine_IsPulledBackOntoTheRoadBetweenWaypoints()
+    {
+        // Live run 7 (user): "around waypoint 4, since it is not aligned by the dirt road, it goes straight to the water beside
+        // the bridge" - the walk steered at the next waypoint and never back onto the line between the two (the road).
+        int x = 10150, y = 8900, seen = 0;   // 150 east of the line waypoint 1 (10000,10000) -> waypoint 2 (10000,8000)
+        double off = -1;
+        FakeGameInput? sent = null;
+        var (settings, input, ocr) = Harness(() =>
+        {
+            var clicks = sent!.Calls.Where(c => c.StartsWith("Click ", StringComparison.Ordinal)).ToList();
+            for (; seen < clicks.Count; seen++)
+            {
+                var p = clicks[seen]["Click ".Length..].Split(',').Select(int.Parse).ToArray();
+                x += (int)Math.Round((p[0] - Width / 2.0) * 0.3);   // the view looks north
+                y += (int)Math.Round((p[1] - Height / 2.0) * 0.3);
+            }
+
+            if (off < 0 && y <= 8400)
+                off = Math.Abs(x - 10000);
+            return $"{x} , {y}";
+        });
+        sent = input;
+        settings.Blossom.Waypoints = ["10000,10000", "10000,8000", "10000,6000"];
+        settings.Blossom.LoopFrom = 1;
+        settings.Blossom.WaypointTurns = [];
+        settings.Blossom.WalkReadEveryMs = 300;
+        settings.Blossom.WalkClickEveryMs = 100;
+
+        var run = await RunAsync(settings, input, ocr, PilotPhase.BlossomWalk, (_, _) => off >= 0, 20000);
+
+        Assert.True(off >= 0, string.Join("\n", run.Lines));
+        Assert.True(off < 40, $"{off:0} off the road half way to waypoint 2");
+    }
+
+    [Fact]
+    public async Task OneMisreadCoordinate_MidFight_IsNotADeath()
+    {
+        // Live run 7: "Moved to 12757, 1352 (from 12757,13521) during the fight - killed?" - one read dropped a digit.
+        int reads = 0;
+        var (settings, input, ocr) = Harness(() => ++reads == 12 ? "12757 , 1352" : "12757 , 13521",
+            target: _ => "[S]Jaso Practitioner");
+        long start = Environment.TickCount64;
+
+        var run = await RunAsync(settings, input, ocr, PilotPhase.BlossomWalk, (_, _) => Environment.TickCount64 - start > 6000, 12000);
+
+        Assert.True(reads > 12, $"only {reads} reads");
+        Assert.DoesNotContain(run.Lines, l => l.Contains("killed?", StringComparison.Ordinal));
+        Assert.Equal(PilotPhase.BlossomAttack, run.Phase);
+    }
+
+    [Fact]
+    public async Task Overshot_ClicksBackPastTheCharactersBody_AndReachesTheWaypoint()
+    {
+        // Live run 7: waypoint 1 overshot ~50 north; the short click back south landed on the character's own body (just
+        // below the middle of the screen), did nothing, and the walk took "close enough" 52 off. A click within 70 px under
+        // the character's feet does nothing here.
+        int x = 19107, y = 18424 - 60, seen = 0;  // 60 north of waypoint 1, the view looks north
+        FakeGameInput? sent = null;
+        var (settings, input, ocr) = Harness(() =>
+        {
+            var clicks = sent!.Calls.Where(c => c.StartsWith("Click ", StringComparison.Ordinal)).ToList();
+            for (; seen < clicks.Count; seen++)
+            {
+                var p = clicks[seen]["Click ".Length..].Split(',').Select(int.Parse).ToArray();
+                double fx = p[0] - Width / 2.0, fy = p[1] - Height * 0.55;   // from the feet
+                if (fy > -40 && fy < 70 && Math.Abs(fx) < 50)
+                    continue;                                                // on the body: nothing happens
+                x += (int)Math.Round(fx * 0.5);
+                y += (int)Math.Round(fy * 0.5);
+            }
+
+            return $"{x} , {y}";
+        });
+        sent = input;
+        settings.Blossom.WalkReadEveryMs = 300;
+        settings.Blossom.WalkClickEveryMs = 100;
+
+        var run = await RunAsync(settings, input, ocr, PilotPhase.BlossomWalk,
+            (_, lines) => lines.Any(l => l.StartsWith("Waypoint 1 reached", StringComparison.Ordinal)), 20000);
+
+        string line = run.Lines.FirstOrDefault(l => l.StartsWith("Waypoint 1 reached", StringComparison.Ordinal)) ?? string.Join("\n", run.Lines);
+        Assert.DoesNotContain("close enough", line);
+        Assert.StartsWith("Waypoint 1 reached at", line);
+    }
+
+    [Fact]
     public async Task BlockedCloseToTheWaypoint_CountsAsReached()
     {
         var (settings, input, ocr) = Harness(() => "13964 , 14806"); // 120 south of waypoint 6, never moves

@@ -983,6 +983,7 @@ teleport in again (LOD's rule); still in town after the teleport = "destination 
   and 6, where the camera had zoomed in): 2nd still step -> zoom out again (once per waypoint) + a full-length click to the
   right of the way, 3rd -> left, 4th -> back, 5th -> warning, `blossom_stuck`, next waypoint; 40 clicks on one waypoint ->
   `blossom_too_long`, next. 40 unread coordinates -> fail. Snapshots: <= 3 per tag per Start.
+* **Following the road** (user, live run 7: "not aligned by the dirt road ... goes straight to the water beside the bridge"): along a leg the walk aims 250 units ahead on the line from the waypoint just left to the next one (`BlossomRoute.LookAhead`, pure pursuit), so drift is pulled back onto the user's line; within 300 of the waypoint it clicks the waypoint's own spot from the character's feet (0.55 h, >= 80 px - a short click just under the feet lands on the character's body and does nothing; 1.8 px per unit). A death mid-fight needs two coordinate reads that agree (run 7: "13521" read as "1352" sent it back to the pillars).
 * **Minimap title:** `ScreenAnalyzer.ReadMinimapLinesAsync` (all modes): the band read, and without a title-like line the
   `MinimapTitleStrip` (0.76, 0.03, 0.23, 0.08) x2 then x3 - live 2026-10-29 the whole-band OCR over Blossom Garden's bright
   yellow map read **no words at all** and the arrival failed "never showed on the minimap" twice.

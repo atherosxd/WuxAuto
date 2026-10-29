@@ -59,6 +59,22 @@ public static class BlossomRoute
         return result;
     }
 
+    /// <summary>
+    /// The point the walk aims at on the leg from <paramref name="from"/> to <paramref name="to"/>: <paramref name="ahead"/>
+    /// world units past the foot of the perpendicular from <paramref name="at"/>, never past <paramref name="to"/> (pure
+    /// pursuit - a walker off the line is drawn back onto it). A leg shorter than a unit: <paramref name="to"/>.
+    /// </summary>
+    public static (double X, double Y) LookAhead((int X, int Y) from, (int X, int Y) to, (int X, int Y) at, double ahead)
+    {
+        double lx = to.X - from.X, ly = to.Y - from.Y, len = Math.Sqrt(lx * lx + ly * ly);
+        if (len < 1)
+            return (to.X, to.Y);
+        double ux = lx / len, uy = ly / len;
+        double along = (at.X - from.X) * ux + (at.Y - from.Y) * uy;
+        double s = Math.Clamp(along + ahead, 0, len);
+        return (from.X + ux * s, from.Y + uy * s);
+    }
+
     /// <summary>The 0-based index after <paramref name="index"/>; after the last, <paramref name="loopFrom"/> (1-based, clamped).</summary>
     public static int Next(int index, int count, int loopFrom)
     {

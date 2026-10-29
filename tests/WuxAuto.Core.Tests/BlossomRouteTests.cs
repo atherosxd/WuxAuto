@@ -65,6 +65,17 @@ public class BlossomRouteTests
     public void Turns_SkipJunk() =>
         Assert.Equal([3], BlossomRoute.ParseTurns(["", "x:A4", "1:Q4", "2:D0", " 3 : d 2 "]).Keys);
 
+    [Theory]
+    [InlineData(10150, 9500, 10000, 9250)]   // 150 off the line, 500 along: aim 250 further along, on the line
+    [InlineData(10000, 8100, 10000, 8000)]   // close to the end: never past the waypoint
+    [InlineData(10000, 10300, 10000, 10000)] // behind the start: the start of the line
+    public void LookAhead_AimsAheadOnTheLine(int atX, int atY, double wantX, double wantY)
+    {
+        var (x, y) = BlossomRoute.LookAhead((10000, 10000), (10000, 8000), (atX, atY), 250);
+        Assert.Equal(wantX, x, 3);
+        Assert.Equal(wantY, y, 3);
+    }
+
     [Fact]
     public void Turns_CountFirstToo() // the user writes "1:5A"
         => Assert.Equal((TurnDirection.Left, 5), BlossomRoute.ParseTurns(["1:5A"])[1]);
