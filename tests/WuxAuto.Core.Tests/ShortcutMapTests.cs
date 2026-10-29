@@ -27,6 +27,7 @@ public class ShortcutMapTests : AppPathsScope
         ("phone_runskill", 1388, 718, PhoneAnchor.Right),
         ("phone_skill1", 1455, 607, PhoneAnchor.Right),
         ("phone_menu", 1158, 2, PhoneAnchor.Centre),
+        ("phone_autohunt", 137, 977, PhoneAnchor.Left), // HUNT, the yellow swords on the ring (cropped 2026-10-30)
     ];
 
     static string PhoneAssets => Path.Combine(AppContext.BaseDirectory, "Assets", "phone");
@@ -105,13 +106,92 @@ public class ShortcutMapTests : AppPathsScope
         // 106 px at 1080 (Task 1), scaled with the height.
         Assert.InRange(radius, (int)(106 * h / 1080.0) - 4, (int)(106 * h / 1080.0) + 4);
 
-        // No template for these yet (not on the ring / not on the bar / no skill there in the frames).
-        Assert.Null(map.Find(GameAction.ToggleAutohunt));
+        // HUNT is on these frames (cropped 2026-10-30); no template yet for the rest (not on the bar / no skill there).
+        AssertAt(placed["phone_autohunt"], map.Find(GameAction.ToggleAutohunt), "ToggleAutohunt");
         Assert.Null(map.Find(GameAction.ShuraKey));
         Assert.Null(map.Find(GameAction.StopAttack));
         Assert.Null(map.Skill("2"));
         Assert.Null(map.Skill("3"));
         Assert.Null(map.Skill("4"));
+    }
+
+    /// <summary>Pastes the crop scaled by <paramref name="s"/> with its top-left at (x, y); <paramref name="grey"/> = drawn without colour.</summary>
+    static PixelRect PasteScaled(Mat frame, string template, int x, int y, double s, bool grey = false)
+    {
+        using var crop = CvInvoke.Imread(Path.Combine(PhoneAssets, template + ".png"), ImreadModes.ColorBgr);
+        var size = new Size((int)Math.Round(crop.Width * s), (int)Math.Round(crop.Height * s));
+        using var scaled = new Mat();
+        CvInvoke.Resize(crop, scaled, size, 0, 0, Inter.Area);
+        if (grey)
+        {
+            using var g = new Mat();
+            CvInvoke.CvtColor(scaled, g, ColorConversion.Bgr2Gray);
+            CvInvoke.CvtColor(g, scaled, ColorConversion.Gray2Bgr);
+        }
+
+        using var bgra = new Mat();
+        CvInvoke.CvtColor(scaled, bgra, ColorConversion.Bgr2Bgra);
+        using (var target = new Mat(frame, new Rectangle(x, y, size.Width, size.Height)))
+            bgra.CopyTo(target);
+        return new PixelRect(x, y, size.Width, size.Height);
+    }
+
+    [Fact]
+    public void XiaomiLayout_2608x1200_FindsEveryShortcutWhereThePhoneDrawsIt()
+    {
+        // Top-left corners measured on the owner's Xiaomi 17 Pro Max town frame (2026-10-30); the HUD scales with the height
+        // (every hit there was at x1.11 = 1200/1080). The ☰ keeps its distance from the right edge, not the middle.
+        using var analyzer = NewAnalyzer();
+        var map = new ShortcutMap(analyzer);
+        using var frame = new Mat(1200, 2608, DepthType.Cv8U, 4);
+        frame.SetTo(new MCvScalar(110, 110, 110, 255));
+        double s = 1200 / 1080.0;
+        var scroll = PasteScaled(frame, "phone_teleportscroll", 225, 663, s);
+        var pickup = PasteScaled(frame, "phone_pickup", 85, 738, s);
+        var joystick = PasteScaled(frame, "phone_joystick", 209, 823, s);
+        var hunt = PasteScaled(frame, "phone_autohunt", 151, 1084, s);
+        PasteScaled(frame, "phone_autohunt", 94, 1039, s, grey: true); // the white AUTO BUFF copy on the ring: same swords, no yellow
+        var buff = PasteScaled(frame, "phone_autobuff", 2479, 700, s);
+        var sword = PasteScaled(frame, "phone_sword", 2247, 839, s);
+        var run = PasteScaled(frame, "phone_runskill", 2018, 797, s);
+        var menu = PasteScaled(frame, "phone_menu", 1761, 4, s);
+
+        map.Refresh(frame);
+
+        AssertAt(scroll, map.Find(GameAction.TeleportScroll), "TeleportScroll");
+        AssertAt(pickup, map.Find(GameAction.Loot), "Loot");
+        AssertAt(hunt, map.Find(GameAction.ToggleAutohunt), "ToggleAutohunt (the yellow swords, not the white ones)");
+        AssertAt(buff, map.Find(GameAction.Buff), "Buff");
+        AssertAt(sword, map.Find(GameAction.TargetNearest), "TargetNearest");
+        AssertAt(run, map.Find(GameAction.RunSkillKey), "RunSkillKey");
+        AssertAt(menu, map.Menu, "Menu");
+        Assert.NotNull(map.Joystick);
+        Assert.InRange(map.Joystick!.Value.Cx, joystick.CenterX - 4, joystick.CenterX + 4);
+    }
+
+    [Fact]
+    public void Autohunt_OnlyTheWhiteSwords_IsNotHunt()
+    {
+        using var analyzer = NewAnalyzer();
+        var map = new ShortcutMap(analyzer);
+        using var frame = new Mat(1080, 1920, DepthType.Cv8U, 4);
+        frame.SetTo(new MCvScalar(110, 110, 110, 255));
+        PasteScaled(frame, "phone_autohunt", 137, 977, 1.0, grey: true);
+
+        map.Refresh(frame);
+
+        Assert.Null(map.Find(GameAction.ToggleAutohunt));
+    }
+
+    [Fact]
+    public void MenuZone_IsAnchoredToTheRightEdge()
+    {
+        // 1920x1080: x 600-1500; 2608x1200: the same distance from the right edge, scaled (1141-2141).
+        var mumu = ShortcutMap.ZonesFor(ShortcutMap.MenuTemplate, 1920, 1080).Single();
+        var xiaomi = ShortcutMap.ZonesFor(ShortcutMap.MenuTemplate, 2608, 1200).Single();
+        Assert.Equal(new PixelRect(600, 0, 900, 110), mumu);
+        Assert.Equal(2608 - (int)Math.Round(1320 * 1200 / 1080.0), xiaomi.X);
+        Assert.Contains(1794, Enumerable.Range(xiaomi.X, xiaomi.Width)); // the ☰'s centre on the Xiaomi
     }
 
     [Fact]
@@ -375,7 +455,7 @@ public class ShortcutMapTests : AppPathsScope
     {
         long now = 1_000_000;
         using var analyzer = NewAnalyzer();
-        Assert.Null(analyzer.Library.Get("phone_autohunt"));
+        Assert.Null(analyzer.Library.Get("phone_shura"));
         var map = new ShortcutMap(analyzer, clock: () => now);
         var (hud, _) = HudFrame(1920, 1080);
         using (hud)
@@ -386,14 +466,14 @@ public class ShortcutMapTests : AppPathsScope
                 .Count(t => analyzer.Library.Get(t) != null);
             Assert.Equal(expected, map.SearchCount);
 
-            map.Invalidate(GameAction.ToggleAutohunt);
+            map.Invalidate(GameAction.ShuraKey);
             map.InvalidateSkill("2");
             now += ShortcutMap.AbsentRetryMs * 3;
             map.Refresh(hud);
             Assert.Equal(expected, map.SearchCount);
         }
 
-        Assert.Null(map.Find(GameAction.ToggleAutohunt));
+        Assert.Null(map.Find(GameAction.ShuraKey));
     }
 
     [Fact]

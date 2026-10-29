@@ -264,7 +264,8 @@ public sealed partial class AutomationPilot
         _analyzer = analyzer;
         _controls = controls;
         _shortcuts = shortcuts;
-        _shortcutCheck = new ShortcutCheck(analyzer, controls, shortcuts, (level, text) => Log?.Invoke(level, text));
+        _shortcutCheck = new ShortcutCheck(analyzer, controls, shortcuts, (level, text) => Log?.Invoke(level, text),
+            async f => await ReadMinimapTitleAsync(f) != null);
     }
 
     private readonly IShortcutSource? _shortcuts;
@@ -389,6 +390,7 @@ public sealed partial class AutomationPilot
         _lodKills = 0;
         _lodBuffAt = 0;
         _lodBuffs = 0;
+        ResetPhoneBuffState();
         _lodApproachSnapshots = 0;
         _fontStep = 0;
         _warSpotChecked = false;
@@ -582,7 +584,11 @@ public sealed partial class AutomationPilot
             _positionsResetPending = false;
             _analyzer.ResetScaleCache();
             if (Profile == PlatformProfile.Phone)
+            {
                 _settings.ResetPositions(Profile, frame.Width, frame.Height);
+                // Every Start and restart: no shortcut position or "not there" (absent cool-down) from an earlier screen.
+                _shortcuts?.Invalidate();
+            }
             Log?.Invoke(LogLevel.Info,
                 $"Screen positions reset to the built-in defaults for the {frame.Width}x{frame.Height} client; template scales will be re-learned.");
         }
@@ -765,6 +771,11 @@ public sealed partial class AutomationPilot
         // After the zone guard: a kill's second screenshot must show the dungeon, not a covered or
         // loading screen.
         TickKillShot(frame, now);
+
+        // Phone: a buff tap's check on the buff timers (~3 s after it), whatever the LOD phase is waiting for.
+        if (IsLod && _phase is PilotPhase.LodRun or PilotPhase.LodAttack or PilotPhase.LodApproach or PilotPhase.LodRespawn
+                or PilotPhase.LodLoot or PilotPhase.FaceNorth)
+            await TickPhoneBuffCheckAsync(frame, now);
 
         if (now < _waitUntil)
             return;
@@ -1078,6 +1089,7 @@ public sealed partial class AutomationPilot
                 // Resume (user): rebuff first - a fight may be running, so stop attacking for it
                 // (Shura, else Space) - then attack.
                 Log?.Invoke(LogLevel.Warning, $"Already at {Destination} with '{_settings.Lod.BossName}' in view - rebuffing, then attacking.");
+                await PrepareBuffCheckAsync(frame, Environment.TickCount64, force: true);
                 TryLodBuff(frame, Environment.TickCount64, force: true, attacking: true);
                 BeginLodFight();
                 _lodHeadingUnknown = true;

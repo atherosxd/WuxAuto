@@ -37,12 +37,26 @@ public sealed class TouchControls(AppSettings settings, ITouchInput touch, IShor
     /// <summary>Vertical (tilt) drags run at this x: at 0.74 w they were ignored.</summary>
     public const double TiltX = 0.65;
 
+    /// <summary>
+    /// A tap while a finger is held (a Hold fight: the sword, Pick up, AUTO BUFF) is let through like this: lift the held
+    /// finger, wait <see cref="LiftBeforeTapMs"/>, tap, wait <see cref="TapBeforeRepressMs"/>, press the held button again.
+    /// The game ignores a button tap while another finger is down (M0), and AUTO BUFF tapped during a held skill never cast
+    /// (MuMu LOD run 2026-10-30: 15 buff presses in the log, no buff on screen; one tap in town casts it).
+    /// </summary>
+    public const int LiftBeforeTapMs = 150;
+
+    /// <inheritdoc cref="LiftBeforeTapMs"/>
+    public const int TapBeforeRepressMs = 400;
+
     private readonly Action<int> _sleep = sleep ?? Thread.Sleep;
 
     // What the one held finger presses ("action:ShuraKey" / "skill:1"), null = nothing. Locked: ReleaseAll comes
     // from the UI thread while the loop thread presses.
     private readonly Lock _heldLock = new();
     private string? _held;
+
+    // Where the held finger is down (for the press again after a tap in between). Under _heldLock.
+    private (int X, int Y) _heldAt;
 
     // The skill "held" by SkillDown ("skill:1"): one press went out, nothing stays down. Under _heldLock.
     private string? _pressedSkill;
@@ -76,8 +90,8 @@ public sealed class TouchControls(AppSettings settings, ITouchInput touch, IShor
 
     public void ActionUp(GameAction action) => LetGo(ActionHold(action));
 
-    public bool Tap(int x, int y) => Send(() => touch.Tap(x, y, Phone.TapHoldMs));
-    public bool UseItem(int x, int y) => Send(() => touch.Tap(x, y, Phone.TapHoldMs));
+    public bool Tap(int x, int y) => Send(() => TapPoint(x, y));
+    public bool UseItem(int x, int y) => Send(() => TapPoint(x, y));
 
     /// <summary>
     /// One plain tap of the attack skill button (<see cref="IShortcutSource.AttackSkill"/>: on the phone the first attack
@@ -283,7 +297,41 @@ public sealed class TouchControls(AppSettings settings, ITouchInput touch, IShor
             return false;
         }
 
-        return touch.Tap(r.CenterX, r.CenterY, Phone.TapHoldMs);
+        return TapPoint(r.CenterX, r.CenterY);
+    }
+
+    /// <summary>
+    /// One tap; with a finger held, the held press is lifted around it and pressed again (<see cref="LiftBeforeTapMs"/>,
+    /// <see cref="TapBeforeRepressMs"/>). The press again is skipped when a Halt / ReleaseAll / another hold came in between.
+    /// </summary>
+    private bool TapPoint(int x, int y)
+    {
+        string? resume;
+        (int X, int Y) at;
+        lock (_heldLock)
+        {
+            resume = _held;
+            at = _heldAt;
+            if (resume != null)
+            {
+                _held = null;
+                touch.Release();
+            }
+        }
+
+        if (resume == null)
+            return touch.Tap(x, y, Phone.TapHoldMs);
+
+        _sleep(LiftBeforeTapMs);
+        bool tapped = touch.Tap(x, y, Phone.TapHoldMs);
+        _sleep(TapBeforeRepressMs);
+        lock (_heldLock)
+        {
+            if (!_halted && _held == null && touch.IsGameInFront && touch.PressDown(at.X, at.Y))
+                _held = resume;
+        }
+
+        return tapped;
     }
 
     /// <summary>Presses the button down and remembers it; one finger only, so a press already held is let go first.</summary>
@@ -311,6 +359,7 @@ public sealed class TouchControls(AppSettings settings, ITouchInput touch, IShor
                 return false;
 
             _held = what;
+            _heldAt = (r.CenterX, r.CenterY);
             return true;
         }
     }

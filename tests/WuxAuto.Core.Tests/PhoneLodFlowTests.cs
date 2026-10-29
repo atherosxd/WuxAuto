@@ -167,6 +167,154 @@ public class PhoneLodFlowTests : AppPathsScope
     }
 
     [Fact]
+    public async Task PhoneLod_HoldMode_BuffMidFight_LiftsTapsThenPressesAgain()
+    {
+        // MuMu LOD 2026-10-30: 15 buff presses in the log, no buff on screen. The held skill is let go before the AUTO BUFF
+        // tap and pressed again after it; the tap is logged with its position.
+        using var phone = new PhonePilot(TempRoot());
+        phone.Settings.Phone.AttackMode = PhoneAttackMode.Hold;
+        phone.Settings.Lod.ApproachBoss = false;
+        phone.Settings.Lod.BuffEveryMs = 1500;
+        phone.Shortcuts.Skills["1"] = Skill1;
+        phone.Shortcuts.Icons[GameAction.Buff] = AutoBuff;
+        phone.Ocr.Scene = () => [Title, Target];
+        using var frame = PhoneFrames.Grey();
+        string down = $"Down {Skill1.CenterX},{Skill1.CenterY}";
+
+        await phone.RunAsync(() => frame, PilotPhase.LodAttack, () =>
+            phone.Touch.Taps.Count(t => t == Centre(AutoBuff)) >= 2 && phone.Touch.Calls[^1] == down);
+
+        var calls = phone.Touch.Calls;
+        int tap = calls.FindLastIndex(c => c.StartsWith("Tap ", StringComparison.Ordinal));
+        Assert.True(tap >= 2, string.Join(" | ", calls));
+        Assert.True(calls[tap - 1] == "Release", string.Join(" | ", calls)); // let go first ...
+        Assert.Equal(down, calls[tap + 1]);             // ... pressed again after
+        Assert.Contains(phone.Lines, l => l == $"Auto buff tapped at {AutoBuff.CenterX},{AutoBuff.CenterY}.");
+    }
+
+    [Fact]
+    public async Task PhoneLod_BuffTimersRenewed_Took()
+    {
+        using var phone = new PhonePilot(TempRoot());
+        phone.Pilot.PhoneBuffCheckDelayMs = 100;
+        phone.Settings.Lod.WalkToBossSpot = false;
+        phone.Shortcuts.Icons[GameAction.Buff] = AutoBuff;
+        // The timers row under the HP bar: 3m before the tap, 6m after it.
+        phone.Ocr.Scene = () => [Title, FakeOcrEngine.Line(phone.Touch.Taps.Contains(Centre(AutoBuff)) ? "6m" : "3m", 160, 160, 24, 14)];
+        using var frame = PhoneFrames.Grey();
+
+        await phone.RunAsync(() => frame, PilotPhase.LodRun, () => phone.Lines.Any(l => l.StartsWith("Auto buff took", StringComparison.Ordinal)), 5000);
+
+        Assert.Contains(phone.Lines, l => l == "Auto buff took (timers 6m).");
+        Assert.Equal(1, phone.Touch.Taps.Count(t => t == Centre(AutoBuff)));
+    }
+
+    [Fact]
+    public async Task PhoneLod_BuffTimersUnchanged_TapsOnceMoreThenWarns()
+    {
+        using var phone = new PhonePilot(TempRoot());
+        phone.Pilot.PhoneBuffCheckDelayMs = 100;
+        phone.Settings.Lod.WalkToBossSpot = false;
+        phone.Shortcuts.Icons[GameAction.Buff] = AutoBuff;
+        phone.Ocr.Scene = () => [Title, FakeOcrEngine.Line("2m", 160, 160, 24, 14)];
+        using var frame = PhoneFrames.Grey();
+
+        await phone.RunAsync(() => frame, PilotPhase.LodRun, () => phone.Lines.Any(l => l.StartsWith("Auto buff did not take", StringComparison.Ordinal)), 5000);
+
+        Assert.Equal(2, phone.Touch.Taps.Count(t => t == Centre(AutoBuff)));
+        Assert.Contains(phone.Lines, l => l.StartsWith("Auto buff: nothing changed under the HP bar (timers 2m) - tapped it once more.", StringComparison.Ordinal));
+        Assert.Contains(phone.Lines, l => l.StartsWith("Auto buff did not take (tapped twice", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task PhoneLod_BuffRefusedByTheGame_WarnsOnce()
+    {
+        using var phone = new PhonePilot(TempRoot());
+        phone.Settings.Lod.WalkToBossSpot = false;
+        phone.Settings.Lod.BuffEveryMs = 1200;
+        phone.Shortcuts.Icons[GameAction.Buff] = AutoBuff;
+        var refusal = FakeOcrEngine.Line("Force 90% and over required", 760, 420, 400, 18);
+        phone.Ocr.Scene = () => phone.Touch.Taps.Contains(Centre(AutoBuff)) ? [Title, refusal] : [Title];
+        using var frame = PhoneFrames.Grey();
+
+        await phone.RunAsync(() => frame, PilotPhase.LodRun, () => phone.Touch.Taps.Count(t => t == Centre(AutoBuff)) >= 3, 6000);
+
+        Assert.Single(phone.Lines, l => l.StartsWith("Auto buff refused by the game: Force below 90%", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task PhoneLod_NoBuffButton_WarnsOnce()
+    {
+        using var phone = new PhonePilot(TempRoot());
+        phone.Settings.Lod.WalkToBossSpot = false;
+        phone.Settings.Lod.BuffEveryMs = 200;
+        phone.Ocr.Scene = () => [Title];
+        using var frame = PhoneFrames.Grey();
+        long until = Environment.TickCount64 + 1200;
+
+        await phone.RunAsync(() => frame, PilotPhase.LodRun, () => Environment.TickCount64 > until);
+
+        Assert.Single(phone.Lines, l => l.StartsWith("Auto buff: the AUTO BUFF button is not on screen", StringComparison.Ordinal));
+    }
+
+    [Theory]
+    [InlineData("3m 4m 4m 3m 5m", "6m 6m 6m 1m 6m", true)]   // the MuMu buff frames, before / after one tap
+    [InlineData("1m 2m", "1m 2m", false)]
+    [InlineData("", "6m 6m", true)]                          // arrival: nothing before
+    [InlineData("", "2m", false)]
+    [InlineData("6m 5m", "6m 5m", null)]                     // still fresh: cannot tell
+    [InlineData("3m", "", null)]                             // nothing reads after
+    [InlineData("11d 2m", "11d 2m", false)]                  // an item's days are not a buff
+    public void BuffTook_FromTheTimers(string before, string after, bool? took)
+    {
+        var b = AutomationPilot.BuffTimers(before.Split(' ', StringSplitOptions.RemoveEmptyEntries));
+        var a = AutomationPilot.BuffTimers(after.Split(' ', StringSplitOptions.RemoveEmptyEntries));
+        Assert.Equal(took, AutomationPilot.BuffTook(before.Length == 0 ? null : b, a));
+    }
+
+    [Theory]
+    [InlineData("Force 90% and over required", true)]
+    [InlineData("F0rce 90% and over required", true)]
+    [InlineData("Attack succeeded!Normal damage(+120)", false)]
+    [InlineData("[LOD] Bai Gu Great", false)]
+    public void IsBuffRefusal(string line, bool refused) => Assert.Equal(refused, AutomationPilot.IsBuffRefusal(line));
+
+    [Fact]
+    public void BuffRowChange_StillRowIsZero_NewIconsCount()
+    {
+        using var before = PhoneFrames.Grey();
+        using var same = before.Clone();
+        using var renewed = before.Clone();
+        // Two new buff icons in the row under the HP bar (0,120 480x110 at 1920x1080).
+        PhoneFrames.Paste(renewed, "phone_autohunt", 200, 140);
+        PhoneFrames.Paste(renewed, "phone_autohunt", 240, 140);
+        using var a = AutomationPilot.BuffRowGrey(before);
+        using var b = AutomationPilot.BuffRowGrey(same);
+        using var c = AutomationPilot.BuffRowGrey(renewed);
+
+        Assert.Equal(new System.Drawing.Size(480, 110), a.Size);
+        Assert.Equal(0, AutomationPilot.BuffRowChange(a, b));
+        Assert.True(AutomationPilot.BuffRowChange(a, c) >= AutomationPilot.BuffRowChangedShare);
+    }
+
+    [Fact]
+    public async Task PhoneLod_BuffRowStill_TapsOnceMoreThenWarns_WithoutReadableTimers()
+    {
+        // The timers do not read (Windows OCR read none on the MuMu buff frames): the row's pixels decide.
+        using var phone = new PhonePilot(TempRoot());
+        phone.Pilot.PhoneBuffCheckDelayMs = 100;
+        phone.Settings.Lod.WalkToBossSpot = false;
+        phone.Shortcuts.Icons[GameAction.Buff] = AutoBuff;
+        phone.Ocr.Scene = () => [Title];
+        using var frame = PhoneFrames.Grey();
+
+        await phone.RunAsync(() => frame, PilotPhase.LodRun, () => phone.Lines.Any(l => l.StartsWith("Auto buff did not take", StringComparison.Ordinal)), 5000);
+
+        Assert.Equal(2, phone.Touch.Taps.Count(t => t == Centre(AutoBuff)));
+        Assert.Contains(phone.Lines, l => l.StartsWith("Auto buff did not take (tapped twice, buff row 0.0% changed)", StringComparison.Ordinal));
+    }
+
+    [Fact]
     public async Task PhoneLod_HoldMode_HoldLiftedByAnotherTouch_PressedAgain()
     {
         // The next gesture lifts a held finger (AndroidTouchInput); the pilot presses the hold again at once.

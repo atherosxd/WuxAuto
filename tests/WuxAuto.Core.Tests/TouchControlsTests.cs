@@ -148,6 +148,47 @@ public sealed class TouchControlsTests
     }
 
     [Fact]
+    public void Tap_WhileTheSkillIsHeld_LiftsTapsAndPressesAgain()
+    {
+        // MuMu LOD 2026-10-30: AUTO BUFF tapped during the held skill never cast. Lift, settle, tap, settle, press again.
+        var h = new Harness();
+        h.Settings.Phone.AttackMode = PhoneAttackMode.Hold;
+        h.Shortcuts.Skills["1"] = SkillButton;
+        h.Shortcuts.Icons[GameAction.Buff] = Icon;
+        Assert.True(h.Controls.SkillDown("1"));
+        Assert.True(h.Controls.Press(GameAction.Buff));
+        Assert.True(h.Controls.SkillStillHeld("1"));
+        Assert.Equal(["Down:830,630", "Release", $"Sleep:{TouchControls.LiftBeforeTapMs}", "Tap:120,215,60",
+            $"Sleep:{TouchControls.TapBeforeRepressMs}", "Down:830,630"], h.Touch.Calls);
+
+        // The press again is the held press: SkillUp lets go of it.
+        Assert.True(h.Controls.SkillUp("1"));
+        Assert.Equal("Release", h.Touch.Calls[^1]);
+    }
+
+    [Fact]
+    public void Tap_WhileHeld_HaltBeforeThePressAgain_NothingGoesDown()
+    {
+        // Stop / F10 between the tap and the press again: the finger stays up.
+        var h = new Harness();
+        h.Settings.Phone.AttackMode = PhoneAttackMode.Hold;
+        h.Shortcuts.Skills["1"] = SkillButton;
+        TouchControls? controls = null;
+        controls = new TouchControls(h.Settings, h.Touch, h.Shortcuts, ms =>
+        {
+            h.Touch.Calls.Add($"Sleep:{ms}");
+            if (ms == TouchControls.TapBeforeRepressMs)
+                controls!.Halt();
+        });
+
+        Assert.True(controls.SkillDown("1"));
+        Assert.True(controls.Tap(10, 20));
+        Assert.False(controls.SkillStillHeld("1"));
+        Assert.Equal(["Down:830,630", "Release", $"Sleep:{TouchControls.LiftBeforeTapMs}", "Tap:10,20,60",
+            $"Sleep:{TouchControls.TapBeforeRepressMs}", "Release"], h.Touch.Calls);
+    }
+
+    [Fact]
     public void SkillDown_HoldMode_HaltLiftsIt()
     {
         var h = new Harness();

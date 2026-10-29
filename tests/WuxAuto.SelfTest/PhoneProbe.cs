@@ -3,6 +3,7 @@ using System.Drawing;
 using System.IO;
 using Emgu.CV;
 using Emgu.CV.CvEnum;
+using WuxAuto.Automation;
 using WuxAuto.Core;
 using WuxAuto.Phone;
 using WuxAuto.Vision;
@@ -113,6 +114,12 @@ internal static class PhoneProbe
             Console.WriteLine($"  combat-log region {log}: {lines.Count} line(s)");
             foreach (var (text, bounds) in lines)
                 Console.WriteLine($"    {bounds.Y,4} {Shorten(text)}");
+
+            // The buff timers row under the HP / MP bars (the pilot's auto buff check).
+            var buffRow = AutomationPilot.BuffTimersRegion(w, h);
+            var buffWords = await analyzer.Ocr.RecognizeAsync(frame, buffRow, 2.0);
+            var timers = AutomationPilot.BuffTimers(buffWords.Select(o => o.Text));
+            Console.WriteLine($"  buff timers {buffRow}: [{string.Join(" ", timers.Select(m => m + "m"))}] (words: {Shorten(string.Join(" ", buffWords.Select(o => o.Text)))})");
 
             foreach (double factor in new[] { 0.9, 1.1 })
             {

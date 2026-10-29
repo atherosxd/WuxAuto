@@ -35,9 +35,20 @@ public readonly record struct ShortcutCheckStep(ShortcutCheckOutcome Outcome, in
 /// Missing and no (+) left → <see cref="ShortcutCheckOutcome.Stop"/> with "Add the '&lt;name&gt;' shortcut to the ring".
 /// A shortcut without a template yet (no crop) cannot be seen, so it is not checked (Info line) - adding it would put
 /// a second copy on the ring on every Start. A dry run only reports what is missing. Loop thread only.
+/// Fresh looks only (Xiaomi, 2026-10-30: after a re-login the check took the login and loading screens' "not there"
+/// for the town's ring and stopped with every shortcut on it): <see cref="Begin"/> forgets every position, and a
+/// shortcut only counts as missing when two searches in a row on frames whose zone title reads did not find it.
 /// </summary>
-public sealed class ShortcutCheck(ScreenAnalyzer analyzer, IGameControls controls, IShortcutSource? shortcuts, Action<LogLevel, string> log)
+/// <param name="titleReads">Whether the minimap's zone title reads on a frame (the game screen, not a login or loading screen); null = not checked.</param>
+public sealed class ShortcutCheck(ScreenAnalyzer analyzer, IGameControls controls, IShortcutSource? shortcuts, Action<LogLevel, string> log,
+    Func<Mat, Task<bool>>? titleReads = null)
 {
+    /// <summary>How many looks wait for the zone title before a shortcut may count as missing without it.</summary>
+    public const int MaxTitleLooks = 20;
+
+    /// <summary>The wait between two looks (the next frame's search runs in between).</summary>
+    public const int LookAgainMs = 500;
+
     public const string PlusTemplate = "phone_ringplus";
     public const string LockTemplate = "phone_ringlock";
     public const string UnlockTemplate = "phone_ringunlock";
@@ -45,8 +56,15 @@ public sealed class ShortcutCheck(ScreenAnalyzer analyzer, IGameControls control
     /// <summary>A (+) on an unlocked ring scores 0.854-1.000 (Task 4 probe).</summary>
     public const double PlusThreshold = 0.85;
 
-    /// <summary>The padlock's own state scores 1.00, the other state's template 0.84 on it (Task 4 probe).</summary>
-    public const double PadlockThreshold = 0.90;
+    /// <summary>
+    /// The padlock templates are the gold lock only (2026-10-30; the see-through slot round it made a padlock on a light
+    /// floor score 0.62-0.64). Own state 0.82-1.00 (MuMu ring / town / LOD / buff frames, Xiaomi), the other state's
+    /// template 0.72-0.88 on it, at least 0.067 lower.
+    /// </summary>
+    public const double PadlockThreshold = 0.80;
+
+    /// <summary>How much higher the padlock's own state must score than the other state.</summary>
+    public const double PadlockMargin = 0.05;
 
     /// <summary>The picker panel "MENU" (717-1200 x 10-1065 at 1920x1080, centred) and its close X (1164,38).</summary>
     public static PixelRect PickerArea(int width, int height) => PhoneLayout.ToPixels(717, 10, 483, 1055, PhoneAnchor.Centre, width, height);
@@ -108,6 +126,10 @@ public sealed class ShortcutCheck(ScreenAnalyzer analyzer, IGameControls control
     {
         _needed = [];
         _toAdd = null;
+        _firstLook = null;
+        _looks = 0;
+        // No position or "not there" from before this Start (a login screen, a loading screen) may decide anything.
+        shortcuts?.Invalidate();
         foreach (var need in Required(lod))
         {
             if (ShortcutMap.ActionTemplates.TryGetValue(need.Action, out string? template) && analyzer.Library.Get(template) != null)
@@ -134,7 +156,7 @@ public sealed class ShortcutCheck(ScreenAnalyzer analyzer, IGameControls control
         _frameSize = (frame.Width, frame.Height);
         return _state switch
         {
-            State.Scan or State.Unlocking => Scan(frame),
+            State.Scan or State.Unlocking => await ScanAsync(frame),
             State.Picking => await PickAsync(frame),
             State.Verify => Verify(),
             State.Locking => Lock(frame),
@@ -147,16 +169,64 @@ public sealed class ShortcutCheck(ScreenAnalyzer analyzer, IGameControls control
     /// an unlocked ring's icons could look different and must not make a shortcut that is there look missing, which
     /// would add a second copy), less those added since.
     /// </summary>
-    private List<(GameAction Action, string Entry)> Missing()
-    {
-        _toAdd ??= _needed.Where(n => !controls.Has(n.Action)).ToList();
-        return _toAdd.Where(n => !_added.Contains(n.Entry)).ToList();
-    }
+    private List<(GameAction Action, string Entry)> Missing() =>
+        (_toAdd ?? []).Where(n => !_added.Contains(n.Entry)).ToList();
 
     private List<(GameAction Action, string Entry)>? _toAdd;
+    private HashSet<string>? _firstLook;
+    private int _looks;
 
-    private ShortcutCheckStep Scan(Mat frame)
+    /// <summary>
+    /// Decides once what is missing: every needed shortcut found = nothing; otherwise the ones not found on two looks in
+    /// a row, each on a frame whose zone title reads (after <see cref="MaxTitleLooks"/> looks without it, on two looks
+    /// anyway). Between two looks the shortcuts not found are searched again. Null = decided; a step = look again.
+    /// </summary>
+    private async Task<ShortcutCheckStep?> DecideAsync(Mat frame)
     {
+        var notFound = _needed.Where(n => !controls.Has(n.Action)).ToList();
+        if (notFound.Count == 0)
+        {
+            _toAdd = [];
+            return null;
+        }
+
+        _looks++;
+        bool title = titleReads == null || await titleReads(frame);
+        if (!title && _looks < MaxTitleLooks)
+        {
+            SearchAgain(notFound);
+            return ShortcutCheckStep.Wait(LookAgainMs, "waiting for the game screen (zone title) before deciding a shortcut is missing");
+        }
+
+        if (_firstLook == null)
+        {
+            _firstLook = notFound.Select(n => n.Entry).ToHashSet(StringComparer.Ordinal);
+            SearchAgain(notFound);
+            return ShortcutCheckStep.Wait(LookAgainMs, "looking for the shortcuts again");
+        }
+
+        // Found on either look = there: a second copy on the ring is worse than a missed check.
+        _toAdd = notFound.Where(n => _firstLook.Contains(n.Entry)).ToList();
+        if (_toAdd.Count > 0)
+        {
+            log(LogLevel.Info, $"Shortcut check: {string.Join(", ", _toAdd.Select(n => $"'{n.Entry}'"))} not found on two searches in a row"
+                               + (title ? "." : $" (the zone title did not read for {_looks} looks - deciding anyway)."));
+        }
+
+        return null;
+    }
+
+    private void SearchAgain(List<(GameAction Action, string Entry)> notFound)
+    {
+        foreach (var n in notFound)
+            shortcuts?.Invalidate(n.Action);
+    }
+
+    private async Task<ShortcutCheckStep> ScanAsync(Mat frame)
+    {
+        if (_toAdd == null && await DecideAsync(frame) is { } look)
+            return look;
+
         var missing = Missing();
         if (missing.Count == 0)
         {
@@ -329,8 +399,10 @@ public sealed class ShortcutCheck(ScreenAnalyzer analyzer, IGameControls control
     private (int W, int H) _frameSize;
 
     /// <summary>
-    /// The padlock's state: whichever padlock template scores higher, at least <see cref="PadlockThreshold"/> and clearly
-    /// above the other (1.00 vs 0.84 on the probe frames). Full scale search each time: no scale learned from a miss.
+    /// The padlock's state: whichever padlock template scores higher, at least <see cref="PadlockThreshold"/> and
+    /// <see cref="PadlockMargin"/> above the other. Both states passing in two different places = two padlocks that
+    /// disagree (the Xiaomi's ring, 2026-10-30: one reads open top left, one locked bottom right, and no (+) shows) =
+    /// unknown: nothing is tapped. Full scale search each time: no scale learned from a miss.
     /// </summary>
     private Padlock ReadPadlock(Mat frame, out PixelRect box)
     {
@@ -339,19 +411,25 @@ public sealed class ShortcutCheck(ScreenAnalyzer analyzer, IGameControls control
         var (open, _) = analyzer.FindIconAnyScale(frame, UnlockTemplate, zone, 0.50);
         double lockScore = locked?.Score ?? 0, openScore = open?.Score ?? 0;
         box = default;
-        if (lockScore >= PadlockThreshold && lockScore > openScore + 0.03)
+        if (lockScore >= PadlockThreshold && openScore >= PadlockThreshold && !SameSpot(locked!.Bounds, open!.Bounds))
+            return Padlock.Unknown;
+
+        if (lockScore >= PadlockThreshold && lockScore > openScore + PadlockMargin)
         {
             box = locked!.Bounds;
             return Padlock.Locked;
         }
 
-        if (openScore >= PadlockThreshold && openScore > lockScore + 0.03)
+        if (openScore >= PadlockThreshold && openScore > lockScore + PadlockMargin)
         {
             box = open!.Bounds;
             return Padlock.Unlocked;
         }
 
         return Padlock.Unknown;
+
+        static bool SameSpot(PixelRect a, PixelRect b) =>
+            Math.Abs(a.CenterX - b.CenterX) <= Math.Max(a.Width, b.Width) && Math.Abs(a.CenterY - b.CenterY) <= Math.Max(a.Height, b.Height);
     }
 
     /// <summary>

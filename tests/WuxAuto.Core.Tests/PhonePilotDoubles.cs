@@ -72,8 +72,20 @@ sealed class ScriptedShortcuts : IShortcutSource
 
     public PixelRect? Find(GameAction action) => Icons.TryGetValue(action, out var r) ? r : null;
     public PixelRect? Skill(string skill) => Skills.TryGetValue(skill, out var r) ? r : null;
-    public void Invalidate() => Invalidated.Add("all");
-    public void Invalidate(GameAction action) => Invalidated.Add($"action:{action}");
+    /// <summary>Runs on every invalidation: null = all, else the action (a test can make a shortcut "found" on the search again).</summary>
+    public Action<GameAction?>? OnInvalidate { get; set; }
+
+    public void Invalidate()
+    {
+        Invalidated.Add("all");
+        OnInvalidate?.Invoke(null);
+    }
+
+    public void Invalidate(GameAction action)
+    {
+        Invalidated.Add($"action:{action}");
+        OnInvalidate?.Invoke(action);
+    }
     public void InvalidateSkill(string skill) => Invalidated.Add($"skill:{skill}");
     public void InvalidateJoystick() => Invalidated.Add("joystick");
     public void InvalidateMenu() => Invalidated.Add("menu");
@@ -99,10 +111,11 @@ sealed class PhonePilot : IDisposable
     public List<PilotPhase> Phases { get; } = [];
 
     /// <param name="root">An empty folder for the settings / debug files (AppPaths).</param>
-    public PhonePilot(string root, AppSettings? settings = null)
+    /// <param name="assets">The templates folder (default <see cref="PhoneAssets"/>).</param>
+    public PhonePilot(string root, AppSettings? settings = null, string? assets = null)
     {
         AppPaths.IsolateThisFlow(); // this pilot's folders are its own (test classes run in parallel)
-        AppPaths.Configure(root, PhoneAssets);
+        AppPaths.Configure(root, assets ?? PhoneAssets);
         Settings = settings ?? PhoneLodSettings();
         Analyzer = new ScreenAnalyzer(Settings, Ocr);
         Controls = new TouchControls(Settings, Touch, Shortcuts, sleep: _ => { });

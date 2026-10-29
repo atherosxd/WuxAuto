@@ -1,4 +1,7 @@
+using System.Drawing;
 using Emgu.CV;
+using Emgu.CV.CvEnum;
+using Emgu.CV.Structure;
 using WuxAuto.Core;
 using WuxAuto.Vision;
 
@@ -75,10 +78,23 @@ public sealed class ShortcutMap(ScreenAnalyzer analyzer, double threshold = Shor
     private static readonly (int X, int Y, int W, int H, PhoneAnchor Anchor) Ring = (0, 540, 560, 540, PhoneAnchor.Left);
     private static readonly (int X, int Y, int W, int H, PhoneAnchor Anchor) RightCluster = (1280, 480, 640, 600, PhoneAnchor.Right);
     private static readonly (int X, int Y, int W, int H, PhoneAnchor Anchor) Hotbar = (630, 975, 660, 105, PhoneAnchor.Centre);
-    private static readonly (int X, int Y, int W, int H, PhoneAnchor Anchor) TopStrip = (600, 0, 900, 110, PhoneAnchor.Centre);
+    // The ☰ keeps its distance from the right edge, not from the middle: 734 px from the right at 1920x1080 (MuMu) and
+    // 815 px = 734 x 1200/1080 at 2608x1200 (Xiaomi 17 Pro Max, 2026-10-30) - centred it would be at x 1555 there, it is at 1794.
+    private static readonly (int X, int Y, int W, int H, PhoneAnchor Anchor) TopStrip = (600, 0, 900, 110, PhoneAnchor.Right);
 
     private static readonly string[] AllTemplates =
         ActionTemplates.Values.Concat(SkillTemplates.Values).Append(JoystickTemplate).Append(MenuTemplate).ToArray();
+
+    /// <summary>
+    /// HUNT and AUTO BUFF are the same crossed swords, HUNT drawn yellow, AUTO BUFF white (user, 2026-10-30); in grey the
+    /// HUNT crop scores 0.90-0.94 on a white AUTO BUFF. Of the bright pixels in the middle of a hit, the yellow ones: HUNT
+    /// 0.34 (MuMu) / 0.89 (Xiaomi), AUTO BUFF 0.00 on both (ring copy and the big button). A HUNT hit needs at least
+    /// this much yellow, an AUTO BUFF hit less.
+    /// </summary>
+    public const double YellowSwordsMin = 0.15;
+
+    public const string AutohuntTemplate = "phone_autohunt";
+    public const string AutoBuffTemplate = "phone_autobuff";
 
     private readonly Func<long> _clock = clock ?? (() => Environment.TickCount64);
     private readonly Dictionary<string, TemplateMatch> _found = new(StringComparer.OrdinalIgnoreCase);
@@ -252,6 +268,47 @@ public sealed class ShortcutMap(ScreenAnalyzer analyzer, double threshold = Shor
             Forget(template);
     }
 
+    private static bool NeedsColour(string template) =>
+        template.Equals(AutohuntTemplate, StringComparison.OrdinalIgnoreCase) || template.Equals(AutoBuffTemplate, StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>HUNT must be yellow and AUTO BUFF must not (<see cref="YellowSwordsMin"/>); every other template passes.</summary>
+    private static bool ColourFits(Mat frame, string template, PixelRect box)
+    {
+        if (template.Equals(AutohuntTemplate, StringComparison.OrdinalIgnoreCase))
+            return YellowFraction(frame, box) >= YellowSwordsMin;
+        if (template.Equals(AutoBuffTemplate, StringComparison.OrdinalIgnoreCase))
+            return YellowFraction(frame, box) < YellowSwordsMin;
+        return true;
+    }
+
+    /// <summary>
+    /// Of the bright pixels (V &gt;= 130) in the middle 60 % of <paramref name="box"/>, the share that is yellow / gold
+    /// (H 8-40, S &gt;= 90 on OpenCV's 0-180 hue); 0 when nothing there is bright. The middle only: the slot round the
+    /// icon is see-through.
+    /// </summary>
+    public static double YellowFraction(Mat frame, PixelRect box)
+    {
+        int insetX = box.Width / 5, insetY = box.Height / 5;
+        var r = new PixelRect(box.X + insetX, box.Y + insetY, box.Width - 2 * insetX, box.Height - 2 * insetY).Clamp(frame.Width, frame.Height);
+        if (r.Width < 2 || r.Height < 2)
+            return 0;
+
+        using var crop = new Mat(frame, new Rectangle(r.X, r.Y, r.Width, r.Height));
+        using var bgr = new Mat();
+        if (crop.NumberOfChannels == 4)
+            CvInvoke.CvtColor(crop, bgr, ColorConversion.Bgra2Bgr);
+        else
+            crop.CopyTo(bgr);
+        using var hsv = new Mat();
+        CvInvoke.CvtColor(bgr, hsv, ColorConversion.Bgr2Hsv);
+        using var bright = new Mat();
+        CvHelpers.InRange(hsv, new MCvScalar(0, 0, 130), new MCvScalar(180, 255, 255), bright);
+        using var yellow = new Mat();
+        CvHelpers.InRange(hsv, new MCvScalar(8, 90, 130), new MCvScalar(40, 255, 255), yellow);
+        int brightCount = CvInvoke.CountNonZero(bright);
+        return brightCount == 0 ? 0 : CvInvoke.CountNonZero(yellow) / (double)brightCount;
+    }
+
     private static bool IsAttack(string template) => template.StartsWith("phone_attack", StringComparison.OrdinalIgnoreCase);
 
     private PixelRect? Box(string template) => _found.TryGetValue(template, out var m) ? m.Bounds : null;
@@ -273,7 +330,9 @@ public sealed class ShortcutMap(ScreenAnalyzer analyzer, double threshold = Shor
             string name = IsAttack(template) && i == 1 && analyzer.Library.Get(template + TemplateLibrary.WheelSuffix) != null
                 ? template + TemplateLibrary.WheelSuffix
                 : template;
-            var hits = analyzer.FindIcons(frame, name, roi, threshold, maxResults: 1);
+            var hits = analyzer.FindIcons(frame, name, roi, threshold, maxResults: NeedsColour(template) ? 4 : 1)
+                .Where(h => ColourFits(frame, template, h.Bounds))
+                .ToList();
             if (hits.Count > 0 && (best == null || hits[0].Score > best.Score))
                 best = hits[0];
         }

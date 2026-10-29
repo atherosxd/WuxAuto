@@ -57,7 +57,7 @@ public class AttackSkillTests : AppPathsScope
                  {
                      ("phone_teleportscroll", 44, 724), ("phone_pickup", 76, 664), ("phone_joystick", 187, 741),
                      ("phone_autobuff", 1804, 630), ("phone_sword", 1595, 755), ("phone_runskill", 1388, 718),
-                     ("phone_skill1", 1455, 607), ("phone_menu", 1158, 2),
+                     ("phone_skill1", 1455, 607), ("phone_menu", 1158, 2), ("phone_autohunt", 137, 977),
                  })
             PhoneFrames.Paste(frame, template, x, y);
         return frame;

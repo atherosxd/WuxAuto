@@ -226,6 +226,20 @@ The round **W** button (accessibility overlay, default spot top strip 0.40/0.03)
 panel, long-press = Panic; the notification's Stop and the Pilot page also stop. Debug builds take adb probes
 (`DebugReceiver`, `am broadcast -a io.github.atherosxd.wuxauto.<PING|FRONT|SHOT|OCR|TAP|...> -p io.github.atherosxd.wuxauto`).
 
+**Phone fixes 2026-10-30 (Xiaomi 17 Pro Max 2608x1200 + MuMu buff report):** the Xiaomi HUD scales with the height
+exactly (every hit x1.11 = 1200/1080) - the "finds nothing" frames were login screens; its real failure was
+`ShortcutCheck` deciding "missing" from the login / loading screens' cached absences after a re-login. Now: `Begin`
+invalidates the `ShortcutMap`, the positions reset (every Start / restart) does too, and a shortcut is missing only
+when two searches in a row on frames whose zone title reads miss it (`MaxTitleLooks` 20 without the title, then
+anyway). ☰ zone anchored to the right edge (it sits 734 px from it at 1080). `phone_autohunt` = the yellow crossed
+swords on the ring (HUNT; AUTO BUFF is the same swords in white - `ShortcutMap.YellowFraction` tells them apart, ≥ 0.15
+yellow = HUNT); padlock templates cut to the gold lock (no see-through slot). A tap while a finger is held (Hold fight)
+= lift, 150 ms, tap, 400 ms, press again (`TouchControls.LiftBeforeTapMs` / `TapBeforeRepressMs`). Phone buff / loot
+log every tap ("Auto buff tapped at x,y", "Loot: N taps over M s"), warn once on "Force 90% and over required" and on
+a missing AUTO BUFF / Pick up, and check a buff ~3 s later on the row under the HP bar (timers if they read, else the
+row's pixels; unchanged = one more tap, then "Auto buff did not take"). Open: the Xiaomi ring shows a second padlock
+(top left, reads open, no (+) shown) - what it does is the owner's word.
+
 ---
 
 ## 3. Repository map

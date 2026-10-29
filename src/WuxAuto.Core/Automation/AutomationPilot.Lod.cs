@@ -1,5 +1,6 @@
 using Emgu.CV;
 using WuxAuto.Core;
+using WuxAuto.Phone;
 using WuxAuto.Vision;
 using LogLevel = WuxAuto.Core.LogLevel;
 
@@ -125,9 +126,15 @@ public sealed partial class AutomationPilot
     private bool TryLodBuff(Mat? frame, long now, bool force, bool attacking = false)
     {
         var lod = _settings.Lod;
-        if (!_controls.Has(GameAction.Buff) || (!force && now - _lodBuffAt < lod.BuffEveryMs))
+        if (!force && now - _lodBuffAt < lod.BuffEveryMs)
             return false;
+        if (!_controls.Has(GameAction.Buff))
+        {
+            PhoneBuffMissing();
+            return false;
+        }
 
+        bool wasHeld = _heldSkill != null;
         ReleaseHeldSkill();
 
         // Mid-fight the buff is ignored until the attack stops (user): Shura (or Space) first.
@@ -138,12 +145,21 @@ public sealed partial class AutomationPilot
                 return false;
             Thread.Sleep(400);
         }
+        else if (PhoneBuffChecks && wasHeld)
+        {
+            // Phone: a tap right after the held skill's lift is lost (TouchControls.LiftBeforeTapMs).
+            Thread.Sleep(TouchControls.LiftBeforeTapMs);
+        }
 
         if (!_controls.Press(GameAction.Buff))
             return false;
 
         _lodBuffAt = now;
         _lodBuffs++;
+        PhoneBuffTapped(now);
+        // Phone: the fight presses the skill again on its next tick - not before the buff tap has been taken.
+        if (PhoneBuffChecks && (wasHeld || attacking))
+            Thread.Sleep(TouchControls.TapBeforeRepressMs);
         Log?.Invoke(LogLevel.Info, attacking
             ? $"Re-buffed ({stopped}, then '{lod.BuffKey}') mid-fight - buff {_lodBuffs}."
             : $"Buffed ('{lod.BuffKey}') - buff {_lodBuffs}; again in {lod.BuffEveryMs / 1000}s.");
@@ -406,6 +422,8 @@ public sealed partial class AutomationPilot
                 boss = new TextHit($"treasure icon {chest.Score:0.00}", chest.Score, chest.Bounds, string.Empty, chest.Bounds, 0);
         }
 
+        CheckBuffRefusal(lines.Select(line => line.Text), Environment.TickCount64);
+
         string hitText = _settings.Dungeon.AttackConfirmText;
         var log = _settings.Regions.AttackMessage.ToPixels(frame.Width, frame.Height);
         var hitLines = string.IsNullOrWhiteSpace(hitText) ? [] : lines
@@ -450,6 +468,14 @@ public sealed partial class AutomationPilot
         long now = Environment.TickCount64;
         if (now - _phaseStart >= lod.LootMs || !_controls.Has(GameAction.Loot))
         {
+            if (Profile == PlatformProfile.Phone)
+            {
+                if (_controls.Has(GameAction.Loot) || _phoneLootTaps > 0)
+                    Log?.Invoke(LogLevel.Info, $"Loot: {_phoneLootTaps} taps over {(now - _phaseStart) / 1000.0:0.#} s.");
+                else
+                    Log?.Invoke(LogLevel.Warning, "Loot: the Pick up button is not on screen - nothing picked up (check the shortcut ring).");
+            }
+
             // The kill's second screenshot: what is left on the ground after looting.
             TakePendingKillShot(frame);
             // The kill alert waits for the loot step (user: the reminder is to check what it left).
@@ -460,7 +486,10 @@ public sealed partial class AutomationPilot
         }
 
         if (now - _lodLootAt >= 150 && _controls.Press(GameAction.Loot))
+        {
             _lodLootAt = now;
+            _phoneLootTaps++;
+        }
         _detail = $"looting ('{lod.LootKey}') {(now - _phaseStart) / 1000.0:0.0}s";
         _waitUntil = now + 60;
     }
@@ -515,6 +544,7 @@ public sealed partial class AutomationPilot
         var lod = _settings.Lod;
         long now = Environment.TickCount64;
 
+        await PrepareBuffCheckAsync(frame, now, force: false);
         if (TryLodBuff(frame, now, force: false))
         {
             _waitUntil = now + 700;
@@ -651,6 +681,7 @@ public sealed partial class AutomationPilot
 
         // Re-buff on the timer, also mid-fight: stop attacking first (Shura / Space), the skill
         // resumes on the next tick.
+        await PrepareBuffCheckAsync(frame, now, force: false);
         if (TryLodBuff(frame, now, force: false, attacking: true))
         {
             _waitUntil = now + 700;
@@ -708,6 +739,7 @@ public sealed partial class AutomationPilot
             Log?.Invoke(LogLevel.Success, $"'{lod.DeathText}' - '{lod.BossName}' killed (kill {_lodKills}); looting with '{lod.LootKey}' for {lod.LootMs / 1000}s.");
             SaveLodKillShot(frame, $"lod_kill{_lodKills}");
             _lodLootAt = 0;
+            _phoneLootTaps = 0;
             Advance(PilotPhase.LodLoot, 0);
             return;
         }
@@ -787,6 +819,7 @@ public sealed partial class AutomationPilot
             Log?.Invoke(LogLevel.Info, $"'{lod.BossName}' / treasure icon gone for {lod.LootAfterMissingMs / 1000.0:0.#}s - looting with '{lod.LootKey}' for {lod.LootMs / 1000}s, then looking for it again.");
             SaveLodKillShot(frame, "lod_gone");
             _lodLootAt = 0;
+            _phoneLootTaps = 0;
             Advance(PilotPhase.LodLoot, 0);
             return;
         }

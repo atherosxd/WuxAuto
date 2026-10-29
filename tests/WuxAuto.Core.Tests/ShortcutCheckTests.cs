@@ -184,7 +184,8 @@ public class ShortcutCheckTests : AppPathsScope
     [Fact]
     public async Task AllPresent_GoesToCheckZone()
     {
-        using var phone = new PhonePilot(TempRoot());
+        // The templates without phone_autohunt (cropped 2026-10-30): a shortcut without a picture is told, not checked.
+        using var phone = new PhonePilot(TempRoot(), assets: AssetsWithout("phone_autohunt"));
         var ring = new FakeRing(phone) { Locked = true };
         ring.Fill(0, "Teleport Scroll");
         ring.Fill(1, "Pick up");
@@ -248,6 +249,110 @@ public class ShortcutCheckTests : AppPathsScope
         Assert.Equal(PilotPhase.CheckZone, run.Phase);
         Assert.DoesNotContain(PilotPhase.ShortcutCheck, phases);
         Assert.DoesNotContain(run.Lines, l => l.StartsWith("Shortcut check", StringComparison.Ordinal));
+    }
+
+    /// <summary>A copy of the phone templates without <paramref name="template"/> (a shortcut with no crop yet).</summary>
+    private string AssetsWithout(string template)
+    {
+        string dir = Path.Combine(TempRoot(), "assets");
+        Directory.CreateDirectory(dir);
+        foreach (string file in Directory.GetFiles(PhonePilot.PhoneAssets, "*.png"))
+        {
+            if (!Path.GetFileNameWithoutExtension(file).Equals(template, StringComparison.OrdinalIgnoreCase))
+                File.Copy(file, Path.Combine(dir, Path.GetFileName(file)));
+        }
+
+        return dir;
+    }
+
+    // ---------------------------------------------------------------- fresh looks (Xiaomi 2026-10-30)
+
+    [Fact]
+    public void Begin_ForgetsEveryPositionAndAbsence()
+    {
+        using var phone = new PhonePilot(TempRoot());
+        var check = new ShortcutCheck(phone.Analyzer, phone.Controls, phone.Shortcuts, (_, _) => { });
+
+        check.Begin(lod: true);
+
+        Assert.Equal(["all"], phone.Shortcuts.Invalidated);
+    }
+
+    [Fact]
+    public async Task EveryStartAndRestart_ForgetsTheShortcuts()
+    {
+        // The pilot's first tick of a run (Start, or a restart after a failure / re-login) clears positions and absences.
+        using var phone = new PhonePilot(TempRoot());
+        phone.Ocr.Scene = () => [FakeRing.Title];
+        using var frame = PhoneFrames.Grey();
+
+        await phone.RunAsync(() => frame, PilotPhase.LodRun, () => phone.Shortcuts.Invalidated.Count > 0, 3000);
+
+        Assert.Equal("all", phone.Shortcuts.Invalidated[0]);
+    }
+
+    [Fact]
+    public async Task NotFoundOnceThenFound_NothingTapped()
+    {
+        // The re-login case: the first look still holds the login screen's "not there"; the next search finds them.
+        using var phone = new PhonePilot(TempRoot());
+        var ring = new FakeRing(phone) { Locked = true };
+        ring.Fill(0, "Teleport Scroll");
+        ring.Fill(1, "Pick up");
+        var hidden = new Dictionary<GameAction, PixelRect>(phone.Shortcuts.Icons);
+        phone.Shortcuts.Icons.Remove(GameAction.TeleportScroll);
+        phone.Shortcuts.Icons.Remove(GameAction.Loot);
+        phone.Shortcuts.OnInvalidate = action =>
+        {
+            if (action is { } a && hidden.TryGetValue(a, out var box))
+                phone.Shortcuts.Icons[a] = box;          // searched again: there
+        };
+
+        await phone.RunAsync(ring.Render, PilotPhase.Focus, () => phone.Pilot.Phase == PilotPhase.CheckZone);
+
+        Assert.Equal(PilotPhase.CheckZone, phone.Pilot.Phase);
+        Assert.Empty(phone.Touch.Calls);
+        Assert.Contains("action:TeleportScroll", phone.Shortcuts.Invalidated);
+        Assert.DoesNotContain(phone.Lines, l => l.Contains("not found on two searches", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task NoZoneTitle_NothingIsDecidedMissing_UntilItReads()
+    {
+        // A loading / login frame: the title does not read - no padlock tap while it does not.
+        using var phone = new PhonePilot(TempRoot());
+        var ring = new FakeRing(phone) { Locked = true, TitleReads = false };
+        ring.Fill(0, "Teleport Scroll");                 // Pick up missing, slots free
+        int ticks = 0;
+
+        await phone.RunAsync(ring.Render, PilotPhase.Focus, () =>
+        {
+            if (++ticks == 8)
+            {
+                Assert.Empty(phone.Touch.Calls);         // still waiting for the title
+                ring.TitleReads = true;
+            }
+
+            return phone.Pilot.Phase == PilotPhase.CheckZone;
+        });
+
+        Assert.Equal(PilotPhase.CheckZone, phone.Pilot.Phase);
+        Assert.Equal(["Pick up"], ring.Picked);
+        Assert.Contains(phone.Lines, l => l.StartsWith("Shortcut check: 'Pick up' not found on two searches in a row.", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task ZoneTitleNeverReads_DecidesAfterTheLimit()
+    {
+        using var phone = new PhonePilot(TempRoot());
+        var ring = new FakeRing(phone) { Locked = true, TitleReads = false };
+        ring.Fill(0, "Teleport Scroll");
+
+        // 20 looks on freshly drawn 1920x1080 frames, then the whole add: more than the default 15 s on a busy test run.
+        await phone.RunAsync(ring.Render, PilotPhase.Focus, () => phone.Pilot.Phase == PilotPhase.CheckZone, timeoutMs: 40000);
+
+        Assert.True(ring.Picked.SequenceEqual(["Pick up"]), phone.Log);
+        Assert.Contains(phone.Lines, l => l.Contains("(the zone title did not read for ", StringComparison.Ordinal));
     }
 
     private static void AssertNear(Point expected, Point actual) =>
@@ -325,11 +430,22 @@ sealed class FakeRing
         _phone = phone;
         // AUTO BUFF: a fixed button of the right-hand cluster (1836,662), always there.
         phone.Shortcuts.Icons[GameAction.Buff] = new PixelRect(1804, 630, 64, 64);
+        // HUNT (phone_autohunt, 2026-10-30): on the ring of every test here unless one takes it away.
+        phone.Shortcuts.Icons[GameAction.ToggleAutohunt] = HuntBox;
         phone.Touch.OnTap = OnTap;
         phone.Ocr.Scene = Scene;
     }
 
     public bool Locked { get; set; }
+
+    /// <summary>The minimap's zone title reads (the game screen, not a login or loading screen).</summary>
+    public bool TitleReads { get; set; } = true;
+
+    /// <summary>The town's zone title in the phone's minimap region (1560,55 340x70 at 1920x1080).</summary>
+    public static OcrWord Title => FakeOcrEngine.Line("[Piercing City]", 1600, 70, 200, 16);
+
+    /// <summary>HUNT, on the ring away from the four slots used here: present unless a test takes it away.</summary>
+    public static readonly PixelRect HuntBox = new(36, 900, 44, 44);
 
     /// <summary>Draw a (+) on an empty slot even while locked: the 0.932 look-alike the probe saw on a locked ring.</summary>
     public bool PlusLookalikeWhileLocked { get; init; }
@@ -375,7 +491,7 @@ sealed class FakeRing
     private Mat? _last;
 
     private IReadOnlyList<OcrWord> Scene() => _pickerFor == null
-        ? []
+        ? TitleReads ? [Title] : []
         : Picker.Where(p => p.Entry != PickerWithout && !(PickerUnmarked && p.Entry == "CLEAR"))
             .SelectMany(p => FakeOcrEngine.Words(p.Entry, p.X - 45, p.Y + 43, 90, 14))
             .Concat(PickerUnmarked ? [] : [FakeOcrEngine.Line("MENU", 930, 20, 60, 18)])
