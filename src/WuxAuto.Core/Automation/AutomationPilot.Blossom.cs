@@ -1,0 +1,555 @@
+using Emgu.CV;
+using WuxAuto.Core;
+using WuxAuto.Vision;
+using LogLevel = WuxAuto.Core.LogLevel;
+
+namespace WuxAuto.Automation;
+
+/// <summary>
+/// Auto Blossom (user, 2026-10-29; docs/superpowers/specs/2026-10-29-auto-blossom-design.md): teleport to Blossom Garden
+/// (page 1), zoom out, tap D until the camera looks at the middle between the two pillars, then walk the waypoints - 1 to 5
+/// once, then 6 to 17 over and over - pressing Tab. A targeted "[S]Jaso Practitioner" (or the target bar's chest) is
+/// attacked until it is gone, then looted; the walk goes on to the waypoint it was heading for. The map's AFK checker kicks
+/// an idle character to town (user), so a reached waypoint is left after at most WaypointWaitMs; the zone guard teleports
+/// back in from town.
+/// </summary>
+public sealed partial class AutomationPilot
+{
+    /// <summary>The short fine-tune tap once both pillars are in view but off centre.</summary>
+    private const int BlossomFineTapMs = 40;
+    private const int BlossomMaxFineTaps = 12;
+    private const int BlossomTurnSettleMs = 350;
+    private const int BlossomMaxStalls = 8;
+    private const int BlossomMaxUnread = 40;
+
+    private IReadOnlyList<(int X, int Y)> _blossomRoute = [];
+    private int _blossomWaypoint = -1;
+    private long _blossomTabAt;
+    private long _blossomPauseSince;
+    private int _blossomStalls;
+    private int _blossomUnread;
+    private bool _blossomHeadingKnown;
+    private bool _blossomHeadingUnknown;   // a fight began before any turn (Start inside the map): turn after it
+
+    private int _blossomTurnTaps;
+    private int _blossomFineTaps;
+    private TurnDirection _blossomFineDir = TurnDirection.Right;
+    private double? _blossomLastOffset;
+    private bool _blossomTurnTold;
+
+    private string _blossomTarget = string.Empty;
+    private long _blossomTargetSeenAt;
+    private long _blossomFightStart;
+    private long _blossomSkillAt;
+    private long _blossomCoordsAt;
+    private (int X, int Y)? _blossomAttackCoords;
+    private long _blossomLootStart;
+    private long _blossomLootAt;
+    private int _blossomKills;
+
+    private bool IsBlossom => _settings.Sequence.Mode == RunMode.AutoBlossom;
+
+    /// <summary>The Blossom phases (the zone guard covers them).</summary>
+    private static bool IsBlossomPhase(PilotPhase phase)
+        => phase is PilotPhase.BlossomTurn or PilotPhase.BlossomWalk or PilotPhase.BlossomAttack or PilotPhase.BlossomLoot
+            or PilotPhase.BlossomRespawn;
+
+    /// <summary>Per run (Start, each restart): where the route stands and what the walk has learnt.</summary>
+    private void ResetBlossomRunState()
+    {
+        _blossomRoute = BlossomRoute.Parse(_settings.Blossom.Waypoints);
+        _blossomWaypoint = -1;
+        _blossomTabAt = 0;
+        _blossomPauseSince = 0;
+        _blossomStalls = 0;
+        _blossomUnread = 0;
+        _blossomHeadingKnown = false;
+        _blossomHeadingUnknown = false;
+    }
+
+    /// <summary>In Blossom Garden after the teleport, a restart or a death: (the buffs, Task 4,) then the turn to the pillars.</summary>
+    private void BeginBlossomArrival()
+    {
+        BeginBlossomTurn();
+    }
+
+    /// <summary>Tap D until both pillars are in view with their midpoint at the centre (user).</summary>
+    private void BeginBlossomTurn()
+    {
+        _blossomTurnTaps = 0;
+        _blossomFineTaps = 0;
+        _blossomFineDir = TurnDirection.Right;
+        _blossomLastOffset = null;
+        _blossomTurnTold = false;
+        Log?.Invoke(LogLevel.Info, $"Turning ('{_settings.Input.RotateKey}' {_settings.Blossom.TurnTapMs} ms taps) until the two pillars are centred.");
+        Advance(PilotPhase.BlossomTurn, 400);
+    }
+
+    /// <summary>After the turn: the walk starts at the nearest waypoint, with the heading learnt from its first step.</summary>
+    private void StartBlossomWalk()
+    {
+        _blossomHeadingKnown = false;
+        _blossomHeadingUnknown = false;
+        _blossomWaypoint = -1;
+        ResumeBlossomWalk();
+    }
+
+    /// <summary>Back to the walk towards the current waypoint (after a fight, a loot, a buff).</summary>
+    private void ResumeBlossomWalk()
+    {
+        _lastCoords = null;
+        _simpleClick = null;
+        _blossomStalls = 0;
+        _blossomPauseSince = 0;
+        if (_blossomHeadingUnknown)
+        {
+            BeginBlossomTurn();
+            return;
+        }
+
+        Advance(PilotPhase.BlossomWalk, 0);
+    }
+
+    private void TickBlossomTurn(Mat frame)
+    {
+        var b = _settings.Blossom;
+        long now = Environment.TickCount64;
+        var pair = _analyzer.FindPillarPair(frame, b.PillarTemplate, b.PillarMatchScore);
+        if (pair != null)
+        {
+            _overlays.Add(new OverlayItem(pair.Left.Bounds, $"pillar {pair.Left.Score:0.00}", OverlayColor.Green));
+            _overlays.Add(new OverlayItem(pair.Right.Bounds, $"pillar {pair.Right.Score:0.00}", OverlayColor.Green));
+            if (Math.Abs(pair.OffsetFraction) <= b.PillarCenterTolerance || _blossomFineTaps >= BlossomMaxFineTaps)
+            {
+                Log?.Invoke(LogLevel.Success, Math.Abs(pair.OffsetFraction) <= b.PillarCenterTolerance
+                    ? $"Lined up on the pillars (offset {pair.OffsetFraction:+0.000;-0.000}, after {_blossomTurnTaps} tap(s) + {_blossomFineTaps} fine)."
+                    : $"Pillars in view, still {pair.OffsetFraction:+0.000;-0.000} off centre after {_blossomFineTaps} fine taps - walking from here.");
+                StartBlossomWalk();
+                return;
+            }
+
+            // Off centre: short taps; a tap that took the midpoint further out turns the other way next (which way D
+            // moves the view is not assumed).
+            if (_blossomLastOffset is { } last && Math.Abs(pair.OffsetFraction) > Math.Abs(last))
+                _blossomFineDir = _blossomFineDir == TurnDirection.Right ? TurnDirection.Left : TurnDirection.Right;
+            if (!_controls.Turn(_blossomFineDir, BlossomFineTapMs))
+            {
+                _detail = "turn blocked - waiting for the game to be in front";
+                _waitUntil = now + 300;
+                return;
+            }
+
+            _blossomLastOffset = pair.OffsetFraction;
+            _blossomFineTaps++;
+            _detail = $"pillars {pair.OffsetFraction:+0.000;-0.000} off centre - fine tap {_blossomFineTaps}";
+            _waitUntil = Environment.TickCount64 + BlossomTurnSettleMs;
+            return;
+        }
+
+        _blossomLastOffset = null;
+        if (_blossomTurnTaps >= b.TurnMaxTaps)
+        {
+            Log?.Invoke(LogLevel.Warning, $"Turned {_blossomTurnTaps} taps and no pillars lined up - walking anyway; the heading is learnt from the walk.");
+            DebugArtifacts.SaveFrame(frame, _overlays, "blossom_no_pillars");
+            StartBlossomWalk();
+            return;
+        }
+
+        if (_blossomTurnTaps == b.TurnTaps && !_blossomTurnTold)
+        {
+            _blossomTurnTold = true;
+            Log?.Invoke(LogLevel.Info, $"Pillars not lined up after {b.TurnTaps} taps - turning on (up to {b.TurnMaxTaps}).");
+        }
+
+        if (!_controls.Turn(TurnDirection.Right, b.TurnTapMs))
+        {
+            _detail = "turn blocked - waiting for the game to be in front";
+            _waitUntil = now + 300;
+            return;
+        }
+
+        _blossomTurnTaps++;
+        _detail = $"turning to the pillars (tap {_blossomTurnTaps})";
+        _waitUntil = Environment.TickCount64 + BlossomTurnSettleMs;
+    }
+
+    private bool TapBlossomTab(long now)
+    {
+        if (now - _blossomTabAt < _settings.Blossom.TabEveryMs || !_controls.Has(GameAction.TargetNearest))
+            return false;
+        if (!_controls.Press(GameAction.TargetNearest))
+            return false;
+        _blossomTabAt = now;
+        return true;
+    }
+
+    /// <summary>
+    /// What the target bar shows, when it is ours: a short line in the top-centre band (y &lt; 13 % h, |x - 50 % w| &lt; 22 %
+    /// w, as LOD measured it) reading the Jaso's name - the "[S]" may read "[5]" or drop, so the name after it counts - or
+    /// the target bar's chest (user: the Jaso shows it). Null = no target, or another one (a monster, a player).
+    /// </summary>
+    private async Task<string?> FindBlossomTargetAsync(Mat frame)
+    {
+        var b = _settings.Blossom;
+        string name = b.TargetName;
+        string core = TextMatcher.Normalize(name.StartsWith('[') && name.IndexOf(']') is int close and > 0 ? name[(close + 1)..] : name);
+        var roi = _settings.Regions.BossName.ToPixels(frame.Width, frame.Height);
+        var (_, _, words) = await _analyzer.FindTextAsync(frame, roi, name);
+        foreach (var line in words.GroupBy(w => w.LineBounds).Select(g => (Bounds: g.Key, Text: g.First().LineText)))
+        {
+            if (line.Bounds.CenterY > frame.Height * 0.13 || Math.Abs(line.Bounds.CenterX - frame.Width / 2.0) > frame.Width * 0.22)
+                continue;
+            string text = TextMatcher.Normalize(line.Text);
+            if (text.Length > core.Length + 10)
+                continue;
+            if ((core.Length > 0 && text.Contains(core, StringComparison.Ordinal)) || TextMatcher.Similarity(line.Text, name) >= 0.85)
+            {
+                _overlays.Add(new OverlayItem(line.Bounds, "target", OverlayColor.Green));
+                return line.Text;
+            }
+        }
+
+        var bar = new NormRect(0.25, 0, 0.50, 0.16).ToPixels(frame.Width, frame.Height);
+        var chest = _analyzer.FindIcon(frame, "monstericon", bar, 0.80);
+        if (chest != null)
+        {
+            _overlays.Add(new OverlayItem(chest.Bounds, $"chest {chest.Score:0.00}", OverlayColor.Green));
+            return $"chest {chest.Score:0.00}";
+        }
+
+        return null;
+    }
+
+    private void BeginBlossomFight(string target)
+    {
+        long now = Environment.TickCount64;
+        // Met while standing at a reached waypoint: that one is done, the walk goes on to the next after the fight.
+        if (_blossomPauseSince > 0 && _blossomWaypoint >= 0)
+            _blossomWaypoint = BlossomRoute.Next(_blossomWaypoint, _blossomRoute.Count, _settings.Blossom.LoopFrom);
+        _blossomPauseSince = 0;
+        _blossomTarget = target;
+        _blossomTargetSeenAt = now;
+        _blossomFightStart = now;
+        _blossomSkillAt = 0;
+        _blossomCoordsAt = 0;
+        _blossomAttackCoords = null;
+        Log?.Invoke(LogLevel.Success, $"Jaso Practitioner targeted ('{target}') - attacking with {SkillText(_settings.Dungeon.SkillKey)} ({_blossomKills} kill(s) so far).");
+        Advance(PilotPhase.BlossomAttack, 0);
+    }
+
+    /// <summary>
+    /// Walk the route (SimpleSteer, as LOD), Tab every TabEveryMs, and fight whatever Jaso the target bar shows. The first
+    /// step after a turn clicks straight up: where the character went sets the heading (which world direction the pillars'
+    /// view looks is not known). A reached waypoint: stand and Tab for at most WaypointWaitMs (the AFK checker), then the next.
+    /// </summary>
+    private async Task TickBlossomWalkAsync(Mat frame)
+    {
+        var b = _settings.Blossom;
+        long now = Environment.TickCount64;
+        if (_blossomRoute.Count == 0)
+        {
+            Fail(frame, "Auto Blossom has no waypoints (Blossom.Waypoints in settings.json).");
+            return;
+        }
+
+        if (TapBlossomTab(now))
+        {
+            _waitUntil = now + 250;
+            return;
+        }
+
+        if (await FindBlossomTargetAsync(frame) is { } target)
+        {
+            BeginBlossomFight(target);
+            return;
+        }
+
+        var coords = await _analyzer.ReadCoordinatesAsync(frame);
+        if (coords == null)
+        {
+            if (++_blossomUnread > BlossomMaxUnread)
+            {
+                Fail(frame, $"The minimap coordinates did not read {BlossomMaxUnread} times in a row.");
+                return;
+            }
+
+            _detail = "reading the minimap coordinates";
+            _waitUntil = now + 300;
+            return;
+        }
+
+        _blossomUnread = 0;
+        if (_blossomWaypoint < 0)
+        {
+            _blossomWaypoint = BlossomRoute.Nearest(_blossomRoute, coords.X, coords.Y);
+            var start = _blossomRoute[_blossomWaypoint];
+            Log?.Invoke(LogLevel.Info, $"Walking the route from waypoint {_blossomWaypoint + 1} ({start.X},{start.Y}), at {coords}.");
+        }
+
+        var goal = _blossomRoute[_blossomWaypoint];
+        double needX = goal.X - coords.X, needY = goal.Y - coords.Y;
+        double distance = Math.Sqrt(needX * needX + needY * needY);
+        _overlays.Add(new OverlayItem(coords.Bounds, $"{coords} -> wp {_blossomWaypoint + 1} d={distance:0}", OverlayColor.Yellow));
+
+        if (_lastCoords is (int px, int py) && _simpleClick is (double cx, double cy))
+        {
+            var moved = ((double)(coords.X - px), (double)(coords.Y - py));
+            double step = Math.Sqrt(moved.Item1 * moved.Item1 + moved.Item2 * moved.Item2);
+            if (!_blossomHeadingKnown && step >= 60)
+            {
+                // Screen-up went this way in the world: the angle from the click to the movement is the heading.
+                double cross = cx * moved.Item2 - cy * moved.Item1;
+                double dot = cx * moved.Item1 + cy * moved.Item2;
+                _headingBase = Math.Atan2(cross, dot);
+                _headingError = _headingBase;
+                _headingSamples = 1;
+                _blossomHeadingKnown = true;
+                Log?.Invoke(LogLevel.Info, $"Heading learnt from the first step: the view is turned {_headingBase * 180 / Math.PI:0} deg from north.");
+            }
+            else if (_blossomHeadingKnown)
+            {
+                LearnHeadingError((cx, cy), moved);
+            }
+
+            _blossomStalls = step < 20 ? _blossomStalls + 1 : 0;
+        }
+
+        _lastCoords = (coords.X, coords.Y);
+
+        if (_blossomPauseSince > 0)
+        {
+            if (now - _blossomPauseSince < b.WaypointWaitMs)
+            {
+                _detail = $"at waypoint {_blossomWaypoint + 1}, tabbing ({(now - _blossomPauseSince) / 1000.0:0.0}s of {b.WaypointWaitMs / 1000.0:0.#}s)";
+                _waitUntil = now + 300;
+                return;
+            }
+
+            AdvanceBlossomWaypoint($"Waypoint {_blossomWaypoint + 1} done");
+            return;
+        }
+
+        if (distance <= b.WaypointTolerance)
+        {
+            _simpleClick = null;
+            Log?.Invoke(LogLevel.Info, $"Waypoint {_blossomWaypoint + 1} reached at {coords} - tabbing up to {b.WaypointWaitMs / 1000.0:0.#}s.");
+            if (b.WaypointWaitMs <= 0)
+            {
+                AdvanceBlossomWaypoint($"Waypoint {_blossomWaypoint + 1} done");
+                return;
+            }
+
+            _blossomPauseSince = now;
+            _waitUntil = now + 300;
+            return;
+        }
+
+        if (_blossomStalls >= BlossomMaxStalls)
+        {
+            Log?.Invoke(LogLevel.Warning, $"Not moving for {_blossomStalls} steps at {coords} on the way to waypoint {_blossomWaypoint + 1} - skipping it.");
+            DebugArtifacts.SaveFrame(frame, _overlays, "blossom_stuck");
+            AdvanceBlossomWaypoint($"Waypoint {_blossomWaypoint + 1} skipped");
+            return;
+        }
+
+        int centerX = frame.Width / 2;
+        int centerY = frame.Height / 2;
+        double reach = _settings.Dungeon.RunClickPx * Math.Clamp(distance / 300.0, 0.45, 1.0);
+        double ox, oy;
+        if (!_blossomHeadingKnown)
+        {
+            // The first step: straight up the screen (see the summary).
+            ox = 0;
+            oy = -_settings.Dungeon.RunClickPx;
+        }
+        else
+        {
+            ox = needX / distance * reach;
+            oy = needY / distance * reach;
+            double c = Math.Cos(_headingError), sn = Math.Sin(_headingError);
+            (ox, oy) = (ox * c + oy * sn, -ox * sn + oy * c);
+            if (_blossomStalls >= 2)
+            {
+                double shorter = _blossomStalls >= 4 ? 0.3 : 0.5;
+                ox *= shorter;
+                oy *= shorter;
+            }
+        }
+
+        double scale = 1;
+        double roomLeft = centerX - frame.Width * 0.25, roomRight = frame.Width * RunClickRight - centerX;
+        double roomUp = centerY - frame.Height * RunClickTop, roomDown = frame.Height * 0.78 - centerY;
+        if (ox < 0) scale = Math.Min(scale, roomLeft / -ox);
+        if (ox > 0) scale = Math.Min(scale, roomRight / ox);
+        if (oy < 0) scale = Math.Min(scale, roomUp / -oy);
+        if (oy > 0) scale = Math.Min(scale, roomDown / oy);
+
+        int clickX = (int)Math.Round(centerX + ox * scale);
+        int clickY = (int)Math.Round(centerY + oy * scale);
+        if (!_controls.WalkTo(clickX, clickY, forceWalk: false))
+        {
+            _detail = "walk click blocked - waiting for the game to be in front";
+            _waitUntil = now + 300;
+            return;
+        }
+
+        _simpleClick = (ox, oy);
+        _lastClick = (clickX, clickY, now);
+        _detail = $"{coords} -> waypoint {_blossomWaypoint + 1} ({distance:0} left)";
+        _waitUntil = now + _settings.Dungeon.RunDashWaitMs;
+    }
+
+    private void AdvanceBlossomWaypoint(string what)
+    {
+        _blossomWaypoint = BlossomRoute.Next(_blossomWaypoint, _blossomRoute.Count, _settings.Blossom.LoopFrom);
+        var next = _blossomRoute[_blossomWaypoint];
+        Log?.Invoke(LogLevel.Info, $"{what} - on to waypoint {_blossomWaypoint + 1} ({next.X},{next.Y}).");
+        _blossomPauseSince = 0;
+        _blossomStalls = 0;
+        _simpleClick = null;
+        _lastCoords = null;
+        _waitUntil = Environment.TickCount64;
+    }
+
+    /// <summary>
+    /// The skill on the Jaso (as LOD: tapped every Lod.SkillEveryMs, or held with Lod.HoldSkill; Ctrl + skill with
+    /// Dungeon.CtrlSkill) until the target is gone TargetGoneMs = dead -> loot. A coordinate jump = died; a target that never
+    /// goes is given up after FightMaxMs (one out of reach would hold the character still).
+    /// </summary>
+    private async Task TickBlossomAttackAsync(Mat frame)
+    {
+        var b = _settings.Blossom;
+        var lod = _settings.Lod;
+        string skill = _settings.Dungeon.SkillKey;
+        long now = Environment.TickCount64;
+
+        if (!string.IsNullOrWhiteSpace(skill))
+        {
+            if (lod.HoldSkill)
+            {
+                if (_heldSkill != null && _settings.Dungeon.CtrlSkill && now - _blossomSkillAt >= lod.SkillEveryMs)
+                {
+                    ReleaseHeldSkill();
+                    Thread.Sleep(CtrlSkillGapMs);
+                    _controls.SkillCtrlTap(skill);
+                    Thread.Sleep(CtrlSkillGapMs);
+                }
+
+                if (_heldSkill == null && _controls.SkillDown(skill))
+                {
+                    _heldSkill = skill;
+                    _blossomSkillAt = now;
+                }
+            }
+            else if (now - _blossomSkillAt >= lod.SkillEveryMs && _controls.SkillTap(skill))
+            {
+                _blossomSkillAt = now;
+            }
+        }
+
+        if (await FindBlossomTargetAsync(frame) != null)
+            _blossomTargetSeenAt = now;
+
+        if (now - _blossomCoordsAt >= 1500)
+        {
+            _blossomCoordsAt = now;
+            var coords = await _analyzer.ReadCoordinatesAsync(frame);
+            if (coords != null)
+            {
+                if (_blossomAttackCoords is (int ax, int ay) && coords.DistanceTo(ax, ay) > lod.TeleportJump)
+                {
+                    ReleaseHeldSkill();
+                    Log?.Invoke(LogLevel.Warning, $"Moved to {coords} (from {ax},{ay}) during the fight - killed? Lining up again.");
+                    DebugArtifacts.SaveFrame(frame, _overlays, "blossom_died");
+                    _lastCoords = null;
+                    Advance(PilotPhase.BlossomRespawn, lod.RespawnSettleMs);
+                    return;
+                }
+
+                _blossomAttackCoords = (coords.X, coords.Y);
+            }
+        }
+
+        if (now - _blossomTargetSeenAt > b.TargetGoneMs)
+        {
+            ReleaseHeldSkill();
+            _blossomKills++;
+            Log?.Invoke(LogLevel.Success, $"Jaso Practitioner down (kill {_blossomKills}) - looting with '{lod.LootKey}' for {b.LootMs / 1000.0:0.#}s in {b.LootDelayMs / 1000.0:0.#}s.");
+            _blossomLootStart = 0;
+            _blossomLootAt = 0;
+            Advance(PilotPhase.BlossomLoot, b.LootDelayMs);
+            return;
+        }
+
+        if (now - _blossomFightStart > b.FightMaxMs)
+        {
+            ReleaseHeldSkill();
+            Log?.Invoke(LogLevel.Warning, $"'{_blossomTarget}' still targeted after {b.FightMaxMs / 1000}s - giving it up, walking on.");
+            DebugArtifacts.SaveFrame(frame, _overlays, "blossom_fight_long");
+            _controls.Press(GameAction.TargetNearest);
+            _blossomTabAt = now;
+            ResumeBlossomWalk();
+            return;
+        }
+
+        _detail = $"attacking '{_blossomTarget}' (seen {(now - _blossomTargetSeenAt) / 1000.0:0.0}s ago, fight {(now - _blossomFightStart) / 1000}s)";
+        _waitUntil = now + Math.Min(lod.SkillEveryMs, 300);
+    }
+
+    /// <summary>The loot key every LootEveryMs for LootMs (user: 0.2 s for 5 s), no Tab; then on with the walk.</summary>
+    private void TickBlossomLoot()
+    {
+        var b = _settings.Blossom;
+        long now = Environment.TickCount64;
+        if (_blossomLootStart == 0)
+            _blossomLootStart = now;
+
+        if (now - _blossomLootStart >= b.LootMs || !_controls.Has(GameAction.Loot))
+        {
+            Log?.Invoke(LogLevel.Info, $"Looted for {b.LootMs / 1000.0:0.#}s - on to waypoint {_blossomWaypoint + 1}.");
+            ResumeBlossomWalk();
+            return;
+        }
+
+        if (now - _blossomLootAt >= b.LootEveryMs && _controls.Press(GameAction.Loot))
+            _blossomLootAt = now;
+        _detail = $"looting ('{_settings.Lod.LootKey}') {(now - _blossomLootStart) / 1000.0:0.0}s";
+        _waitUntil = now + 50;
+    }
+
+    /// <summary>After a death: two equal coordinate readings (or 20 s), then line up again and walk from the nearest waypoint.</summary>
+    private async Task TickBlossomRespawnAsync(Mat frame)
+    {
+        long now = Environment.TickCount64;
+        var coords = await _analyzer.ReadCoordinatesAsync(frame);
+        bool still = coords != null && _lastCoords is (int lx, int ly) && coords.DistanceTo(lx, ly) < 20;
+        _lastCoords = coords == null ? null : (coords.X, coords.Y);
+        if (!still && now - _phaseStart < 20000)
+        {
+            _detail = "waiting for the character to settle";
+            _waitUntil = now + 700;
+            return;
+        }
+
+        BeginBlossomArrival();
+    }
+
+    /// <summary>
+    /// Start (or a restart) inside Blossom Garden: a Jaso already targeted -> fight it first (the heading is unknown, so the
+    /// turn follows); else the arrival (buffs, the turn).
+    /// </summary>
+    private async Task TickBlossomCheckZoneAsync(Mat frame)
+    {
+        _zoneConfirmedAt = Environment.TickCount64;
+        if (await FindBlossomTargetAsync(frame) is { } target)
+        {
+            _blossomHeadingUnknown = true;
+            Log?.Invoke(LogLevel.Warning, $"Already in {Destination} with '{target}' targeted - fighting it, then lining up on the pillars.");
+            BeginBlossomFight(target);
+            return;
+        }
+
+        Log?.Invoke(LogLevel.Info, $"Already in {Destination} - lining up on the pillars, then walking from the nearest waypoint.");
+        BeginBlossomArrival();
+    }
+}

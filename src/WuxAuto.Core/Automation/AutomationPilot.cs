@@ -38,6 +38,11 @@ public enum PilotPhase
     LodApproach,
     LodRespawn,
     LodLoot,
+    BlossomTurn,
+    BlossomWalk,
+    BlossomAttack,
+    BlossomLoot,
+    BlossomRespawn,
     WarRemember,
     WarWait,
     WarJoin,
@@ -336,6 +341,7 @@ public sealed partial class AutomationPilot
         _restartTimes.Clear();
         _homeTown = null;
         _lodKills = 0;
+        _blossomKills = 0;
         _lodBuffAt = 0;
         _lodBuffs = 0;
         _lodApproachSnapshots = 0;
@@ -455,6 +461,7 @@ public sealed partial class AutomationPilot
         _runToTargetPending = false;
         _westDone = false;
         _headingBase = 0;
+        ResetBlossomRunState();
         _jumpCandidate = null;
         _jumpAgreements = 0;
         _returning = false;
@@ -591,7 +598,7 @@ public sealed partial class AutomationPilot
         // "Labyrinth" within the last few seconds. Rotating, map clicks and Tab were sent in town
         // and in Bohai Outpost before. Stage 5 closing puts the character back in town -> next run.
         // Auto War: the same guard over the map pick in the cave (Destination = the cave).
-        if ((_settings.Dungeon.Enabled || IsWar) && !_returning && IsLabyrinthPhase(_phase))
+        if ((_settings.Dungeon.Enabled || IsWar || IsBlossom) && !_returning && IsLabyrinthPhase(_phase))
         {
             // Auto War's map pick reads the map window: only with the game in front - a second game client's map
             // must never confirm or pick a monster. The minimap is read again as soon as the game is back, and the
@@ -664,10 +671,12 @@ public sealed partial class AutomationPilot
 
                     // Auto LOD: the boss respawns, so the map is unlimited until its timer runs out and
                     // the game sends the character to town (user) - teleport in again.
-                    if (IsLod && inTown)
+                    // Auto Blossom: the map's AFK checker kicks an idle character to town (user) - teleport in again.
+                    if ((IsLod || IsBlossom) && inTown)
                     {
-                        Log?.Invoke(LogLevel.Warning,
-                            $"Back in {HomeTown} during {_phase} (the {Destination} timer ran out?) after {_lodKills} kill(s) - teleporting in again.");
+                        Log?.Invoke(LogLevel.Warning, IsBlossom
+                            ? $"Back in {HomeTown} during {_phase} (the AFK checker?) after {_blossomKills} kill(s) - teleporting in again."
+                            : $"Back in {HomeTown} during {_phase} (the {Destination} timer ran out?) after {_lodKills} kill(s) - teleporting in again.");
                         ResetRunState();
                         _runStart = Environment.TickCount64;
                         Advance(PilotPhase.Focus, 1500);
@@ -798,6 +807,21 @@ public sealed partial class AutomationPilot
                 case PilotPhase.LodLoot:
                     TickLodLoot(frame);
                     break;
+                case PilotPhase.BlossomTurn:
+                    TickBlossomTurn(frame);
+                    break;
+                case PilotPhase.BlossomWalk:
+                    await TickBlossomWalkAsync(frame);
+                    break;
+                case PilotPhase.BlossomAttack:
+                    await TickBlossomAttackAsync(frame);
+                    break;
+                case PilotPhase.BlossomLoot:
+                    TickBlossomLoot();
+                    break;
+                case PilotPhase.BlossomRespawn:
+                    await TickBlossomRespawnAsync(frame);
+                    break;
                 case PilotPhase.RunToTarget:
                     await TickRunToTargetAsync(frame);
                     break;
@@ -911,6 +935,12 @@ public sealed partial class AutomationPilot
         bool inLabyrinth = ZoneMatches(title, Destination);
         TownIn(title);
 
+        if (IsBlossom && inLabyrinth)
+        {
+            await TickBlossomCheckZoneAsync(frame);
+            return;
+        }
+
         // Auto LOD already on the map: the boss targeted -> attack, otherwise face south and walk.
         if (IsLod && inLabyrinth)
         {
@@ -942,7 +972,7 @@ public sealed partial class AutomationPilot
             return;
         }
 
-        if ((!dungeon.Enabled && !IsLod) || !inLabyrinth)
+        if ((!dungeon.Enabled && !IsLod && !IsBlossom) || !inLabyrinth)
         {
             // An unreadable title gets a few more frames (just after a load) before teleporting.
             if (title == null && ++_attempts < 6)
@@ -2435,12 +2465,14 @@ public sealed partial class AutomationPilot
                 _townSeenAfterTeleport = _phaseStart;
 
             // Once the town was seen after this teleport, one missed read must not zoom in town.
-            if (inTown || (_townSeenAfterTeleport == _phaseStart && !IsLod))
+            // Blossom Garden needs no key (user): like LOD, still in town is a closed destination, not out of keys.
+            bool keyless = IsLod || IsBlossom;
+            if (inTown || (_townSeenAfterTeleport == _phaseStart && !keyless))
             {
                 // The teleport is what tells whether a key is left (user; the item list misread it):
                 // Labyrinth - still in town after Sequence.LabyKeyWaitSeconds = out of Temple of
                 // Fiends Keys -> Auto LOD. Waiting covers a lagging server (user: 2 min is enough).
-                long townLimit = IsLod ? limit : Math.Max(limit, _settings.Sequence.LabyKeyWaitSeconds * 1000L);
+                long townLimit = keyless ? limit : Math.Max(limit, _settings.Sequence.LabyKeyWaitSeconds * 1000L);
                 if (waited <= townLimit)
                 {
                     _detail = $"still in {HomeTown} after the teleport - waiting ({waited / 1000}s of {townLimit / 1000}s)";
@@ -2448,7 +2480,7 @@ public sealed partial class AutomationPilot
                     return;
                 }
 
-                if (!IsLod)
+                if (!keyless)
                 {
                     DebugArtifacts.SaveFrame(frame, _overlays, "out_of_keys");
                     OutOfKeys(labyrinth: true, $"still in {HomeTown} {waited / 1000}s after the teleport - out of Temple of Fiends Keys");
@@ -2494,6 +2526,12 @@ public sealed partial class AutomationPilot
         if (IsLod)
         {
             BeginFaceSouth();
+            return;
+        }
+
+        if (IsBlossom)
+        {
+            BeginBlossomArrival();
             return;
         }
 
@@ -5081,7 +5119,8 @@ public sealed partial class AutomationPilot
         => phase is PilotPhase.WaitForGate or PilotPhase.ClickMap or PilotPhase.ReadStage or PilotPhase.AdvanceStage
             or PilotPhase.WaitBoss or PilotPhase.SelectBoss or PilotPhase.WatchBoss or PilotPhase.FaceNorth
             or PilotPhase.AimGate or PilotPhase.RunToTarget
-            or PilotPhase.LodRun or PilotPhase.LodAttack or PilotPhase.LodApproach or PilotPhase.LodRespawn or PilotPhase.LodLoot;
+            or PilotPhase.LodRun or PilotPhase.LodAttack or PilotPhase.LodApproach or PilotPhase.LodRespawn or PilotPhase.LodLoot
+            || IsBlossomPhase(phase);
 
     /// <summary>
     /// The zone name at the top of the minimap panel, e.g. "[The Labyrinth (Adep", "[Piercing City)",
