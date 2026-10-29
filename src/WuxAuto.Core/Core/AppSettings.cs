@@ -585,6 +585,14 @@ public sealed class SequenceSettings
     public string AutohuntSettingsKey { get; set; } = "S";
 
     /// <summary>
+    /// Auto Laby, in town before the first teleport of a Start (user, 2026-10-29: with "Regular War" ticked the autohunt
+    /// may teleport the character to the war while it attacks a boss): <see cref="AutohuntSettingsKey"/> opens the
+    /// autohunt settings, a ticked "Regular War" box is clicked until it reads empty (at most 2 clicks), the key closes
+    /// the window. Unreadable -> a warning and the run carries on. Check box "Regular War off before Laby".
+    /// </summary>
+    public bool RegularWarOffForLaby { get; set; } = true;
+
+    /// <summary>
     /// While running, watch for the "SERVERS" screen (disconnected) and log back in: Online ->
     /// Connect -> Login -> OK ("Login OK") -> START GAME, then restart the run once the town
     /// (<see cref="DungeonSettings.ReturnDestination"/>) shows on the minimap. Only clicks
