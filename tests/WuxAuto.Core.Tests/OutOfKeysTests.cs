@@ -55,4 +55,41 @@ public class OutOfKeysTests : AppPathsScope
         Assert.Contains(lines, l => l.EndsWith("out of Den of Rebirth entries - switching to AutoLaby.", StringComparison.Ordinal));
         Assert.DoesNotContain(lines, l => l.Contains(AutomationPilot.PhoneOutOfKeysText, StringComparison.Ordinal));
     }
+
+    /// <summary>The PC item list at the bottom right: three timed lines, a Temple key, no Den of Rebirth entry.</summary>
+    private static IReadOnlyList<OcrWord> ItemListWithoutDen(int width, int height) =>
+    [
+        FakeOcrEngine.Line("[Temple of Fiends Key] 12 (time(s))", (int)(width * 0.70), (int)(height * 0.60), 300, 16),
+        FakeOcrEngine.Line("[Gold Scroll] 3 (time(s))", (int)(width * 0.70), (int)(height * 0.64), 300, 16),
+        FakeOcrEngine.Line("[Rage Elixir] 30 (min(s))", (int)(width * 0.70), (int)(height * 0.68), 300, 16),
+    ];
+
+    [Fact]
+    public async Task ItemListCheck_Desktop_SwitchesMode_Phone_NeverRuns()
+    {
+        // Desktop: the (off-by-default) item-list check sees no Den of Rebirth line and switches to Auto Laby.
+        var desktop = new AppSettings();
+        desktop.Sequence.Mode = RunMode.AutoLod;
+        desktop.Sequence.CheckKeys = true;
+        var desktopOcr = new FakeOcrEngine { Scene = () => ItemListWithoutDen(1024, 768) };
+        using var desktopAnalyzer = new ScreenAnalyzer(desktop, desktopOcr);
+        var desktopPilot = new AutomationPilot(desktop, desktopAnalyzer, new KeyboardMouseControls(desktop, new FakeGameInput()));
+        using var desktopFrame = Blank.Bgra(768, 1024);
+        Assert.True(await desktopPilot.CheckKeysAsync(desktopFrame));
+        Assert.Equal(RunMode.AutoLaby, desktop.Sequence.Mode);
+
+        // Phone: the same list never switches the mode (Laby / War are not ported; keys live in Durations, M6).
+        var settings = PhonePilot.PhoneLodSettings();
+        settings.Sequence.CheckKeys = true;
+        using var phone = new PhonePilot(TempRoot(), settings);
+        phone.Ocr.Scene = () => ItemListWithoutDen(PhoneFrames.Width, PhoneFrames.Height);
+        using var frame = PhoneFrames.Grey();
+        bool modeChanged = false;
+        phone.Pilot.ModeChanged += () => modeChanged = true;
+
+        Assert.False(await phone.Pilot.CheckKeysAsync(frame));
+        Assert.Equal(RunMode.AutoLod, settings.Sequence.Mode);
+        Assert.False(modeChanged);
+        Assert.Empty(phone.Touch.Calls);
+    }
 }

@@ -253,9 +253,11 @@ public sealed partial class AutomationPilot
     /// accents, three scales, a key counts as there if any read sees it. Returns true when it
     /// handled the turn (switched or stopped). A hidden list (no lines) decides nothing.
     /// </summary>
-    private async Task<bool> CheckKeysAsync(Mat frame)
+    internal async Task<bool> CheckKeysAsync(Mat frame)
     {
-        if (!_settings.Sequence.CheckKeys)
+        // The phone reads key counts from ☰ → Durations (M6), not this PC item list, and must never switch
+        // to the unported Laby / War flows (OutOfKeys rule).
+        if (!_settings.Sequence.CheckKeys || Profile == PlatformProfile.Phone)
             return false;
 
         var roi = new NormRect(0.62, 0.50, 0.38, 0.50).ToPixels(frame.Width, frame.Height);
