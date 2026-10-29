@@ -700,7 +700,7 @@ public sealed partial class AutomationPilot
 
                     Log?.Invoke(LogLevel.Warning, inTown && IsFinalBoss
                         ? $"Back in {HomeTown} during {_phase} - stage 5 closed. Starting the next run."
-                        : $"In '{title}' instead of the Labyrinth during {_phase} (stage {_stageIndex + 1}) - starting the next run.");
+                        : IsBlossom ? $"In '{title}' instead of {Destination} during {_phase} - starting the next run." : $"In '{title}' instead of the Labyrinth during {_phase} (stage {_stageIndex + 1}) - starting the next run.");
                     DebugArtifacts.SaveFrame(frame, _overlays, inTown && IsFinalBoss ? "stage5_closed" : "wrong_zone");
                     ResetRunState();
                     _runStart = Environment.TickCount64;
@@ -725,7 +725,7 @@ public sealed partial class AutomationPilot
 
                 _detail = IsWar
                     ? $"not confirmed in {Destination} (minimap title) - holding all input"
-                    : "not confirmed in the Labyrinth (minimap title) - holding all input";
+                    : $"not confirmed in {Destination} (minimap title) - holding all input";
                 if (!_zoneHoldLogged)
                 {
                     _zoneHoldLogged = true;

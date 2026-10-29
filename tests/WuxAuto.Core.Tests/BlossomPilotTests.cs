@@ -480,6 +480,21 @@ public class BlossomPilotTests
         Assert.DoesNotContain(run.Lines, l => l.StartsWith("Waypoint 6 skipped", StringComparison.Ordinal));
     }
 
+    [Fact]
+    public async Task TitleReadCutShort_IsStillBlossomGarden()
+    {
+        // Live run 6: the minimap title read as "[Blossom X" (the panel's close button next to the cut-off name) three times
+        // and the zone guard restarted the run as if the character had left Blossom Garden.
+        var (settings, input, ocr) = Harness(() => "16500 , 17000", titleText: "[Blossom X");
+        long start = Environment.TickCount64;
+
+        var run = await RunAsync(settings, input, ocr, PilotPhase.BlossomWalk, (_, _) => Environment.TickCount64 - start > 9000, 15000);
+
+        string log = string.Join("\n", run.Lines);
+        Assert.DoesNotContain(run.Lines, l => l.Contains("starting the next run", StringComparison.Ordinal) || l.Contains("does not show", StringComparison.Ordinal));
+        Assert.Equal(PilotPhase.BlossomWalk, run.Phase);
+    }
+
     /// <summary>OCR that misses the minimap title in a tall read (the whole minimap band) and reads it in a small one.</summary>
     private sealed class BandBlindOcr(FakeOcrEngine inner, int maxHeight) : IOcrEngine
     {
@@ -500,7 +515,8 @@ public class BlossomPilotTests
     private static int SkillTaps(FakeGameInput input) => input.Calls.Count(c => c == "KeyTap 1");
 
     private static (AppSettings Settings, FakeGameInput Input, FakeOcrEngine Ocr) Harness(Func<string> coords, Func<FakeGameInput, string?>? target = null,
-        bool autoBuffScroll = true, bool title = true, Func<FakeGameInput, string[]>? log = null)
+        bool autoBuffScroll = true, bool title = true, Func<FakeGameInput, string[]>? log = null,
+        string titleText = "[Blossom Garden]")
     {
         // The scroll in the item list keeps the buff round short: a Start buffs first (the timer starts at 0), and with no
         // buff key and no templates the round clicks nothing and goes back to the walk.
@@ -519,7 +535,7 @@ public class BlossomPilotTests
                 FakeOcrEngine.Line(coords(), 1100, 200, 120),
             };
             if (title)
-                words.Add(FakeOcrEngine.Line("[Blossom Garden]", 1130, 55)); // where the live 2048x1152 frame has it, scaled
+                words.Add(FakeOcrEngine.Line(titleText, 1130, 55)); // where the live 2048x1152 frame has it, scaled
             if (log?.Invoke(input) is { } lines)
             {
                 // the combat log, left side (Regions.AttackMessage)

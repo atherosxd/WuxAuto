@@ -80,7 +80,12 @@ public sealed partial class AutomationPilot
                 return true;
         }
 
-        return false;
+        // A title cut short with a stray glyph after it (live 2026-10-29, Blossom Garden: "[Blossom X" - the panel's close
+        // button read as a letter): 7+ letters of the destination's start and at most 2 characters besides.
+        int common = 0;
+        while (common < t.Length && common < d.Length && t[common] == d[common])
+            common++;
+        return common >= 7 && t.Length - common <= 2;
     }
 
     /// <summary>
