@@ -1,4 +1,4 @@
-﻿<Window x:Class="WuxAuto.MainWindow"
+<Window x:Class="WuxAuto.MainWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:vm="clr-namespace:WuxAuto.ViewModels"
@@ -517,6 +517,7 @@
                                 <RowDefinition Height="Auto" />
                                 <RowDefinition Height="Auto" />
                                 <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
                             </Grid.RowDefinitions>
 
                             <!-- User, 2026-10-29: "add a settings in the app just like you showed 1:5A". Applied on the next Start. -->
@@ -524,6 +525,17 @@
                                        ToolTip="Camera turns when leaving a waypoint: waypoint:count+key, A = left, D = right, separated by commas. E.g. 1:5A, 2:5D, 3:5A, 4:5D = after waypoint 1 tap A five times, after waypoint 2 tap D five times... Used from the next Start." />
                             <TextBox Grid.Row="2" Grid.Column="1" Grid.ColumnSpan="3" Style="{StaticResource WideField}"
                                      Text="{Binding Settings.Blossom.WaypointTurnsText, UpdateSourceTrigger=LostFocus}" />
+
+                            <!-- Record route (user, 2026-10-29): walk the road by hand, WuxAuto saves the waypoints and your A / D turns. -->
+                            <StackPanel Grid.Row="3" Grid.Column="0" Grid.ColumnSpan="4" Margin="0,4,0,0">
+                                <StackPanel Orientation="Horizontal">
+                                    <Button Content="{Binding RecordRouteText}" Command="{Binding ToggleRecordRouteCommand}" Margin="0,0,6,0"
+                                            ToolTip="Bind the game, stand at the start of the route (the arrival spot in Blossom Garden) and press this, then walk the road by hand. A waypoint is saved every 120 units, and your A / D camera taps are saved with the latest waypoint. Press it again to save the route (it replaces the waypoints, the loop start and the camera turns)." />
+                                    <Button Content="Loop starts here" Command="{Binding MarkLoopStartCommand}"
+                                            ToolTip="While recording: the waypoint here is where the route loops back to after the last one (like 17 -> 6). Not pressed: the whole route loops from waypoint 1." />
+                                </StackPanel>
+                                <TextBlock Text="{Binding RouteStatus}" Style="{StaticResource Caption}" Margin="0,4,0,0" TextWrapping="Wrap" />
+                            </StackPanel>
 
                             <TextBlock Grid.Row="0" Grid.Column="0" Text="Target name" Style="{StaticResource FieldLabel}"
                                        ToolTip="The monster attacked when Tab selects it (the target bar). A target showing the chest counts too." />

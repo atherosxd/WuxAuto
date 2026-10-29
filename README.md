@@ -273,6 +273,12 @@ Blossom Garden needs no key.
    it first makes sure the autohunt is off.
 6. Rebuff when **Rebuff every** (Auto War) is due - after a loot or at a waypoint, never mid-fight.
 
+**Record your own route** (Settings > Auto Blossom): bind the game, stand at the arrival spot in Blossom Garden lined up on
+the pillars, press **Record route** and walk the road by hand. A waypoint is saved every 120 units, and your own `A` / `D`
+camera taps are saved with the waypoint you are at (the pilot taps the same way when it leaves it). Press **Loop starts
+here** where the endless loop begins, and **Stop recording** at the end of the loop (back near the loop start). The route
+replaces the waypoints, the loop start and the camera turns; a copy goes to `%LOCALAPPDATA%\WuxAuto\blossom-route.txt`.
+
 Same upgrade note as Auto War: an older WuxAuto cannot read `"Mode": "AutoBlossom"` and resets the settings - update every copy first.
 Probe: `--pillars <dir>` prints the pillar hits and the lined-up verdict per PNG. **Not tested live yet**: which way `D`
 turns the view, walls between waypoints, the Jaso's name in the target bar.
