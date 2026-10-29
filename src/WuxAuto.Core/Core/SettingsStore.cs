@@ -284,6 +284,10 @@ public static class SettingsStore
         b.LootDelayMs = Math.Clamp(b.LootDelayMs, 0, 10000);
         b.LootMs = Math.Clamp(b.LootMs, 0, 60000);
         b.LootEveryMs = Math.Clamp(b.LootEveryMs, 50, 2000);
+        b.WaypointTurns = (b.WaypointTurns ?? d.WaypointTurns).Select(t => (t ?? "").Trim()).Where(t => t.Length > 0).ToList();
+        b.WalkClickEveryMs = Math.Clamp(b.WalkClickEveryMs, 100, 3000);
+        b.WalkReadEveryMs = Math.Clamp(b.WalkReadEveryMs, 100, 5000);
+        b.WalkClickPx = Math.Clamp(b.WalkClickPx, 60, 600);
     }
 
     internal static void Normalize(AppSettings s)

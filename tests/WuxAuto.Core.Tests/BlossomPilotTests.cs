@@ -195,7 +195,8 @@ public class BlossomPilotTests
             return $"{x} , {y}";
         });
         sent = input;
-        settings.Dungeon.RunDashWaitMs = 150;
+        settings.Blossom.WalkReadEveryMs = 150;
+        settings.Blossom.WalkClickEveryMs = 100;
 
         var run = await RunAsync(settings, input, ocr, PilotPhase.BlossomWalk,
             (_, lines) => lines.Any(l => l.StartsWith("Waypoint 1 reached", StringComparison.Ordinal)), 20000);
@@ -250,7 +251,8 @@ public class BlossomPilotTests
     public async Task Stuck_SkipsAfterFiveStillSteps_AndSnapshotsAtMostThree()
     {
         var (settings, input, ocr) = Harness(() => "15000 , 15000"); // never moves
-        settings.Dungeon.RunDashWaitMs = 100;
+        settings.Blossom.WalkReadEveryMs = 150;
+        settings.Blossom.WalkClickEveryMs = 100;
         int skips = 0, shots = 0;
 
         var run = await RunAsync(settings, input, ocr, PilotPhase.BlossomWalk, (_, lines) =>
@@ -322,7 +324,8 @@ public class BlossomPilotTests
             return $"13947 , {y}";
         });
         sent = input;
-        settings.Dungeon.RunDashWaitMs = 100;
+        settings.Blossom.WalkReadEveryMs = 150;
+        settings.Blossom.WalkClickEveryMs = 100;
 
         var run = await RunAsync(settings, input, ocr, PilotPhase.BlossomWalk,
             (_, lines) => lines.Any(l => l.StartsWith("Not moving for", StringComparison.Ordinal)), 20000);
@@ -341,12 +344,74 @@ public class BlossomPilotTests
     {
         int n = 0;
         var (settings, input, ocr) = Harness(() => (n++ / 2) % 2 == 0 ? "16500 , 17000" : "16600 , 17000"); // moves, never arrives
-        settings.Dungeon.RunDashWaitMs = 100;
+        settings.Blossom.WalkReadEveryMs = 150;
+        settings.Blossom.WalkClickEveryMs = 100;
 
         var run = await RunAsync(settings, input, ocr, PilotPhase.BlossomWalk,
             (_, lines) => lines.Any(l => l.Contains("taking too long", StringComparison.Ordinal)), 25000);
 
         Assert.True(run.Lines.Any(l => l.Contains("taking too long", StringComparison.Ordinal)), string.Join("\n", run.Lines));
+    }
+
+    [Fact]
+    public async Task GameBehindAnotherWindow_WalkWaits_NothingCountsAsStuck()
+    {
+        // Live 2026-10-29: the game lost focus mid-walk - its clicks were refused, and the still character must not read
+        // as "blocked" (that sidesteps and skips waypoints for nothing).
+        var (settings, input, ocr) = Harness(() => "16500 , 17000");
+        settings.Blossom.WalkReadEveryMs = 150;
+        settings.Blossom.WalkClickEveryMs = 100;
+        input.InFront = false;
+        long start = Environment.TickCount64;
+
+        var run = await RunAsync(settings, input, ocr, PilotPhase.BlossomWalk, (_, _) => Environment.TickCount64 - start > 4000);
+
+        string log = string.Join("\n", run.Lines);
+        Assert.DoesNotContain(run.Lines, l => l.StartsWith("Blocked at", StringComparison.Ordinal) || l.StartsWith("Not moving", StringComparison.Ordinal));
+        Assert.DoesNotContain(input.Calls, c => c.StartsWith("Click", StringComparison.Ordinal));
+        Assert.Equal(PilotPhase.BlossomWalk, run.Phase);
+    }
+
+    [Fact]
+    public async Task Walk_ClicksContinuously_ReadsCoordinatesLessOften()
+    {
+        // User, 2026-10-29: "try to continuously click to run instead of staggered and not every click is checked".
+        int reads = 0;
+        var (settings, input, ocr) = Harness(() => $"{16500 - 40 * reads++} , 17000"); // keeps moving west, far from any waypoint
+        long start = 0;
+        var clickTimes = new List<long>();
+
+        var run = await RunAsync(settings, input, ocr, PilotPhase.BlossomWalk, (_, _) =>
+        {
+            if (input.Clicks > clickTimes.Count)
+                clickTimes.Add(Environment.TickCount64);
+            if (start == 0 && input.Clicks > 0)
+                start = Environment.TickCount64;
+            return start > 0 && Environment.TickCount64 - start > 3000;
+        });
+
+        string log = string.Join("\n", run.Lines);
+        Assert.True(input.Clicks >= 7, $"{input.Clicks} clicks in 3 s:\n{log}");
+        var gaps = clickTimes.Zip(clickTimes.Skip(1), (a, b) => b - a).ToList();
+        Assert.True(gaps.Count(g => g > 600) <= 1, "gaps: " + string.Join(", ", gaps));
+    }
+
+    [Fact]
+    public async Task Waypoint1_TurnsTheCameraLeft4_ThenRelearnsTheHeading()
+    {
+        var (settings, input, ocr) = Harness(() => "19136 , 18463"); // on waypoint 1
+        settings.Blossom.WaypointWaitMs = 500;
+
+        var run = await RunAsync(settings, input, ocr, PilotPhase.BlossomWalk, (_, _) => input.Clicks > 0);
+
+        string log = string.Join("\n", run.Lines);
+        Assert.Equal(4, input.Calls.Count(c => c == "KeyDown A"));
+        Assert.DoesNotContain("KeyDown D", input.Calls);
+        int lastTurn = input.Calls.LastIndexOf("KeyUp A");
+        int click = input.Calls.FindIndex(c => c.StartsWith("Click ", StringComparison.Ordinal));
+        Assert.True(lastTurn >= 0 && click > lastTurn, log);
+        Assert.StartsWith($"Click {Width / 2},", input.Calls[click]); // heading unknown again: straight up
+        Assert.Contains(run.Lines, l => l.Contains("turned the camera", StringComparison.Ordinal));
     }
 
     /// <summary>OCR that misses the minimap title in a tall read (the whole minimap band) and reads it in a small one.</summary>

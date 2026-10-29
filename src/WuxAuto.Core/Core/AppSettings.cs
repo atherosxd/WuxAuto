@@ -321,6 +321,24 @@ public sealed class BlossomSettings
     /// </summary>
     public int WaypointTolerance { get; set; } = 100;
 
+    /// <summary>
+    /// Camera turns when leaving a waypoint, "N:KC" = after waypoint N tap key K (A = left, D = right) C times
+    /// (<see cref="TurnTapMs"/> each). User, 2026-10-29: "In waypoint 1, do a left turn / 4x A, then on waypoint 2 do right
+    /// turn / D 5x". The walk learns its heading again from the next step.
+    /// </summary>
+    public List<string> WaypointTurns { get; set; } = ["1:A4", "2:D5"];
+
+    /// <summary>
+    /// The walk clicks this often, the same way, so the character keeps running (user, 2026-10-29: "continuously click to
+    /// run instead of staggered"); the coordinates are read every <see cref="WalkReadEveryMs"/>, which steers the clicks.
+    /// </summary>
+    public int WalkClickEveryMs { get; set; } = 350;
+
+    public int WalkReadEveryMs { get; set; } = 900;
+
+    /// <summary>How far from the character a walk click goes (pixels, shortened near a waypoint and to stay clear of the UI).</summary>
+    public int WalkClickPx { get; set; } = 260;
+
     /// <summary>At most this long standing at a reached waypoint, tabbing (user: 5 s or less - the AFK checker).</summary>
     public int WaypointWaitMs { get; set; } = 3000;
 

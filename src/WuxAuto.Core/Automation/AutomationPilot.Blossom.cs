@@ -25,7 +25,8 @@ public sealed partial class AutomationPilot
     private const int BlossomGiveUpIgnoreMs = 10000;
     private const double BlossomHeadingMissRad = 0.6;
     private const int BlossomHeadingMissesToRelearn = 3;
-    private const int BlossomMaxClicksPerWaypoint = 40;
+    private const int BlossomMaxStepsPerWaypoint = 40;
+    private const int BlossomTargetCheckMs = 700;
 
     private IReadOnlyList<(int X, int Y)> _blossomRoute = [];
     private int _blossomWaypoint = -1;
@@ -39,7 +40,14 @@ public sealed partial class AutomationPilot
     private bool _blossomHuntOffChecked;
     private int _blossomHeadingMisses;
     private long _blossomIgnoreTargetsUntil;
-    private int _blossomWaypointClicks;
+    private int _blossomWaypointSteps;
+    private (double X, double Y)? _blossomDir;   // the walk click (screen offset) until the next coordinate read
+    private long _blossomClickAt;
+    private long _blossomReadAt;
+    private long _blossomTargetAt;
+    private int _blossomCamTaps;                 // the camera turn when leaving a waypoint (WaypointTurns), taps left
+    private TurnDirection _blossomCamKey;
+    private IReadOnlyDictionary<int, (TurnDirection Direction, int Taps)> _blossomTurns = new Dictionary<int, (TurnDirection, int)>();
     private bool _blossomZoomedOutAgain;
     private readonly Dictionary<string, int> _blossomShots = [];
 
@@ -70,6 +78,12 @@ public sealed partial class AutomationPilot
     private void ResetBlossomRunState()
     {
         _blossomRoute = BlossomRoute.Parse(_settings.Blossom.Waypoints);
+        _blossomTurns = BlossomRoute.ParseTurns(_settings.Blossom.WaypointTurns);
+        _blossomCamTaps = 0;
+        _blossomDir = null;
+        _blossomClickAt = 0;
+        _blossomReadAt = 0;
+        _blossomTargetAt = 0;
         _blossomWaypoint = -1;
         _blossomTabAt = 0;
         _blossomPauseSince = 0;
@@ -152,6 +166,10 @@ public sealed partial class AutomationPilot
     {
         _lastCoords = null;
         _simpleClick = null;
+        _blossomDir = null;
+        _blossomClickAt = 0;
+        _blossomReadAt = 0;
+        _blossomTargetAt = 0;
         _blossomStalls = 0;
         _blossomPauseSince = 0;
         if (_blossomHeadingUnknown)
@@ -305,17 +323,52 @@ public sealed partial class AutomationPilot
             return;
         }
 
-        if (TapBlossomTab(now))
+        // The game behind another window refuses the clicks (live 2026-10-29): a character standing still then is not
+        // blocked - nothing is clicked or counted until it is back in front.
+        if (!_controls.IsGameInFront)
         {
+            _lastCoords = null;
+            _blossomDir = null;
+            _detail = "waiting for the game window to be in front";
+            _waitUntil = now + 500;
+            return;
+        }
+
+        // The camera turn when leaving a waypoint (user), one tap per tick.
+        if (_blossomCamTaps > 0)
+        {
+            if (!_controls.Turn(_blossomCamKey, b.TurnTapMs))
+            {
+                _waitUntil = now + 300;
+                return;
+            }
+
+            if (--_blossomCamTaps == 0)
+            {
+                _blossomHeadingKnown = false;
+                _blossomHeadingMisses = 0;
+                _lastCoords = null;
+                _simpleClick = null;
+                _blossomDir = null;
+                Log?.Invoke(LogLevel.Info, "Done - turned the camera; the next step learns the heading again.");
+            }
+
             _waitUntil = now + 250;
             return;
         }
 
-        // After a fight given up, targets are ignored for a while: the same one would only start the same fight again.
-        if (now >= _blossomIgnoreTargetsUntil && await FindBlossomTargetAsync(frame) is { } target)
+        TapBlossomTab(now);
+
+        // The target bar every BlossomTargetCheckMs (a whole-screen read), not on every click. After a fight given up,
+        // targets are ignored for a while: the same one would only start the same fight again.
+        if (now >= _blossomTargetAt)
         {
-            BeginBlossomFight(target);
-            return;
+            _blossomTargetAt = now + BlossomTargetCheckMs;
+            if (now >= _blossomIgnoreTargetsUntil && await FindBlossomTargetAsync(frame) is { } target)
+            {
+                BeginBlossomFight(target);
+                return;
+            }
         }
 
         // A rebuff waits for a loot or a waypoint pause; 30 s past due it goes out on the walk.
@@ -347,24 +400,69 @@ public sealed partial class AutomationPilot
             return;
         }
 
+        // The coordinates every WalkReadEveryMs steer the clicks; between reads the same click goes out every
+        // WalkClickEveryMs, so the character keeps running (user: "continuously click to run instead of staggered").
+        if ((now >= _blossomReadAt || _blossomDir == null) && !await BlossomReadStepAsync(frame, now))
+            return;
+
+        if (_blossomDir is (double ox, double oy) && now >= _blossomClickAt)
+        {
+            int centerX = frame.Width / 2;
+            int centerY = frame.Height / 2;
+            double scale = 1;
+            double roomLeft = centerX - frame.Width * 0.25, roomRight = frame.Width * RunClickRight - centerX;
+            double roomUp = centerY - frame.Height * RunClickTop, roomDown = frame.Height * 0.78 - centerY;
+            if (ox < 0) scale = Math.Min(scale, roomLeft / -ox);
+            if (ox > 0) scale = Math.Min(scale, roomRight / ox);
+            if (oy < 0) scale = Math.Min(scale, roomUp / -oy);
+            if (oy > 0) scale = Math.Min(scale, roomDown / oy);
+
+            int clickX = (int)Math.Round(centerX + ox * scale);
+            int clickY = (int)Math.Round(centerY + oy * scale);
+            if (!_controls.WalkTo(clickX, clickY, forceWalk: false))
+            {
+                _detail = "walk click blocked - waiting for the game to be in front";
+                _waitUntil = now + 300;
+                return;
+            }
+
+            _simpleClick = (ox, oy);
+            _lastClick = (clickX, clickY, now);
+            _blossomClickAt = now + b.WalkClickEveryMs;
+        }
+
+        long next = Math.Min(Math.Min(_blossomClickAt, _blossomReadAt), Math.Min(_blossomTargetAt, _blossomTabAt + b.TabEveryMs));
+        _waitUntil = Math.Max(now + 50, next);
+    }
+
+    /// <summary>
+    /// One step of the walk: read the coordinates, learn the heading from the movement since the last read (the clicks in
+    /// between all went the same way), and decide the click for the next WalkReadEveryMs (<c>_blossomDir</c>). False when
+    /// this tick is done: the waypoint was reached (the pause), skipped, or the walk waits.
+    /// </summary>
+    private async Task<bool> BlossomReadStepAsync(Mat frame, long now)
+    {
+        var b = _settings.Blossom;
         var coords = await _analyzer.ReadCoordinatesAsync(frame);
         if (coords == null)
         {
             if (++_blossomUnread > BlossomMaxUnread)
             {
                 Fail(frame, $"The minimap coordinates did not read {BlossomMaxUnread} times in a row.");
-                return;
+                return false;
             }
 
+            // The clicks go on the way they went; the next read soon.
             _detail = "reading the minimap coordinates";
-            _waitUntil = now + 300;
-            return;
+            _blossomReadAt = now + 300;
+            return _blossomDir != null;
         }
 
         _blossomUnread = 0;
+        _blossomReadAt = now + b.WalkReadEveryMs;
         if (_blossomWaypoint < 0)
         {
-            _blossomWaypointClicks = 0;
+            _blossomWaypointSteps = 0;
             _blossomZoomedOutAgain = false;
             _blossomWaypoint = BlossomRoute.Nearest(_blossomRoute, coords.X, coords.Y);
             var start = _blossomRoute[_blossomWaypoint];
@@ -412,16 +510,17 @@ public sealed partial class AutomationPilot
         if (distance <= b.WaypointTolerance)
         {
             _simpleClick = null;
+            _blossomDir = null;
             Log?.Invoke(LogLevel.Info, $"Waypoint {_blossomWaypoint + 1} reached at {coords} - tabbing up to {b.WaypointWaitMs / 1000.0:0.#}s.");
             if (b.WaypointWaitMs <= 0)
             {
                 AdvanceBlossomWaypoint($"Waypoint {_blossomWaypoint + 1} done");
-                return;
+                return false;
             }
 
             _blossomPauseSince = now;
             _waitUntil = now + 300;
-            return;
+            return false;
         }
 
         if (_blossomStalls >= BlossomMaxStalls)
@@ -429,59 +528,37 @@ public sealed partial class AutomationPilot
             Log?.Invoke(LogLevel.Warning, $"Not moving for {_blossomStalls} steps at {coords} on the way to waypoint {_blossomWaypoint + 1} - skipping it.");
             BlossomShot(frame, "blossom_stuck");
             AdvanceBlossomWaypoint($"Waypoint {_blossomWaypoint + 1} skipped");
-            return;
+            return false;
         }
 
-        // Moving, but never getting there (round an obstacle and back): a waypoint gets so many clicks, then the next one.
-        if (++_blossomWaypointClicks > BlossomMaxClicksPerWaypoint)
+        // Moving, but never getting there (round an obstacle and back): a waypoint gets so many steps, then the next one.
+        if (++_blossomWaypointSteps > BlossomMaxStepsPerWaypoint)
         {
-            Log?.Invoke(LogLevel.Warning, $"Waypoint {_blossomWaypoint + 1} is taking too long ({BlossomMaxClicksPerWaypoint} clicks, at {coords}, {distance:0} away) - skipping it.");
+            Log?.Invoke(LogLevel.Warning, $"Waypoint {_blossomWaypoint + 1} is taking too long ({BlossomMaxStepsPerWaypoint} steps, at {coords}, {distance:0} away) - skipping it.");
             BlossomShot(frame, "blossom_too_long");
             AdvanceBlossomWaypoint($"Waypoint {_blossomWaypoint + 1} skipped");
-            return;
+            return false;
         }
 
-        int centerX = frame.Width / 2;
-        int centerY = frame.Height / 2;
-        double reach = _settings.Dungeon.RunClickPx * Math.Clamp(distance / 300.0, 0.45, 1.0);
-        double ox, oy;
         if (!_blossomHeadingKnown)
         {
             // The first step: straight up the screen (see the summary).
-            ox = 0;
-            oy = -_settings.Dungeon.RunClickPx;
+            _blossomDir = (0, -b.WalkClickPx);
         }
         else
         {
-            ox = needX / distance * reach;
-            oy = needY / distance * reach;
+            double reach = b.WalkClickPx * Math.Clamp(distance / 300.0, 0.45, 1.0);
+            double ox = needX / distance * reach, oy = needY / distance * reach;
             double c = Math.Cos(_headingError), sn = Math.Sin(_headingError);
             (ox, oy) = (ox * c + oy * sn, -ox * sn + oy * c);
             if (_blossomStalls >= 2)
                 (ox, oy) = BlossomUnblock(frame, coords, ox, oy);
+            _blossomDir = (ox, oy);
         }
 
-        double scale = 1;
-        double roomLeft = centerX - frame.Width * 0.25, roomRight = frame.Width * RunClickRight - centerX;
-        double roomUp = centerY - frame.Height * RunClickTop, roomDown = frame.Height * 0.78 - centerY;
-        if (ox < 0) scale = Math.Min(scale, roomLeft / -ox);
-        if (ox > 0) scale = Math.Min(scale, roomRight / ox);
-        if (oy < 0) scale = Math.Min(scale, roomUp / -oy);
-        if (oy > 0) scale = Math.Min(scale, roomDown / oy);
-
-        int clickX = (int)Math.Round(centerX + ox * scale);
-        int clickY = (int)Math.Round(centerY + oy * scale);
-        if (!_controls.WalkTo(clickX, clickY, forceWalk: false))
-        {
-            _detail = "walk click blocked - waiting for the game to be in front";
-            _waitUntil = now + 300;
-            return;
-        }
-
-        _simpleClick = (ox, oy);
-        _lastClick = (clickX, clickY, now);
+        _blossomClickAt = Math.Min(_blossomClickAt, now);   // a new way: click it now
         _detail = $"{coords} -> waypoint {_blossomWaypoint + 1} ({distance:0} left)";
-        _waitUntil = now + _settings.Dungeon.RunDashWaitMs;
+        return true;
     }
 
     /// <summary>
@@ -492,7 +569,7 @@ public sealed partial class AutomationPilot
     private (double X, double Y) BlossomUnblock(Mat frame, GameCoordinates coords, double ox, double oy)
     {
         double len = Math.Max(1, Math.Sqrt(ox * ox + oy * oy));
-        double ux = ox / len * _settings.Dungeon.RunClickPx, uy = oy / len * _settings.Dungeon.RunClickPx;
+        double ux = ox / len * _settings.Blossom.WalkClickPx, uy = oy / len * _settings.Blossom.WalkClickPx;
         if (!_blossomZoomedOutAgain && _settings.Dungeon.ZoomOutNotches > 0
             && _controls.ZoomOut(frame.Width / 2, (int)(frame.Height * 0.40), _settings.Dungeon.ZoomOutNotches))
         {
@@ -533,16 +610,27 @@ public sealed partial class AutomationPilot
 
     private void AdvanceBlossomWaypoint(string what)
     {
+        int left = _blossomWaypoint + 1;
         _blossomWaypoint = BlossomRoute.Next(_blossomWaypoint, _blossomRoute.Count, _settings.Blossom.LoopFrom);
         var next = _blossomRoute[_blossomWaypoint];
         Log?.Invoke(LogLevel.Info, $"{what} - on to waypoint {_blossomWaypoint + 1} ({next.X},{next.Y}).");
         _blossomPauseSince = 0;
         _blossomStalls = 0;
-        _blossomWaypointClicks = 0;
+        _blossomWaypointSteps = 0;
         _blossomZoomedOutAgain = false;
         _simpleClick = null;
         _lastCoords = null;
+        _blossomDir = null;
         _waitUntil = Environment.TickCount64;
+
+        // The camera turn the user set for the waypoint just left (WaypointTurns), done by the walk one tap per tick.
+        if (_blossomTurns.TryGetValue(left, out var turn))
+        {
+            _blossomCamKey = turn.Direction;
+            _blossomCamTaps = turn.Taps;
+            string key = turn.Direction == TurnDirection.Left ? _settings.Dungeon.RotateLeftKey : _settings.Input.RotateKey;
+            Log?.Invoke(LogLevel.Info, $"Leaving waypoint {left}: turning the camera {(turn.Direction == TurnDirection.Left ? "left" : "right")} ('{key}' x{turn.Taps}).");
+        }
     }
 
     /// <summary>

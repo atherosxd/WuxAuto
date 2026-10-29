@@ -260,7 +260,9 @@ Blossom Garden needs no key.
    after 50 taps: it walks anyway.
 4. The walk: 17 waypoints (`Blossom > Waypoints` in settings.json) - 1 to 5 once, then 6 to 17 over and over - starting at
    the nearest one. The first click goes straight up the screen; where the character went tells which way the camera
-   looks. `Tab` every second. At a reached waypoint it stands at most **Waypoint pause** (3 s; at most 5 s - the AFK
+   looks. It clicks every 0.35 s so the character keeps running, and reads the coordinates about once a second. Leaving
+   waypoint 1 it turns the camera left (`A` x4), leaving waypoint 2 right (`D` x5) (`Blossom > WaypointTurns`), and learns
+   the camera's direction again from the next step. `Tab` every second. At a reached waypoint it stands at most **Waypoint pause** (3 s; at most 5 s - the AFK
    checker kicks idle characters to town, and from town it teleports back in).
 5. **[S]Jaso Practitioner** in the target bar (or a target showing the chest): the skill (Ctrl + skill, as LOD) until
    the target is gone 2 s, then 1 s later the loot key every 0.2 s for **Loot time** (5 s), then on to the waypoint it

@@ -970,7 +970,13 @@ teleport in again (LOD's rule); still in town after the teleport = "destination 
   19148,19062 -> waypoint 1). The first step after a turn clicks **straight up**; the movement sets `_headingBase` (the view's
   world direction is unknown), then `LearnHeadingError`; 3 steps in a row > 0.6 rad off the heading (>= 60 units each) =
   the first sample was a wall push -> heading re-learnt from the latest step (final review: one bad first sample locked
-  in a wrong heading for the run). Tab every `TabEveryMs` 1000. Reached (<= `WaypointTolerance` **100**; live 2026-10-29
+  in a wrong heading for the run). **Continuous clicks** (user, live 2026-10-29: "continuously click to run instead of
+  staggered and not every click is checked"): the same walk click goes out every `WalkClickEveryMs` 350, `WalkClickPx`
+  260 from the centre; the coordinates are read every `WalkReadEveryMs` 900 and decide the next click (a "step" = one
+  read); the target bar is read every 700 ms; Tab never holds the tick. **Camera turns** (user: "In waypoint 1, do a
+  left turn / 4x A, then on waypoint 2 do right turn / D 5x"): `WaypointTurns` "1:A4", "2:D5" - when leaving that waypoint
+  the walk taps the key (`TurnTapMs`), then learns the heading again from the next step. Game behind another window ->
+  the walk clicks and counts nothing. Tab every `TabEveryMs` 1000. Reached (<= `WaypointTolerance` **100**; live 2026-10-29
   waypoints 2, 4, 5 lie just past a railing / pond edge and the walk stopped 86, 67, 71 short at the old 60) -> stand + Tab
   <= `WaypointWaitMs` 3000 (clamped <= 5000, AFK checker; the pause reads no coordinates, so an unreadable minimap cannot
   stretch it), then the next. **Blocked** (live: wedged against the side of the bridge at ~13900, 15140 between waypoints 5

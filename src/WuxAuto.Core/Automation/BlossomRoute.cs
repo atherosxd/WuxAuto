@@ -1,4 +1,5 @@
 using System.Globalization;
+using WuxAuto.Core;
 
 namespace WuxAuto.Automation;
 
@@ -19,6 +20,37 @@ public static class BlossomRoute
         }
 
         return route;
+    }
+
+    /// <summary>
+    /// The camera turns per waypoint: "N:KC" (1-based waypoint, A = left / D = right, tap count) -> N -> (direction, count).
+    /// Entries that do not parse, or have a count below 1, are skipped; a waypoint named twice keeps the first.
+    /// </summary>
+    public static IReadOnlyDictionary<int, (TurnDirection Direction, int Taps)> ParseTurns(IEnumerable<string>? turns)
+    {
+        var result = new Dictionary<int, (TurnDirection, int)>();
+        foreach (string entry in turns ?? [])
+        {
+            string[] parts = (entry ?? "").Split(':');
+            if (parts.Length != 2
+                || !int.TryParse(parts[0].Trim(), NumberStyles.Integer, CultureInfo.InvariantCulture, out int waypoint))
+                continue;
+
+            string rest = parts[1].Replace(" ", "", StringComparison.Ordinal);
+            if (rest.Length < 2 || !int.TryParse(rest[1..], NumberStyles.Integer, CultureInfo.InvariantCulture, out int taps) || taps < 1)
+                continue;
+
+            TurnDirection? direction = char.ToUpperInvariant(rest[0]) switch
+            {
+                'A' => TurnDirection.Left,
+                'D' => TurnDirection.Right,
+                _ => null,
+            };
+            if (direction is { } d)
+                result.TryAdd(waypoint, (d, taps));
+        }
+
+        return result;
     }
 
     /// <summary>The 0-based index after <paramref name="index"/>; after the last, <paramref name="loopFrom"/> (1-based, clamped).</summary>

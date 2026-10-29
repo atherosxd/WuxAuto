@@ -49,6 +49,20 @@ public class BlossomRouteTests
     }
 
     [Fact]
+    public void Turns_DefaultsAreTheUsers()
+    {
+        // User, 2026-10-29: "In waypoint 1, do a left turn / 4x A, then on waypoint 2 do right turn / D 5x".
+        var turns = BlossomRoute.ParseTurns(new AppSettings().Blossom.WaypointTurns);
+        Assert.Equal(2, turns.Count);
+        Assert.Equal((TurnDirection.Left, 4), turns[1]);
+        Assert.Equal((TurnDirection.Right, 5), turns[2]);
+    }
+
+    [Fact]
+    public void Turns_SkipJunk() =>
+        Assert.Equal([3], BlossomRoute.ParseTurns(["", "x:A4", "1:Q4", "2:D0", " 3 : d 2 "]).Keys);
+
+    [Fact]
     public void Parse_SkipsJunk() => Assert.Equal([(1, 2)], BlossomRoute.Parse(["", "x,y", " 1 , 2 ", "3"]));
 
     [Fact]
