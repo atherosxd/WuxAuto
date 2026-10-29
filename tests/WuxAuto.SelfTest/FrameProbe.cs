@@ -249,6 +249,33 @@ internal static class FrameProbe
         return 0;
     }
 
+    /// <summary>
+    /// Auto Blossom: the pillar bases in every PNG of a folder - every hit down to 0.30 in the pillar band, then the pair the
+    /// pilot would line up on at the settings' score, with its offset from the centre. Run with: --pillars &lt;dir&gt;
+    /// </summary>
+    public static int Pillars(string dir)
+    {
+        var settings = SettingsStore.Load(persistMigration: false);
+        var b = settings.Blossom;
+        using var analyzer = new ScreenAnalyzer(settings, new OcrService());
+        foreach (string path in Directory.GetFiles(dir, "*.png").Where(p => !p.EndsWith(".scan.png") && !p.EndsWith(".crop.png")).Order())
+        {
+            using var frame = ImageFile.Read(path, ImreadModes.ColorBgr);
+            if (frame.IsEmpty)
+                continue;
+
+            var roi = ScreenAnalyzer.PillarBand.ToPixels(frame.Width, frame.Height);
+            var hits = analyzer.FindIcons(frame, b.PillarTemplate, roi, 0.30, maxResults: 4);
+            var pair = analyzer.FindPillarPair(frame, b.PillarTemplate, b.PillarMatchScore);
+            string verdict = pair == null
+                ? $"no pair at {b.PillarMatchScore:0.00}"
+                : $"pair {pair.Left.Bounds.CenterX},{pair.Left.Bounds.CenterY} + {pair.Right.Bounds.CenterX},{pair.Right.Bounds.CenterY}, offset {pair.OffsetFraction:+0.000;-0.000} -> {(Math.Abs(pair.OffsetFraction) <= b.PillarCenterTolerance ? "lined up" : "off centre")}";
+            Console.WriteLine($"{Path.GetFileName(path)} {frame.Width}x{frame.Height} | hits: {(hits.Count == 0 ? "none" : string.Join("; ", hits.Select(h => $"{h.Score:0.000} at {h.Bounds.CenterX},{h.Bounds.CenterY} x{h.Scale:0.00}")))} | {verdict}");
+        }
+
+        return 0;
+    }
+
     public static async Task<int> RunAsync(string path, string[] args)
     {
         var source = ImageFile.Read(path, ImreadModes.Unchanged);

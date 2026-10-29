@@ -524,6 +524,47 @@ public sealed class ScreenAnalyzer : IDisposable
         return new PixelRect(roi.X + box.X, roi.Y + box.Y, box.Width, box.Height);
     }
 
+    /// <summary>Where the Blossom pillars are looked for: above the character, left of the minimap panel.</summary>
+    public static readonly NormRect PillarBand = new(0.15, 0.05, 0.62, 0.45);
+
+    /// <summary>
+    /// Auto Blossom (user, 2026-10-29): the two pillar bases the camera is lined up on - the user's zoomed-out frame had them
+    /// at 0.42 and 0.62 w, ~0.22 h. A pair = two hits of <paramref name="templateName"/> in <see cref="PillarBand"/> on about
+    /// one row (|dy| &lt; 0.05 h), 0.10-0.40 w apart; with more, the pair whose midpoint is nearest the centre. Null = none.
+    /// </summary>
+    public PillarPair? FindPillarPair(Mat frame, string templateName, double threshold)
+    {
+        var roi = PillarBand.ToPixels(frame.Width, frame.Height);
+        // The matcher returns the same base more than once (at several scales: 0.979 three times on the user's frame), so
+        // ask for more and keep the best hit per place - duplicates must not crowd the second pillar out.
+        var hits = new List<TemplateMatch>();
+        foreach (var hit in FindIcons(frame, templateName, roi, threshold, maxResults: 10).OrderByDescending(h => h.Score))
+        {
+            if (!hits.Any(h => Math.Abs(h.Bounds.CenterX - hit.Bounds.CenterX) < h.Bounds.Width / 2
+                               && Math.Abs(h.Bounds.CenterY - hit.Bounds.CenterY) < h.Bounds.Height))
+                hits.Add(hit);
+        }
+
+        PillarPair? best = null;
+        for (int i = 0; i < hits.Count; i++)
+        {
+            for (int j = i + 1; j < hits.Count; j++)
+            {
+                var (a, b) = hits[i].Bounds.CenterX <= hits[j].Bounds.CenterX ? (hits[i], hits[j]) : (hits[j], hits[i]);
+                double apart = (b.Bounds.CenterX - a.Bounds.CenterX) / (double)frame.Width;
+                double dy = Math.Abs(b.Bounds.CenterY - a.Bounds.CenterY) / (double)frame.Height;
+                if (apart < 0.10 || apart > 0.40 || dy >= 0.05)
+                    continue;
+
+                double offset = ((a.Bounds.CenterX + b.Bounds.CenterX) / 2.0 - frame.Width / 2.0) / frame.Width;
+                if (best == null || Math.Abs(offset) < Math.Abs(best.OffsetFraction))
+                    best = new PillarPair(a, b, offset);
+            }
+        }
+
+        return best;
+    }
+
     /// <summary>
     /// LOD (user, 2026-10-24): the pink ring round the boss's feet. Under the boss's blue skill light
     /// it is pale (live: H ~150, S 50-80, V 255), too pale for <see cref="FindSelectionRing"/>, so the

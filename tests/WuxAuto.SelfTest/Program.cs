@@ -90,6 +90,10 @@ int shuraIndex = Array.IndexOf(args, "--shura");
 if (shuraIndex >= 0 && shuraIndex + 1 < args.Length)
     return FrameProbe.Shura(args[shuraIndex + 1]);
 
+int pillarsIndex = Array.IndexOf(args, "--pillars");
+if (pillarsIndex >= 0 && pillarsIndex + 1 < args.Length)
+    return FrameProbe.Pillars(args[pillarsIndex + 1]);
+
 int hpIndex = Array.IndexOf(args, "--hp");
 if (hpIndex >= 0 && hpIndex + 1 < args.Length)
     return await WarProbe.HpAsync(args[hpIndex + 1]);
