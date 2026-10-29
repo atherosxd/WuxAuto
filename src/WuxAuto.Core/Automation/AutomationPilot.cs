@@ -342,6 +342,8 @@ public sealed partial class AutomationPilot
         _homeTown = null;
         _lodKills = 0;
         _blossomKills = 0;
+        _warHasAutoBuff = null;   // Auto Blossom asks once per Start (Auto War asks again on each war's entry)
+        _warBuffedAt = 0;
         _lodBuffAt = 0;
         _lodBuffs = 0;
         _lodApproachSnapshots = 0;
@@ -598,7 +600,8 @@ public sealed partial class AutomationPilot
         // "Labyrinth" within the last few seconds. Rotating, map clicks and Tab were sent in town
         // and in Bohai Outpost before. Stage 5 closing puts the character back in town -> next run.
         // Auto War: the same guard over the map pick in the cave (Destination = the cave).
-        if ((_settings.Dungeon.Enabled || IsWar || IsBlossom) && !_returning && IsLabyrinthPhase(_phase))
+        if ((_settings.Dungeon.Enabled || IsWar || IsBlossom) && !_returning
+            && (IsLabyrinthPhase(_phase) || (IsBlossom && _phase == PilotPhase.WarBuff)))
         {
             // Auto War's map pick reads the map window: only with the game in front - a second game client's map
             // must never confirm or pick a monster. The minimap is read again as soon as the game is back, and the

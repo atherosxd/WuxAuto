@@ -21,6 +21,7 @@ public sealed partial class AutomationPilot
     private const int BlossomTurnSettleMs = 350;
     private const int BlossomMaxStalls = 8;
     private const int BlossomMaxUnread = 40;
+    private const int BlossomRebuffOverdueMs = 30000;
 
     private IReadOnlyList<(int X, int Y)> _blossomRoute = [];
     private int _blossomWaypoint = -1;
@@ -30,6 +31,7 @@ public sealed partial class AutomationPilot
     private int _blossomUnread;
     private bool _blossomHeadingKnown;
     private bool _blossomHeadingUnknown;   // a fight began before any turn (Start inside the map): turn after it
+    private bool _blossomBuffThenTurn;
 
     private int _blossomTurnTaps;
     private int _blossomFineTaps;
@@ -67,10 +69,48 @@ public sealed partial class AutomationPilot
         _blossomHeadingUnknown = false;
     }
 
-    /// <summary>In Blossom Garden after the teleport, a restart or a death: (the buffs, Task 4,) then the turn to the pillars.</summary>
-    private void BeginBlossomArrival()
+    /// <summary>In Blossom Garden after the teleport, a restart or a death: the buffs, then the turn to the pillars.</summary>
+    private void BeginBlossomArrival() => BeginBlossomBuff("arrived", thenTurn: true);
+
+    /// <summary>
+    /// The buffs the Auto War way (user: "same rebuff logic as auto war"): autobuff known? (the item list, else the autohunt
+    /// settings) -> the buff key and the item buffs, or the ticked buff icons. <see cref="FinishWarBuffAsync"/> comes back to
+    /// <see cref="AfterBlossomBuff"/>: the turn (arrival, death) or the walk.
+    /// </summary>
+    private void BeginBlossomBuff(string why, bool thenTurn)
     {
-        BeginBlossomTurn();
+        _blossomBuffThenTurn = thenTurn;
+        _warBuffStep = _warHasAutoBuff == null ? 0 : 3;
+        _warBuffRound = null;
+        _warBuffIcon = 0;
+        _warBuffClicks = 0;
+        _warHuntSettingsPresses = 0;
+        Log?.Invoke(LogLevel.Info, $"Buffing ({why}).");
+        Advance(PilotPhase.WarBuff, 300);
+    }
+
+    /// <summary>The rebuff timer (War.BuffEveryMs since the last buff) has run out.</summary>
+    private bool BlossomRebuffDue(long now) => now - _warBuffedAt >= _settings.War.BuffEveryMs;
+
+    private void AfterBlossomBuff()
+    {
+        if (_blossomBuffThenTurn)
+            BeginBlossomTurn();
+        else
+            ResumeBlossomWalk();
+    }
+
+    /// <summary>After a loot or at a reached waypoint: rebuff when due, else on with the walk.</summary>
+    private void ResumeBlossomWalkOrRebuff(string where)
+    {
+        long now = Environment.TickCount64;
+        if (BlossomRebuffDue(now))
+        {
+            BeginBlossomBuff($"{Clock(now - _warBuffedAt)} since the last buff, {where}", thenTurn: false);
+            return;
+        }
+
+        ResumeBlossomWalk();
     }
 
     /// <summary>Tap D until both pillars are in view with their midpoint at the centre (user).</summary>
@@ -264,6 +304,13 @@ public sealed partial class AutomationPilot
             return;
         }
 
+        // A rebuff waits for a loot or a waypoint pause; 30 s past due it goes out on the walk.
+        if (now - (_warBuffedAt + _settings.War.BuffEveryMs) >= BlossomRebuffOverdueMs)
+        {
+            ResumeBlossomWalkOrRebuff("on the walk");
+            return;
+        }
+
         var coords = await _analyzer.ReadCoordinatesAsync(frame);
         if (coords == null)
         {
@@ -318,6 +365,14 @@ public sealed partial class AutomationPilot
 
         if (_blossomPauseSince > 0)
         {
+            // Standing at a reached waypoint anyway: the rebuff goes here when due, and the walk then heads for the next one.
+            if (BlossomRebuffDue(now))
+            {
+                AdvanceBlossomWaypoint($"Waypoint {_blossomWaypoint + 1} done");
+                ResumeBlossomWalkOrRebuff("at a waypoint");
+                return;
+            }
+
             if (now - _blossomPauseSince < b.WaypointWaitMs)
             {
                 _detail = $"at waypoint {_blossomWaypoint + 1}, tabbing ({(now - _blossomPauseSince) / 1000.0:0.0}s of {b.WaypointWaitMs / 1000.0:0.#}s)";
@@ -507,7 +562,7 @@ public sealed partial class AutomationPilot
         if (now - _blossomLootStart >= b.LootMs || !_controls.Has(GameAction.Loot))
         {
             Log?.Invoke(LogLevel.Info, $"Looted for {b.LootMs / 1000.0:0.#}s - on to waypoint {_blossomWaypoint + 1}.");
-            ResumeBlossomWalk();
+            ResumeBlossomWalkOrRebuff("after the loot");
             return;
         }
 

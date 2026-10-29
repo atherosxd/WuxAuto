@@ -115,12 +115,49 @@ public class BlossomPilotTests
         Assert.DoesNotContain("KeyTap Tab", input.Calls); // no Tab while turning
     }
 
+    [Fact]
+    public async Task Rebuff_Due_RunsAfterLoot_NotMidFight()
+    {
+        var (settings, input, ocr) = Harness(() => "15000 , 15000", target: i => Tabs(i) >= 1 && SkillTaps(i) < 4 ? "[S]Jaso Practitioner" : null,
+            autoBuffScroll: true);
+        settings.Lod.BuffKey = "O";
+        settings.Blossom.LootMs = 1000;
+        settings.Blossom.LootDelayMs = 0;
+        settings.Blossom.TargetGoneMs = 500;
+
+        var run = await RunAsync(settings, input, ocr, PilotPhase.BlossomWalk,
+            (_, lines) => lines.Any(l => l.StartsWith("Buffed with 'O'", StringComparison.Ordinal)), 20000);
+
+        string calls = string.Join("\n", input.Calls);
+        int buff = input.Calls.IndexOf("KeyTap O");
+        Assert.True(buff >= 0, string.Join("\n", run.Lines) + "\n" + calls);
+        Assert.True(buff > input.Calls.LastIndexOf("KeyTap `"), "the buff must follow the loot:\n" + calls);
+        Assert.True(buff > input.Calls.LastIndexOf("KeyTap 1"), "no buff mid-fight:\n" + calls);
+        Assert.Contains("KeyTap `", input.Calls);
+    }
+
+    [Fact]
+    public async Task Arrival_BuffsThenTurns()
+    {
+        var (settings, input, ocr) = Harness(() => "19148 , 19062", autoBuffScroll: true);
+        settings.Lod.BuffKey = "O";
+
+        var run = await RunAsync(settings, input, ocr, PilotPhase.ZoomOut, (_, _) => input.Calls.Contains("KeyDown D"), 20000);
+
+        string calls = string.Join("\n", input.Calls);
+        int buff = input.Calls.IndexOf("KeyTap O");
+        Assert.True(buff >= 0 && buff < input.Calls.IndexOf("KeyDown D"), string.Join("\n", run.Lines) + "\n" + calls);
+    }
+
     private static int Tabs(FakeGameInput input) => input.Calls.Count(c => c == "KeyTap Tab");
 
     private static int SkillTaps(FakeGameInput input) => input.Calls.Count(c => c == "KeyTap 1");
 
-    private static (AppSettings Settings, FakeGameInput Input, FakeOcrEngine Ocr) Harness(Func<string> coords, Func<FakeGameInput, string?>? target = null)
+    private static (AppSettings Settings, FakeGameInput Input, FakeOcrEngine Ocr) Harness(Func<string> coords, Func<FakeGameInput, string?>? target = null,
+        bool autoBuffScroll = true)
     {
+        // The scroll in the item list keeps the buff round short: a Start buffs first (the timer starts at 0), and with no
+        // buff key and no templates the round clicks nothing and goes back to the walk.
         var settings = new AppSettings();
         settings.Sequence.Mode = RunMode.AutoBlossom;
         settings.Lod.BuffKey = string.Empty;
@@ -138,6 +175,8 @@ public class BlossomPilotTests
             };
             if (target?.Invoke(input) is { } name)
                 words.Add(FakeOcrEngine.Line(name, 620, 50)); // the target bar, top centre
+            if (autoBuffScroll)
+                words.Add(FakeOcrEngine.Line("[Auto buff scroll] 01.01.2027", 1000, 700)); // the item list, bottom right
             return words;
         };
         return (settings, input, ocr);
