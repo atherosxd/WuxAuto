@@ -22,9 +22,10 @@ The automation goal:
 
 Everything it does is visible: detections are drawn on the live preview and every step is logged.
 
-Two more modes sit beside the Labyrinth (the Mode buttons above Start): **Auto LOD** (§4.5) and
+Three more modes sit beside the Labyrinth (the Mode buttons above Start): **Auto LOD** (§4.5),
 **Auto War** (§4.8, user 2026-10-27: an alt waits in a page-3 cave, joins every Bohai Outpost tribe war,
-fights, comes back to the same cave and monster; one game per WuxAuto, no walking inside Bohai).
+fights, comes back to the same cave and monster; one game per WuxAuto, no walking inside Bohai) and
+**Auto Blossom** (§4.9, user 2026-10-29: Jaso Practitioners on a 17-waypoint route in Blossom Garden).
 
 The user is non-technical about the internals but precise about the game behaviour — when they
 report "it didn't click X", the fastest path is almost always (a) read the debug snapshot from
@@ -136,6 +137,9 @@ dotnet run --project .\tests\WuxAuto.SelfTest -- --warbar "$env:LOCALAPPDATA\Wux
 dotnet run --project .\tests\WuxAuto.SelfTest -- --menu "$env:LOCALAPPDATA\WuxAuto\debug"    # the menu button and the MENU window
 dotnet run --project .\tests\WuxAuto.SelfTest -- --tribe "$env:LOCALAPPDATA\WuxAuto\war-inputs"  # TRIBE STATUS: the Bohai row's countdown (the user's screenshot lives there, never in git)
 
+# Auto Blossom: the two pillar bases (hits >= 0.30 in ScreenAnalyzer.PillarBand) + the pair / offset verdict per PNG
+dotnet run --project .\tests\WuxAuto.SelfTest -- --pillars <dir>
+
 # M2 parity: the pilot's detectors and x1.5 OCR reads on the frozen legacy vision (tests\...\Legacy,
 # OpenCvSharp 4.13) vs Core's (Emgu CV), per frame; ends with two summary lines (see below)
 dotnet run --project .\tests\WuxAuto.SelfTest -- --parity "$env:LOCALAPPDATA\WuxAuto\parity-frames"
@@ -212,7 +216,8 @@ The app itself:
 ```
 src/WuxAuto.Core            net10.0 class library, platform-free (M1, 2026-10-27: move-only split so an Android
                             app can share the pilot). Holds everything that decides what to do:
-  Automation/          AutomationPilot (+ .Lod / .RegularWar / .War / .WarTimer / .WarFight / .KillShots partials) - the whole state machine,
+  Automation/          AutomationPilot (+ .Lod / .RegularWar / .War / .WarTimer / .WarFight / .Blossom / .KillShots partials) - the whole state machine,
+                       BlossomRoute (Auto Blossom's waypoint list, order with its loop, nearest start),
                        WarText (pure text rules of Auto War: countdown, war row, list entries, HP, target name, log lines),
                        TabTargetOptions (the four TAB target values, steps between them),
                        AutohuntLog
@@ -944,6 +949,42 @@ resolutions; the X of the TELEPORT SCROLL (closing it costs no scroll, and wheth
 a war dialog during `WarRemember` before the monster is confirmed joins before the spot is saved (the return then stops instead of guessing) - once it is
 confirmed, the dialog watch waits for the save; a war dialog while a timer read has a window open can leave it open.
 Each part logs what it saw and saves `war_*` snapshots (<= 3 per tag per Start) - the first live war gives the frames to tune from.
+
+### 4.9 Auto Blossom (user, 2026-10-29, `Sequence.Mode` = `AutoBlossom`, `AutomationPilot.Blossom.cs`, settings `AppSettings.Blossom`)
+
+Spec: `docs/superpowers/specs/2026-10-29-auto-blossom-design.md`; plan `docs/superpowers/plans/2026-10-29-auto-blossom-mode.md`.
+Blossom Garden needs no key (user). Phases: `BlossomTurn, BlossomWalk, BlossomAttack, BlossomLoot, BlossomRespawn` (+ the
+shared `WarBuff`). The zone guard covers them (and `WarBuff` in this mode); a home town = the AFK checker's kick (user) ->
+teleport in again (LOD's rule); still in town after the teleport = "destination closed?" fail, never out-of-keys.
+
+* **Town -> map:** the shared steps (autohunt off, Run skill, font / TAB target Default), no Regular War untick, scroll page 1
+  "Blossom Garden", zoom out after the minimap title reads -> `BeginBlossomArrival` = buffs (`BeginBlossomBuff(thenTurn: true)`)
+  -> `BlossomTurn`.
+* **Turn:** `ScreenAnalyzer.FindPillarPair` (`Assets/blossompillar.png` = the left pillar's grey base, 96x42, cropped from the
+  user's zoomed-out 2000x1168 frame at 788,270; hits in `PillarBand` (0.15, 0.05, 0.62, 0.45), duplicates per place dropped, a
+  pair = one row, 0.10-0.40 w apart, the most central). User's frame: left 0.979, right (green-tinted) 0.807, offset +0.020.
+  No pair -> `D` (`TurnDirection.Right` = `Input.RotateKey`) `TurnTapMs` 100, 350 ms settle; after `TurnTaps` 7 one Info, after
+  `TurnMaxTaps` 50 a warning + `blossom_no_pillars` and the walk. Pair off centre (> `PillarCenterTolerance` 0.06 w) -> 40 ms fine
+  taps, direction flipped when the offset grew (D's direction is not assumed), <= 12. No Tab while turning.
+* **Walk:** `BlossomRoute` (17 user waypoints, 1-5 then 6-17 looped, `LoopFrom` 6), starting at the **nearest** waypoint (arrival
+  19148,19062 -> waypoint 1). The first step after a turn clicks **straight up**; the movement sets `_headingBase` (the view's
+  world direction is unknown), then `LearnHeadingError`. Tab every `TabEveryMs` 1000. Reached (<= 60) -> stand + Tab <=
+  `WaypointWaitMs` 3000 (clamped <= 5000, AFK checker), then the next. 8 still steps -> warning, `blossom_stuck`, next waypoint.
+  40 unread coordinates -> fail.
+* **Target:** whole-screen OCR line in the target-bar band (y < 13 % h, |x - 50 %| < 22 % w) containing the name after its "[S]"
+  ("jasopractitioner") or >= 0.85 like `TargetName`, else `monstericon` >= 0.80 at the top centre (user: the Jaso shows the chest).
+  Anything else is not attacked.
+* **Fight / loot:** as LOD (skill every `Lod.SkillEveryMs`, Ctrl + skill, `Lod.HoldSkill`); gone `TargetGoneMs` 2000 = kill ->
+  `LootDelayMs` 1000 -> loot key every `LootEveryMs` 200 for `LootMs` 5000, no Tab -> the walk (a fight met during a waypoint
+  pause moves on to the next waypoint). `FightMaxMs` 120000 -> give up (user: a Jaso dies within 2 min). Coordinate jump >
+  `Lod.TeleportJump` -> `BlossomRespawn` (settle) -> arrival again.
+* **Rebuff:** the Auto War buff steps (`TickWarBuffAsync`, no Bohai zone check in this mode; `FinishWarBuffAsync` ->
+  `AfterBlossomBuff`), timer `War.BuffEveryMs`; `Start` resets `_warHasAutoBuff` / `_warBuffedAt`. Due -> after a loot or at a
+  waypoint pause; 30 s overdue -> on the walk. Never mid-fight.
+* Pinned by `BlossomRouteTests`, `PillarPairTests`, `BlossomPilotTests` (first click up, nearest start, pause <= wait, Jaso ->
+  attack -> loot -> walk with no click / Tab in between, another target ignored, turn gives up, rebuff after the loot, arrival
+  buffs before the first `D`). **Not seen live:** which way `D` turns, the live pillar scores at other resolutions, walls between
+  waypoints, the Jaso name in the target bar, the AFK kick.
 
 ## 6. Settings and persistence — read this before changing defaults
 

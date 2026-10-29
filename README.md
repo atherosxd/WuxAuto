@@ -247,6 +247,30 @@ players in the target box, HP 0 and the revive), the buff icons on a real skill 
 the menu button toggles it shut, the "Regular War" label in the autohunt settings, and the "Arrived:" wording. Every part logs
 what it saw and saves `war_*` pictures to the debug folder the first time, so send the log and those pictures after the first war.
 
+### Auto Blossom (Jaso Practitioners in Blossom Garden)
+
+Pick **Auto Blossom** (**Blossom** in the mini window) and press **Start** in a home town (or inside Blossom Garden).
+Blossom Garden needs no key.
+
+1. Teleport scroll, page 1, **Blossom Garden**; the zoom-out waits for "Blossom Garden" on the minimap.
+2. Buffs - the Auto War way: autobuff (`O` + the ticked item buffs) when the item list shows "[Auto buff scroll]",
+   else the ticked buff icons (Settings > Auto War > Buffs).
+3. `D` taps (100 ms) until the two pillars stand side by side with their midpoint at the centre of the screen
+   (`Assets\blossompillar.png`, a pillar base; the user's frame scores 0.98 and 0.81, the score gate is 0.70). Not lined up
+   after 50 taps: it walks anyway.
+4. The walk: 17 waypoints (`Blossom > Waypoints` in settings.json) - 1 to 5 once, then 6 to 17 over and over - starting at
+   the nearest one. The first click goes straight up the screen; where the character went tells which way the camera
+   looks. `Tab` every second. At a reached waypoint it stands at most **Waypoint pause** (3 s; at most 5 s - the AFK
+   checker kicks idle characters to town, and from town it teleports back in).
+5. **[S]Jaso Practitioner** in the target bar (or a target showing the chest): the skill (Ctrl + skill, as LOD) until
+   the target is gone 2 s, then 1 s later the loot key every 0.2 s for **Loot time** (5 s), then on to the waypoint it
+   was heading for. A fight that never ends is given up after 2 minutes.
+6. Rebuff when **Rebuff every** (Auto War) is due - after a loot or at a waypoint, never mid-fight.
+
+Same upgrade note as Auto War: an older WuxAuto cannot read `"Mode": "AutoBlossom"` and resets the settings - update every copy first.
+Probe: `--pillars <dir>` prints the pillar hits and the lined-up verdict per PNG. **Not tested live yet**: which way `D`
+turns the view, walls between waypoints, the Jaso's name in the target bar.
+
 ### Input safety
 
 By default (`Input ▸ Mode = ForegroundSendInput`, `Only while game is focused`) the pilot sends
@@ -426,6 +450,9 @@ dotnet run --project .\tests\WuxAuto.SelfTest -- --capture
 # run the full Test scan over a saved frame and write frame.scan.png next to it
 dotnet run --project .\tests\WuxAuto.SelfTest -- --frame C:\path\frame.png
 #   add --crop x y w h [zoom] to also write a zoomed crop
+
+# Auto Blossom: the two pillar bases and the lined-up verdict for every PNG in a folder
+dotnet run --project .\tests\WuxAuto.SelfTest -- --pillars C:\path\frames
 
 # focus the game, tap a key and report how much of the frame changed
 dotnet run --project .\tests\WuxAuto.SelfTest -- --input I
