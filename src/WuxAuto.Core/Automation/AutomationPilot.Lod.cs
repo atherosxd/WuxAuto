@@ -472,8 +472,11 @@ public sealed partial class AutomationPilot
             {
                 if (_controls.Has(GameAction.Loot) || _phoneLootTaps > 0)
                     Log?.Invoke(LogLevel.Info, $"Loot: {_phoneLootTaps} taps over {(now - _phaseStart) / 1000.0:0.#} s.");
-                else
+                else if (!_phoneLootMissingWarned)
+                {
+                    _phoneLootMissingWarned = true;
                     Log?.Invoke(LogLevel.Warning, "Loot: the Pick up button is not on screen - nothing picked up (check the shortcut ring).");
+                }
             }
 
             // The kill's second screenshot: what is left on the ground after looting.

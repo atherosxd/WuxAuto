@@ -239,6 +239,13 @@ log every tap ("Auto buff tapped at x,y", "Loot: N taps over M s"), warn once on
 a missing AUTO BUFF / Pick up, and check a buff ~3 s later on the row under the HP bar (timers if they read, else the
 row's pixels; unchanged = one more tap, then "Auto buff did not take"). Open: the Xiaomi ring shows a second padlock
 (top left, reads open, no (+) shown) - what it does is the owner's word.
+Review round (same day): HUNT is **not** a required shortcut (used where found, never added) and the town autohunt-off
+check does not run on the phone (its log read is unverified there); a hit whose colour cannot be told (dark middle) is
+neither HUNT nor AUTO BUFF; the buff check counts a miss only when timers that read did not go up **and** the first row
+of buff icons (0,125 340x55 at 1080) did not change - then one more buff through `TryLodBuff` (Shura + 400 ms mid-fight),
+else it only logs; no check in a dry run. The shortcut check's two misses are >= 1.5 s apart, and 20 looks without the
+zone title stop the check ("the game screen (zone title) was not seen") instead of deciding. A tap during a hold does not
+press the old hold again after a Halt / ReleaseAll / another hold (generation counter).
 
 ---
 

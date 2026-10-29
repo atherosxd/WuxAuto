@@ -205,7 +205,7 @@ public class PhoneLodFlowTests : AppPathsScope
 
         await phone.RunAsync(() => frame, PilotPhase.LodRun, () => phone.Lines.Any(l => l.StartsWith("Auto buff took", StringComparison.Ordinal)), 5000);
 
-        Assert.Contains(phone.Lines, l => l == "Auto buff took (timers 6m).");
+        Assert.Contains(phone.Lines, l => l == "Auto buff took (timers 6m, buff icons 0.0% changed).");
         Assert.Equal(1, phone.Touch.Taps.Count(t => t == Centre(AutoBuff)));
     }
 
@@ -222,7 +222,7 @@ public class PhoneLodFlowTests : AppPathsScope
         await phone.RunAsync(() => frame, PilotPhase.LodRun, () => phone.Lines.Any(l => l.StartsWith("Auto buff did not take", StringComparison.Ordinal)), 5000);
 
         Assert.Equal(2, phone.Touch.Taps.Count(t => t == Centre(AutoBuff)));
-        Assert.Contains(phone.Lines, l => l.StartsWith("Auto buff: nothing changed under the HP bar (timers 2m) - tapped it once more.", StringComparison.Ordinal));
+        Assert.Contains(phone.Lines, l => l.StartsWith("Auto buff: nothing changed under the HP bar (timers 2m, buff icons 0.0% changed) - buffing once more.", StringComparison.Ordinal));
         Assert.Contains(phone.Lines, l => l.StartsWith("Auto buff did not take (tapped twice", StringComparison.Ordinal));
     }
 
@@ -285,22 +285,23 @@ public class PhoneLodFlowTests : AppPathsScope
         using var before = PhoneFrames.Grey();
         using var same = before.Clone();
         using var renewed = before.Clone();
-        // Two new buff icons in the row under the HP bar (0,120 480x110 at 1920x1080).
+        // Two new buff icons in the first icon row under the HP bar (0,125 340x55 at 1920x1080).
         PhoneFrames.Paste(renewed, "phone_autohunt", 200, 140);
         PhoneFrames.Paste(renewed, "phone_autohunt", 240, 140);
         using var a = AutomationPilot.BuffRowGrey(before);
         using var b = AutomationPilot.BuffRowGrey(same);
         using var c = AutomationPilot.BuffRowGrey(renewed);
 
-        Assert.Equal(new System.Drawing.Size(480, 110), a.Size);
+        Assert.Equal(new System.Drawing.Size(340, 55), a.Size);
         Assert.Equal(0, AutomationPilot.BuffRowChange(a, b));
         Assert.True(AutomationPilot.BuffRowChange(a, c) >= AutomationPilot.BuffRowChangedShare);
     }
 
     [Fact]
-    public async Task PhoneLod_BuffRowStill_TapsOnceMoreThenWarns_WithoutReadableTimers()
+    public async Task PhoneLod_BuffIconsStill_TimersUnread_OnlyLogged_NoSecondTap()
     {
-        // The timers do not read (Windows OCR read none on the MuMu buff frames): the row's pixels decide.
+        // The timers do not read (Windows OCR read none on the MuMu buff frames) and the icons did not change: the pixels
+        // alone are no proof (a second tap with full buffs changes nothing either) - logged, not tapped again.
         using var phone = new PhonePilot(TempRoot());
         phone.Pilot.PhoneBuffCheckDelayMs = 100;
         phone.Settings.Lod.WalkToBossSpot = false;
@@ -308,10 +309,98 @@ public class PhoneLodFlowTests : AppPathsScope
         phone.Ocr.Scene = () => [Title];
         using var frame = PhoneFrames.Grey();
 
-        await phone.RunAsync(() => frame, PilotPhase.LodRun, () => phone.Lines.Any(l => l.StartsWith("Auto buff did not take", StringComparison.Ordinal)), 5000);
+        await phone.RunAsync(() => frame, PilotPhase.LodRun, () => phone.Lines.Any(l => l.StartsWith("Auto buff: cannot tell", StringComparison.Ordinal)), 5000);
+        long until = Environment.TickCount64 + 600;
+        while (Environment.TickCount64 < until)
+        {
+            await phone.Pilot.TickAsync(frame, CancellationToken.None);
+            await Task.Delay(20);
+        }
 
-        Assert.Equal(2, phone.Touch.Taps.Count(t => t == Centre(AutoBuff)));
-        Assert.Contains(phone.Lines, l => l.StartsWith("Auto buff did not take (tapped twice, buff row 0.0% changed)", StringComparison.Ordinal));
+        Assert.Equal(1, phone.Touch.Taps.Count(t => t == Centre(AutoBuff)));
+        Assert.Contains(phone.Lines, l => l == "Auto buff: cannot tell whether it took (buff icons 0.0% changed) - not tapped again.");
+        Assert.DoesNotContain(phone.Lines, l => l.StartsWith("Auto buff did not take", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task PhoneLod_BuffTimersUnchanged_IconsChanged_OnlyLogged()
+    {
+        // Timers that did not go up, but icons that changed: the two disagree - logged, no second tap.
+        using var phone = new PhonePilot(TempRoot());
+        phone.Pilot.PhoneBuffCheckDelayMs = 100;
+        phone.Settings.Lod.WalkToBossSpot = false;
+        phone.Shortcuts.Icons[GameAction.Buff] = AutoBuff;
+        phone.Ocr.Scene = () => [Title, FakeOcrEngine.Line("2m", 160, 160, 24, 14)];
+        using var plain = PhoneFrames.Grey();
+        using var renewed = plain.Clone();
+        PhoneFrames.Paste(renewed, "phone_autohunt", 200, 140);
+        PhoneFrames.Paste(renewed, "phone_autohunt", 240, 140);
+
+        await phone.RunAsync(() => phone.Touch.Taps.Contains(Centre(AutoBuff)) ? renewed : plain, PilotPhase.LodRun,
+            () => phone.Lines.Any(l => l.StartsWith("Auto buff: cannot tell", StringComparison.Ordinal)), 5000);
+
+        Assert.Equal(1, phone.Touch.Taps.Count(t => t == Centre(AutoBuff)));
+        Assert.DoesNotContain(phone.Lines, l => l.StartsWith("Auto buff did not take", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task PhoneLod_HoldMode_BuffRetryMidFight_GoesThroughTheRebuff()
+    {
+        // The "once more" buff in a Hold fight: the usual rebuff (skill let go, stop-attack step, 400 ms), not a bare tap.
+        using var phone = new PhonePilot(TempRoot());
+        phone.Pilot.PhoneBuffCheckDelayMs = 1500; // the skill is held by then
+        phone.Settings.Phone.AttackMode = PhoneAttackMode.Hold;
+        phone.Settings.Lod.ApproachBoss = false;
+        phone.Shortcuts.Skills["1"] = Skill1;
+        phone.Shortcuts.Icons[GameAction.Buff] = AutoBuff;
+        phone.Ocr.Scene = () => [Title, Target, FakeOcrEngine.Line("2m", 160, 160, 24, 14)];
+        using var frame = PhoneFrames.Grey();
+
+        await phone.RunAsync(() => frame, PilotPhase.LodAttack, () => phone.Touch.Taps.Count(t => t == Centre(AutoBuff)) >= 2, 8000);
+
+        Assert.Equal(PilotPhase.LodAttack, phone.Pilot.Phase);
+        Assert.Contains(phone.Lines, l => l.StartsWith("Auto buff: nothing changed under the HP bar", StringComparison.Ordinal));
+        int retry = phone.Lines.FindIndex(l => l.StartsWith("Auto buff: nothing changed under the HP bar", StringComparison.Ordinal));
+        Assert.Contains(phone.Lines.Skip(retry), l => l.StartsWith("Re-buffed (", StringComparison.Ordinal));
+        var calls = phone.Touch.Calls;
+        int second = calls.FindLastIndex(c => c == $"Tap {AutoBuff.CenterX},{AutoBuff.CenterY}");
+        Assert.Equal("Release", calls[second - 1]);
+    }
+
+    [Fact]
+    public async Task PhoneLod_DryRun_NoBuffCheck()
+    {
+        using var phone = new PhonePilot(TempRoot());
+        phone.Touch.DryRun = true;
+        phone.Pilot.PhoneBuffCheckDelayMs = 100;
+        phone.Settings.Lod.WalkToBossSpot = false;
+        phone.Shortcuts.Icons[GameAction.Buff] = AutoBuff;
+        phone.Ocr.Scene = () => [Title, FakeOcrEngine.Line("2m", 160, 160, 24, 14)];
+        using var frame = PhoneFrames.Grey();
+        long until = Environment.TickCount64 + 1200;
+
+        await phone.RunAsync(() => frame, PilotPhase.LodRun, () => Environment.TickCount64 > until);
+
+        Assert.Contains(phone.Lines, l => l.StartsWith("Auto buff tapped", StringComparison.Ordinal));
+        Assert.DoesNotContain(phone.Lines, l => l.StartsWith("Auto buff took", StringComparison.Ordinal)
+                                                || l.StartsWith("Auto buff:", StringComparison.Ordinal)
+                                                || l.StartsWith("Auto buff did not take", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task PhoneTown_AutohuntOffCheck_NotOnThePhone()
+    {
+        // HUNT on the ring, in town: the desktop's autohunt-off check (J + combat-log read) is not run on the phone.
+        using var phone = new PhonePilot(TempRoot());
+        var hunt = new PixelRect(36, 900, 44, 44);
+        phone.Shortcuts.Icons[GameAction.ToggleAutohunt] = hunt;
+        phone.Ocr.Scene = () => [FakeOcrEngine.Line("[Piercing City]", 1600, 70, 200, 16)];
+        using var frame = PhoneFrames.Grey();
+
+        await phone.RunAsync(() => frame, PilotPhase.CheckZone, () => phone.Pilot.Phase != PilotPhase.CheckZone, 5000);
+
+        Assert.DoesNotContain(PilotPhase.AutohuntOff, phone.Phases);
+        Assert.DoesNotContain(Centre(hunt), phone.Touch.Taps);
     }
 
     [Fact]

@@ -189,6 +189,49 @@ public sealed class TouchControlsTests
     }
 
     [Fact]
+    public void Tap_WhileHeld_HaltDuringTheLift_NoTapNoPressAgain()
+    {
+        var h = new Harness();
+        h.Settings.Phone.AttackMode = PhoneAttackMode.Hold;
+        h.Shortcuts.Skills["1"] = SkillButton;
+        TouchControls? controls = null;
+        controls = new TouchControls(h.Settings, h.Touch, h.Shortcuts, ms =>
+        {
+            h.Touch.Calls.Add($"Sleep:{ms}");
+            if (ms == TouchControls.LiftBeforeTapMs)
+                controls!.Halt();
+        });
+
+        Assert.True(controls.SkillDown("1"));
+        Assert.False(controls.Tap(10, 20));
+        Assert.Equal(["Down:830,630", "Release", $"Sleep:{TouchControls.LiftBeforeTapMs}", "Release"], h.Touch.Calls);
+    }
+
+    [Fact]
+    public void Tap_WhileHeld_ReleaseAllAndANewStartDuringTheWait_OldSkillNotPressedAgain()
+    {
+        // Stop -> Start (ReleaseAll, Resume) while the tap waits: the old hold belongs to the old run.
+        var h = new Harness();
+        h.Settings.Phone.AttackMode = PhoneAttackMode.Hold;
+        h.Shortcuts.Skills["1"] = SkillButton;
+        TouchControls? controls = null;
+        controls = new TouchControls(h.Settings, h.Touch, h.Shortcuts, ms =>
+        {
+            h.Touch.Calls.Add($"Sleep:{ms}");
+            if (ms == TouchControls.TapBeforeRepressMs)
+            {
+                controls!.Halt();
+                controls.Resume();
+            }
+        });
+
+        Assert.True(controls.SkillDown("1"));
+        Assert.True(controls.Tap(10, 20));
+        Assert.False(controls.SkillStillHeld("1"));
+        Assert.Equal(1, h.Touch.Calls.Count(c => c == "Down:830,630"));
+    }
+
+    [Fact]
     public void SkillDown_HoldMode_HaltLiftsIt()
     {
         var h = new Harness();

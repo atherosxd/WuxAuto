@@ -271,27 +271,37 @@ public sealed class ShortcutMap(ScreenAnalyzer analyzer, double threshold = Shor
     private static bool NeedsColour(string template) =>
         template.Equals(AutohuntTemplate, StringComparison.OrdinalIgnoreCase) || template.Equals(AutoBuffTemplate, StringComparison.OrdinalIgnoreCase);
 
-    /// <summary>HUNT must be yellow and AUTO BUFF must not (<see cref="YellowSwordsMin"/>); every other template passes.</summary>
+    /// <summary>
+    /// HUNT must be yellow and AUTO BUFF must not (<see cref="YellowSwordsMin"/>); every other template passes. A hit
+    /// whose colour cannot be told (<see cref="YellowFraction"/> null: too dark, nothing bright in its middle) is neither:
+    /// in grey the two are the same swords, so a guess could tap HUNT for a buff.
+    /// </summary>
     private static bool ColourFits(Mat frame, string template, PixelRect box)
     {
-        if (template.Equals(AutohuntTemplate, StringComparison.OrdinalIgnoreCase))
-            return YellowFraction(frame, box) >= YellowSwordsMin;
-        if (template.Equals(AutoBuffTemplate, StringComparison.OrdinalIgnoreCase))
-            return YellowFraction(frame, box) < YellowSwordsMin;
-        return true;
+        bool hunt = template.Equals(AutohuntTemplate, StringComparison.OrdinalIgnoreCase);
+        if (!hunt && !template.Equals(AutoBuffTemplate, StringComparison.OrdinalIgnoreCase))
+            return true;
+        if (YellowFraction(frame, box) is not { } yellow)
+            return false;
+        return hunt ? yellow >= YellowSwordsMin : yellow < YellowSwordsMin;
     }
 
+    /// <summary>Of the middle of a hit, at least this share must be bright for its colour to count.</summary>
+    public const double BrightShareMin = 0.05;
+
     /// <summary>
-    /// Of the bright pixels (V &gt;= 130) in the middle 60 % of <paramref name="box"/>, the share that is yellow / gold
-    /// (H 8-40, S &gt;= 90 on OpenCV's 0-180 hue); 0 when nothing there is bright. The middle only: the slot round the
-    /// icon is see-through.
+    /// Of the bright pixels in the middle 60 % of <paramref name="box"/>, the share that is yellow / gold (H 8-40, S &gt;= 90
+    /// on OpenCV's 0-180 hue). Bright = V &gt;= 130, lowered to 0.6 of the middle's brightest pixel on a dimmed screen (a
+    /// dialog or the ☰ panel over it; never below 60). Null = cannot tell: the middle's brightest pixel is under 60, or
+    /// fewer than <see cref="BrightShareMin"/> of its pixels are bright. The middle only: the slot round the icon is
+    /// see-through.
     /// </summary>
-    public static double YellowFraction(Mat frame, PixelRect box)
+    public static double? YellowFraction(Mat frame, PixelRect box)
     {
         int insetX = box.Width / 5, insetY = box.Height / 5;
         var r = new PixelRect(box.X + insetX, box.Y + insetY, box.Width - 2 * insetX, box.Height - 2 * insetY).Clamp(frame.Width, frame.Height);
         if (r.Width < 2 || r.Height < 2)
-            return 0;
+            return null;
 
         using var crop = new Mat(frame, new Rectangle(r.X, r.Y, r.Width, r.Height));
         using var bgr = new Mat();
@@ -301,12 +311,22 @@ public sealed class ShortcutMap(ScreenAnalyzer analyzer, double threshold = Shor
             crop.CopyTo(bgr);
         using var hsv = new Mat();
         CvInvoke.CvtColor(bgr, hsv, ColorConversion.Bgr2Hsv);
+        using var value = new Mat();
+        CvInvoke.ExtractChannel(hsv, value, 2);
+        var (maxValue, _) = CvHelpers.MaxLoc(value);
+        if (maxValue < 60)
+            return null;
+
+        double cut = Math.Min(130, Math.Max(60, maxValue * 0.6));
         using var bright = new Mat();
-        CvHelpers.InRange(hsv, new MCvScalar(0, 0, 130), new MCvScalar(180, 255, 255), bright);
-        using var yellow = new Mat();
-        CvHelpers.InRange(hsv, new MCvScalar(8, 90, 130), new MCvScalar(40, 255, 255), yellow);
+        CvHelpers.InRange(hsv, new MCvScalar(0, 0, cut), new MCvScalar(180, 255, 255), bright);
         int brightCount = CvInvoke.CountNonZero(bright);
-        return brightCount == 0 ? 0 : CvInvoke.CountNonZero(yellow) / (double)brightCount;
+        if (brightCount < BrightShareMin * r.Width * r.Height)
+            return null;
+
+        using var yellow = new Mat();
+        CvHelpers.InRange(hsv, new MCvScalar(8, 90, cut), new MCvScalar(40, 255, 255), yellow);
+        return CvInvoke.CountNonZero(yellow) / (double)brightCount;
     }
 
     private static bool IsAttack(string template) => template.StartsWith("phone_attack", StringComparison.OrdinalIgnoreCase);

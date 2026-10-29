@@ -184,19 +184,20 @@ public class ShortcutCheckTests : AppPathsScope
     [Fact]
     public async Task AllPresent_GoesToCheckZone()
     {
-        // The templates without phone_autohunt (cropped 2026-10-30): a shortcut without a picture is told, not checked.
-        using var phone = new PhonePilot(TempRoot(), assets: AssetsWithout("phone_autohunt"));
+        // The templates without phone_pickup: a shortcut without a picture is told, not checked. HUNT is not needed (it is
+        // used where found, never added - review of 2026-10-30), so it is neither told nor checked.
+        using var phone = new PhonePilot(TempRoot(), assets: AssetsWithout("phone_pickup"));
         var ring = new FakeRing(phone) { Locked = true };
         ring.Fill(0, "Teleport Scroll");
-        ring.Fill(1, "Pick up");
 
         await phone.RunAsync(ring.Render, PilotPhase.Focus, () => phone.Pilot.Phase == PilotPhase.CheckZone);
 
         Assert.Equal(PilotPhase.CheckZone, phone.Pilot.Phase);
         Assert.Contains(PilotPhase.ShortcutCheck, phone.Phases);
         Assert.Empty(phone.Touch.Calls);
-        // No crop of the HUNT shortcut yet: told, not checked (adding it would put a copy on the ring every Start).
-        Assert.Contains(phone.Lines, l => l.StartsWith("Shortcut check: no picture of the 'HUNT' shortcut yet", StringComparison.Ordinal));
+        // No crop of the shortcut: told, not checked (adding it would put a copy on the ring every Start).
+        Assert.Contains(phone.Lines, l => l.StartsWith("Shortcut check: no picture of the 'Pick up' shortcut yet", StringComparison.Ordinal));
+        Assert.DoesNotContain(phone.Lines, l => l.Contains("'HUNT'", StringComparison.Ordinal));
     }
 
     [Fact]
@@ -342,17 +343,58 @@ public class ShortcutCheckTests : AppPathsScope
     }
 
     [Fact]
-    public async Task ZoneTitleNeverReads_DecidesAfterTheLimit()
+    public async Task ZoneTitleNeverReads_StopsWithoutTouchingTheRing()
     {
+        // 20 looks without the game screen: a stop that says so - never "missing", never a padlock tap.
         using var phone = new PhonePilot(TempRoot());
         var ring = new FakeRing(phone) { Locked = true, TitleReads = false };
         ring.Fill(0, "Teleport Scroll");
 
-        // 20 looks on freshly drawn 1920x1080 frames, then the whole add: more than the default 15 s on a busy test run.
-        await phone.RunAsync(ring.Render, PilotPhase.Focus, () => phone.Pilot.Phase == PilotPhase.CheckZone, timeoutMs: 40000);
+        var phase = await phone.RunAsync(ring.Render, PilotPhase.Focus, () => false, timeoutMs: 40000);
 
-        Assert.True(ring.Picked.SequenceEqual(["Pick up"]), phone.Log);
-        Assert.Contains(phone.Lines, l => l.Contains("(the zone title did not read for ", StringComparison.Ordinal));
+        Assert.Equal(PilotPhase.Failed, phase);
+        Assert.Empty(phone.Touch.Calls);
+        Assert.Contains(phone.Lines, l => l.Contains(ShortcutCheck.NoGameScreenText, StringComparison.Ordinal));
+        Assert.DoesNotContain(phone.Lines, l => l.Contains("not found on two searches", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task TheTwoMisses_AreAtLeast1500MsApart()
+    {
+        using var phone = new PhonePilot(TempRoot());
+        var ring = new FakeRing(phone) { Locked = true };
+        ring.Fill(0, "Teleport Scroll");                 // Pick up missing
+        long firstLook = 0, decided = 0;
+        phone.Shortcuts.OnInvalidate = action =>
+        {
+            if (action == GameAction.Loot && firstLook == 0)
+                firstLook = Environment.TickCount64;     // the first miss asks for a search again
+        };
+        phone.Pilot.Log += (_, text) =>
+        {
+            if (text.Contains("not found on two searches", StringComparison.Ordinal) && decided == 0)
+                decided = Environment.TickCount64;
+        };
+
+        await phone.RunAsync(ring.Render, PilotPhase.Focus, () => decided != 0);
+
+        Assert.True(firstLook > 0 && decided - firstLook >= ShortcutCheck.MinLookGapMs - 20, $"first miss {firstLook}, decided {decided}");
+    }
+
+    [Fact]
+    public async Task HuntNotOnAFullRing_IsNoStop()
+    {
+        // HUNT is optional: a full ring without it starts the run, nothing tapped.
+        using var phone = new PhonePilot(TempRoot());
+        var ring = new FakeRing(phone) { Locked = true };
+        for (int i = 0; i < FakeRing.Slots.Length; i++)
+            ring.Fill(i, i == 0 ? "Teleport Scroll" : i == 1 ? "Pick up" : "Gold Scroll");
+        phone.Shortcuts.Icons.Remove(GameAction.ToggleAutohunt);
+
+        await phone.RunAsync(ring.Render, PilotPhase.Focus, () => phone.Pilot.Phase == PilotPhase.CheckZone);
+
+        Assert.Equal(PilotPhase.CheckZone, phone.Pilot.Phase);
+        Assert.Empty(phone.Touch.Calls);
     }
 
     private static void AssertNear(Point expected, Point actual) =>
@@ -384,6 +426,9 @@ public class ShortcutCheckTests : AppPathsScope
 
         Assert.Null(ShortcutCheck.FindEntry(autoHunt, "HUNT"));
         Assert.NotNull(ShortcutCheck.FindEntry(hunt, "HUNT"));
+        // OCR split "Auto-" and "Hunt (J)" into two words.
+        var split = FakeOcrEngine.Words("Auto- Hunt (J)", 900, 600, 90, 14).ToList();
+        Assert.Null(ShortcutCheck.FindEntry(split, "HUNT"));
     }
 
     [Fact]

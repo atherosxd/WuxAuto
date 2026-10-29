@@ -184,6 +184,41 @@ public class ShortcutMapTests : AppPathsScope
     }
 
     [Fact]
+    public void OnlyTheYellowHuntOnTheRing_IsNotAutoBuff()
+    {
+        // No AUTO BUFF anywhere: the yellow swords must not stand in for it (a rebuff would tap HUNT).
+        using var analyzer = NewAnalyzer();
+        var map = new ShortcutMap(analyzer);
+        using var frame = new Mat(1080, 1920, DepthType.Cv8U, 4);
+        frame.SetTo(new MCvScalar(110, 110, 110, 255));
+        var hunt = PasteScaled(frame, "phone_autohunt", 137, 977, 1.0);
+
+        map.Refresh(frame);
+
+        Assert.Null(map.Find(GameAction.Buff));
+        AssertAt(hunt, map.Find(GameAction.ToggleAutohunt), "ToggleAutohunt");
+    }
+
+    [Fact]
+    public void DimmedSwords_AreNeitherHuntNorAutoBuff()
+    {
+        // A dark screen (a dialog / the ☰ panel over the ring): nothing bright in the middle of the swords - the colour
+        // cannot be told, so neither shortcut is taken from them.
+        using var analyzer = NewAnalyzer();
+        var map = new ShortcutMap(analyzer);
+        using var frame = new Mat(1080, 1920, DepthType.Cv8U, 4);
+        frame.SetTo(new MCvScalar(20, 20, 20, 255));
+        var box = PasteScaled(frame, "phone_autohunt", 137, 977, 1.0);
+        using (var icon = new Mat(frame, new Rectangle(box.X, box.Y, box.Width, box.Height)))
+            CvInvoke.ConvertScaleAbs(icon, icon, 0.2, 0);    // the same picture at a fifth of its brightness
+
+        Assert.Null(ShortcutMap.YellowFraction(frame, box));
+        map.Refresh(frame);
+        Assert.Null(map.Find(GameAction.Buff));
+        Assert.Null(map.Find(GameAction.ToggleAutohunt));
+    }
+
+    [Fact]
     public void MenuZone_IsAnchoredToTheRightEdge()
     {
         // 1920x1080: x 600-1500; 2608x1200: the same distance from the right edge, scaled (1141-2141).

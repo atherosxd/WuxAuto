@@ -58,6 +58,10 @@ public sealed class TouchControls(AppSettings settings, ITouchInput touch, IShor
     // Where the held finger is down (for the press again after a tap in between). Under _heldLock.
     private (int X, int Y) _heldAt;
 
+    // Bumped by every ReleaseAll and every new held press (under _heldLock): a tap in between presses the old hold
+    // again only if nothing else let go of it or took the finger during its waits.
+    private int _holdGeneration;
+
     // The skill "held" by SkillDown ("skill:1"): one press went out, nothing stays down. Under _heldLock.
     private string? _pressedSkill;
 
@@ -259,6 +263,7 @@ public sealed class TouchControls(AppSettings settings, ITouchInput touch, IShor
         {
             _held = null;
             _pressedSkill = null;
+            _holdGeneration++;
             touch.Release();
         }
     }
@@ -308,10 +313,12 @@ public sealed class TouchControls(AppSettings settings, ITouchInput touch, IShor
     {
         string? resume;
         (int X, int Y) at;
+        int generation;
         lock (_heldLock)
         {
             resume = _held;
             at = _heldAt;
+            generation = _holdGeneration;
             if (resume != null)
             {
                 _held = null;
@@ -323,11 +330,14 @@ public sealed class TouchControls(AppSettings settings, ITouchInput touch, IShor
             return touch.Tap(x, y, Phone.TapHoldMs);
 
         _sleep(LiftBeforeTapMs);
+        if (_halted)
+            return false; // Stop / F10 during the lift: no tap, no press again
         bool tapped = touch.Tap(x, y, Phone.TapHoldMs);
         _sleep(TapBeforeRepressMs);
         lock (_heldLock)
         {
-            if (!_halted && _held == null && touch.IsGameInFront && touch.PressDown(at.X, at.Y))
+            // Not after a Halt, a ReleaseAll (a pause, Stop -> Start) or another held press during the waits.
+            if (!_halted && _held == null && _holdGeneration == generation && touch.IsGameInFront && touch.PressDown(at.X, at.Y))
                 _held = resume;
         }
 
@@ -360,6 +370,7 @@ public sealed class TouchControls(AppSettings settings, ITouchInput touch, IShor
 
             _held = what;
             _heldAt = (r.CenterX, r.CenterY);
+            _holdGeneration++;
             return true;
         }
     }

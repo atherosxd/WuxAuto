@@ -24,9 +24,12 @@ public sealed partial class AutomationPilot
     private const int BuffRefusalWindowMs = 8000;
 
     /// <summary>
-    /// The buff row "changed": this share of its pixels moved by more than <see cref="BuffRowPixelDiff"/> grey levels. MuMu
-    /// buff frames (town, 2026-10-30): 0.069 between the frame before the tap and 4 s after it (new icons, timers back to
-    /// 6m), 0.001 at 0.7 s (nothing yet), 0.000 between two frames without a tap.
+    /// The buff icons "changed": this share of their pixels (<see cref="BuffIconsRegion"/>) moved by more than
+    /// <see cref="BuffRowPixelDiff"/> grey levels. MuMu buff frames (town, 2026-10-30): 0.084 between the frame before the
+    /// tap and 4 s after it, 0.002 at 0.7 s (nothing yet), 0.000 after a second tap with the buffs already full - and
+    /// 0.04-0.10 between frames with no tap (a timer ticking, a buff running out). So "changed" is no proof of a buff, and
+    /// "unchanged" alone no proof of a miss; only unchanged pixels together with timers that did not go up count as a miss.
+    /// Not measured on a fight frame.
     /// </summary>
     public const double BuffRowChangedShare = 0.02;
 
@@ -42,6 +45,10 @@ public sealed partial class AutomationPilot
     // "3m", "6m", "1h" under a buff icon ("11d" is an item's time, not a buff's - not counted).
     private static readonly Regex BuffTimer = new(@"^(\d{1,3})\s*([mh])$", RegexOptions.Compiled | RegexOptions.IgnoreCase);
 
+    // The first row of buff icons (x 0-340, y 125-180 at 1920x1080): icon cells only - right of them and below is world.
+    private const int BuffIconsX = 0, BuffIconsY = 125, BuffIconsW = 340, BuffIconsH = 55;
+
+    private bool _phoneBuffRetryDue;       // the next buff tap is the retry of the last one: keep its "before"
     private BuffLook? _phoneBuffBefore;    // the buff row before the tap (null = none: the arrival buff)
     private BuffLook? _phoneBuffPrepared;  // taken by PrepareBuffCheckAsync for the tap about to go out
     private long _phoneBuffCheckAt;        // when to look again (0 = no check pending)
@@ -51,6 +58,7 @@ public sealed partial class AutomationPilot
     private bool _phoneBuffUnreadTold;
     private long _phoneBuffTappedAt;
     private int _phoneLootTaps;
+    private bool _phoneLootMissingWarned;   // "Pick up not on screen", once per Start
 
     /// <summary>The buff row at one moment: its timers as read (often nothing - the "3m" is tiny) and its grey pixels.</summary>
     private sealed record BuffLook(IReadOnlyList<int> Timers, Mat Grey) : IDisposable
@@ -63,6 +71,10 @@ public sealed partial class AutomationPilot
     /// <summary>The buff row on a <paramref name="width"/> x <paramref name="height"/> frame.</summary>
     public static PixelRect BuffTimersRegion(int width, int height) =>
         PhoneLayout.ToPixels(BuffRowX, BuffRowY, BuffRowW, BuffRowH, PhoneAnchor.Left, width, height).Clamp(width, height);
+
+    /// <summary>The first row of buff icons on a <paramref name="width"/> x <paramref name="height"/> frame (the pixel check).</summary>
+    public static PixelRect BuffIconsRegion(int width, int height) =>
+        PhoneLayout.ToPixels(BuffIconsX, BuffIconsY, BuffIconsW, BuffIconsH, PhoneAnchor.Left, width, height).Clamp(width, height);
 
     /// <summary>The minutes of every word that reads as a buff timer ("6m" = 6, "1h" = 60).</summary>
     public static IReadOnlyList<int> BuffTimers(IEnumerable<string> words)
@@ -94,7 +106,7 @@ public sealed partial class AutomationPilot
         return before.Max() >= 5 ? null : false;
     }
 
-    /// <summary>The share of the buff row's pixels that changed by more than <see cref="BuffRowPixelDiff"/> grey levels (0 for different sizes).</summary>
+    /// <summary>The share of the buff icons' pixels that changed by more than <see cref="BuffRowPixelDiff"/> grey levels (0 for different sizes).</summary>
     public static double BuffRowChange(Mat beforeGrey, Mat afterGrey)
     {
         if (beforeGrey.Size != afterGrey.Size || beforeGrey.Width == 0 || beforeGrey.Height == 0)
@@ -106,10 +118,10 @@ public sealed partial class AutomationPilot
         return CvInvoke.CountNonZero(moved) / (double)(diff.Width * diff.Height);
     }
 
-    /// <summary>The buff row's grey pixels (a copy).</summary>
+    /// <summary>The buff icons' grey pixels (<see cref="BuffIconsRegion"/>, a copy).</summary>
     public static Mat BuffRowGrey(Mat frame)
     {
-        var r = BuffTimersRegion(frame.Width, frame.Height);
+        var r = BuffIconsRegion(frame.Width, frame.Height);
         using var crop = new Mat(frame, new Rectangle(r.X, r.Y, r.Width, r.Height));
         var grey = new Mat();
         CvInvoke.CvtColor(crop, grey, crop.NumberOfChannels == 4 ? ColorConversion.Bgra2Gray : ColorConversion.Bgr2Gray);
@@ -138,11 +150,13 @@ public sealed partial class AutomationPilot
         _phoneBuffPrepared = null;
         _phoneBuffCheckAt = 0;
         _phoneBuffRetried = false;
+        _phoneBuffRetryDue = false;
         _phoneBuffMissingWarned = false;
         _phoneBuffRefusedWarned = false;
         _phoneBuffUnreadTold = false;
         _phoneBuffTappedAt = 0;
         _phoneLootTaps = 0;
+        _phoneLootMissingWarned = false;
     }
 
     /// <summary>Phone: no AUTO BUFF on screen - said once per Start, not skipped in silence.</summary>
@@ -177,12 +191,30 @@ public sealed partial class AutomationPilot
         Log?.Invoke(LogLevel.Info, box is { } b
             ? $"Auto buff tapped at {b.CenterX},{b.CenterY}."
             : "Auto buff tapped.");
-        _phoneBuffBefore?.Dispose();
-        _phoneBuffBefore = _phoneBuffPrepared;
+        _phoneBuffTappedAt = now;
+        if (_controls.IsDryRun)
+        {
+            // Nothing was tapped: nothing to check.
+            _phoneBuffPrepared?.Dispose();
+            _phoneBuffPrepared = null;
+            return;
+        }
+
+        if (_phoneBuffRetryDue)
+        {
+            // The retry: compared with the row before the first tap.
+            _phoneBuffRetryDue = false;
+            _phoneBuffPrepared?.Dispose();
+        }
+        else
+        {
+            _phoneBuffBefore?.Dispose();
+            _phoneBuffBefore = _phoneBuffPrepared;
+            _phoneBuffRetried = false;
+        }
+
         _phoneBuffPrepared = null;
         _phoneBuffCheckAt = now + PhoneBuffCheckDelayMs;
-        _phoneBuffRetried = false;
-        _phoneBuffTappedAt = now;
     }
 
     /// <summary>The whole-screen read of an LOD tick: the refusal text within <see cref="BuffRefusalWindowMs"/> of a buff tap, once per Start.</summary>
@@ -200,9 +232,10 @@ public sealed partial class AutomationPilot
     }
 
     /// <summary>
-    /// Phone, on LOD ticks: looks at the buff row when the check is due. The timers decide when they read; otherwise the
-    /// row's pixels (<see cref="BuffRowChangedShare"/>) - no "before" (the arrival buff) = cannot tell. Nothing changed =
-    /// one more tap, then a warning.
+    /// Phone, on LOD ticks: looks at the buff row when the check is due. Took = the timers went up, or (timers unread) the
+    /// icons changed. A miss needs both: timers that read and did not go up, and icons that did not change - then one more
+    /// buff through <see cref="TryLodBuff"/> (mid-fight: Shura, 400 ms, as any rebuff), then a warning. Anything else is
+    /// only logged (the pixel check is not verified on a fight frame).
     /// </summary>
     private async Task TickPhoneBuffCheckAsync(Mat frame, long now)
     {
@@ -211,43 +244,39 @@ public sealed partial class AutomationPilot
 
         _phoneBuffCheckAt = 0;
         using var after = await LookAtBuffRowAsync(frame);
-        bool? took = BuffTook(_phoneBuffBefore?.Timers, after.Timers);
-        string how = took != null ? $"timers {string.Join(" ", after.Timers.Select(m => m + "m"))}" : "";
-        if (took == null && _phoneBuffBefore != null)
+        bool? timers = BuffTook(_phoneBuffBefore?.Timers, after.Timers);
+        double? change = _phoneBuffBefore == null ? null : BuffRowChange(_phoneBuffBefore.Grey, after.Grey);
+        bool? iconsChanged = change == null ? null : change >= BuffRowChangedShare;
+        string how = string.Join(", ", new[]
         {
-            double change = BuffRowChange(_phoneBuffBefore.Grey, after.Grey);
-            took = change >= BuffRowChangedShare;
-            how = $"buff row {change:P1} changed";
-        }
+            after.Timers.Count > 0 ? $"timers {string.Join(" ", after.Timers.Select(m => m + "m"))}" : null,
+            change is { } c ? $"buff icons {c:P1} changed" : null,
+        }.Where(t => t != null));
 
-        if (took == true)
+        if (timers == true || (timers == null && iconsChanged == true))
         {
             Log?.Invoke(LogLevel.Info, $"Auto buff took ({how}).");
         }
-        else if (took == null)
+        else if (timers == false && iconsChanged == false)
         {
-            if (!_phoneBuffUnreadTold)
+            if (!_phoneBuffRetried)
             {
-                _phoneBuffUnreadTold = true;
-                Log?.Invoke(LogLevel.Info, "Auto buff: cannot check this buff (no picture of the buff row before the tap, and its timers do not read).");
-            }
-        }
-        else if (!_phoneBuffRetried)
-        {
-            _phoneBuffRetried = true;
-            if (_controls.Press(GameAction.Buff))
-            {
-                Log?.Invoke(LogLevel.Info, $"Auto buff: nothing changed under the HP bar ({how}) - tapped it once more.");
-                _phoneBuffTappedAt = now;
-                _phoneBuffCheckAt = now + PhoneBuffCheckDelayMs;
+                _phoneBuffRetried = true;
+                _phoneBuffRetryDue = true;
+                // The next LOD tick buffs again the usual way (TryLodBuff: the skill let go, Shura and 400 ms mid-fight).
+                _lodBuffAt = now - _settings.Lod.BuffEveryMs;
+                Log?.Invoke(LogLevel.Info, $"Auto buff: nothing changed under the HP bar ({how}) - buffing once more.");
                 return;
             }
 
-            Log?.Invoke(LogLevel.Warning, "Auto buff did not take, and the second tap was blocked.");
-        }
-        else
-        {
             Log?.Invoke(LogLevel.Warning, $"Auto buff did not take (tapped twice, {how}) - Force below 90%, or the tap does not reach the button?");
+        }
+        else if (!_phoneBuffUnreadTold)
+        {
+            _phoneBuffUnreadTold = true;
+            Log?.Invoke(LogLevel.Info, how.Length == 0
+                ? "Auto buff: cannot check this buff (no picture of the buff row before the tap, and its timers do not read)."
+                : $"Auto buff: cannot tell whether it took ({how}) - not tapped again.");
         }
 
         _phoneBuffBefore?.Dispose();

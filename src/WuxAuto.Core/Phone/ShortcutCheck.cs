@@ -43,8 +43,14 @@ public readonly record struct ShortcutCheckStep(ShortcutCheckOutcome Outcome, in
 public sealed class ShortcutCheck(ScreenAnalyzer analyzer, IGameControls controls, IShortcutSource? shortcuts, Action<LogLevel, string> log,
     Func<Mat, Task<bool>>? titleReads = null)
 {
-    /// <summary>How many looks wait for the zone title before a shortcut may count as missing without it.</summary>
+    /// <summary>How many looks wait for the zone title; then the check stops (the game screen was not seen).</summary>
     public const int MaxTitleLooks = 20;
+
+    /// <summary>The two searches that make a shortcut missing are at least this far apart.</summary>
+    public const int MinLookGapMs = 1500;
+
+    /// <summary>The stop reason when the zone title never read during the check.</summary>
+    public const string NoGameScreenText = "the game screen (zone title) was not seen";
 
     /// <summary>The wait between two looks (the next frame's search runs in between).</summary>
     public const int LookAgainMs = 500;
@@ -85,8 +91,8 @@ public sealed class ShortcutCheck(ScreenAnalyzer analyzer, IGameControls control
         if (lod)
             list.Add((GameAction.Loot, "Pick up"));
         list.Add((GameAction.Buff, "AUTO BUFF"));
-        // "HUNT (J: sta...)" in the picker; "Auto-Hunt (J)" is another entry (it opens a window).
-        list.Add((GameAction.ToggleAutohunt, "HUNT"));
+        // HUNT ("HUNT (J: sta...)" in the picker) is not needed: LOD has no autohunt, and a full ring must not stop a
+        // Start for it. Used where it is found, never added (review of 2026-10-30).
         return list;
     }
 
@@ -127,6 +133,7 @@ public sealed class ShortcutCheck(ScreenAnalyzer analyzer, IGameControls control
         _needed = [];
         _toAdd = null;
         _firstLook = null;
+        _firstLookAt = 0;
         _looks = 0;
         // No position or "not there" from before this Start (a login screen, a loading screen) may decide anything.
         shortcuts?.Invalidate();
@@ -174,6 +181,7 @@ public sealed class ShortcutCheck(ScreenAnalyzer analyzer, IGameControls control
 
     private List<(GameAction Action, string Entry)>? _toAdd;
     private HashSet<string>? _firstLook;
+    private long _firstLookAt;
     private int _looks;
 
     /// <summary>
@@ -190,28 +198,38 @@ public sealed class ShortcutCheck(ScreenAnalyzer analyzer, IGameControls control
             return null;
         }
 
+        long now = Environment.TickCount64;
+        if (_firstLook != null && now - _firstLookAt < MinLookGapMs)
+            return ShortcutCheckStep.Wait((int)(MinLookGapMs - (now - _firstLookAt)), "looking for the shortcuts again");
+
         _looks++;
         bool title = titleReads == null || await titleReads(frame);
-        if (!title && _looks < MaxTitleLooks)
+        if (!title)
         {
-            SearchAgain(notFound);
-            return ShortcutCheckStep.Wait(LookAgainMs, "waiting for the game screen (zone title) before deciding a shortcut is missing");
+            if (_looks < MaxTitleLooks)
+            {
+                SearchAgain(notFound);
+                return ShortcutCheckStep.Wait(LookAgainMs, "waiting for the game screen (zone title) before deciding a shortcut is missing");
+            }
+
+            // Never decided "missing" without the game screen: a login or loading screen hides the ring.
+            _stopReason = $"Shortcut check: {NoGameScreenText} in {_looks} looks - open the game in town and press Start again.";
+            _state = State.Unwind;
+            return ShortcutCheckStep.Wait(0, "stopping the shortcut check");
         }
 
         if (_firstLook == null)
         {
             _firstLook = notFound.Select(n => n.Entry).ToHashSet(StringComparer.Ordinal);
+            _firstLookAt = now;
             SearchAgain(notFound);
-            return ShortcutCheckStep.Wait(LookAgainMs, "looking for the shortcuts again");
+            return ShortcutCheckStep.Wait(MinLookGapMs, "looking for the shortcuts again");
         }
 
         // Found on either look = there: a second copy on the ring is worse than a missed check.
         _toAdd = notFound.Where(n => _firstLook.Contains(n.Entry)).ToList();
         if (_toAdd.Count > 0)
-        {
-            log(LogLevel.Info, $"Shortcut check: {string.Join(", ", _toAdd.Select(n => $"'{n.Entry}'"))} not found on two searches in a row"
-                               + (title ? "." : $" (the zone title did not read for {_looks} looks - deciding anyway)."));
-        }
+            log(LogLevel.Info, $"Shortcut check: {string.Join(", ", _toAdd.Select(n => $"'{n.Entry}'"))} not found on two searches in a row.");
 
         return null;
     }
@@ -492,6 +510,9 @@ public sealed class ShortcutCheck(ScreenAnalyzer analyzer, IGameControls control
 
                     string head = text[..want.Length];
                     bool match = head == want || (want.Length >= 6 && TextMatcher.Levenshtein(head, want) <= 1);
+                    // "HUNT" is not the "Auto-Hunt (J)" entry, also when OCR splits it into "Auto-" "Hunt".
+                    if (match && i > 0 && TextMatcher.Normalize(row[i - 1].Text).EndsWith("auto", StringComparison.Ordinal))
+                        match = false;
                     if (match)
                     {
                         var first = row[i].Bounds;

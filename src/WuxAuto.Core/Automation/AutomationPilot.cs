@@ -1134,7 +1134,10 @@ public sealed partial class AutomationPilot
             // Auto Laby, once per Start (user, 2026-10-29): Regular War off, or the autohunt may take the
             // character to a war mid-boss. LOD has no autohunt.
             _regularWarOffDue = townCheck && !IsLod && !_regularWarOffChecked && _settings.Sequence.RegularWarOffForLaby;
-            if (townCheck && _settings.Sequence.AutohuntOffInTown && _controls.Has(GameAction.ToggleAutohunt))
+            // Not on the phone yet: its combat-log read of the autohunt lines is not verified there, and a misread tap of
+            // HUNT in town starts a Smart Farm journey.
+            if (townCheck && _settings.Sequence.AutohuntOffInTown && Profile != PlatformProfile.Phone
+                && _controls.Has(GameAction.ToggleAutohunt))
             {
                 _huntOffPresses = 0;
                 _huntOffBaseline = [];
