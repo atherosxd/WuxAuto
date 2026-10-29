@@ -566,6 +566,19 @@ public class BlossomPilotTests
         Assert.DoesNotContain(run.Lines, l => l.StartsWith("Waypoint 6 skipped", StringComparison.Ordinal));
     }
 
+    [Theory]
+    [InlineData("[B/ossom Garden")]   // live: the l read as a slash
+    [InlineData("[Blossorn Garden")]
+    public async Task TitleWithAMisreadLetter_IsStillBlossomGarden(string title)
+    {
+        var (settings, input, ocr) = Harness(() => "16500 , 17000", titleText: title);
+        long start = Environment.TickCount64;
+
+        var run = await RunAsync(settings, input, ocr, PilotPhase.BlossomWalk, (_, _) => Environment.TickCount64 - start > 9000, 15000);
+
+        Assert.DoesNotContain(run.Lines, l => l.Contains("starting the next run", StringComparison.Ordinal) || l.Contains("does not show", StringComparison.Ordinal));
+    }
+
     [Fact]
     public async Task TitleReadCutShort_IsStillBlossomGarden()
     {

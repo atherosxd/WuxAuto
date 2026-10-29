@@ -85,7 +85,12 @@ public sealed partial class AutomationPilot
         int common = 0;
         while (common < t.Length && common < d.Length && t[common] == d[common])
             common++;
-        return common >= 7 && t.Length - common <= 2;
+        if (common >= 7 && t.Length - common <= 2)
+            return true;
+
+        // One or two letters misread (live run 9: "[B/ossom Garden" - the l read as a slash): the title within two edits
+        // of the destination, for a destination of 8+ letters (shorter names are too easily mistaken for another zone).
+        return d.Length >= 8 && Math.Abs(t.Length - d.Length) <= 2 && TextMatcher.Levenshtein(t, d) <= 2;
     }
 
     /// <summary>
