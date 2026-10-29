@@ -27,6 +27,9 @@ public sealed partial class AutomationPilot
     private const int BlossomHeadingMissesToRelearn = 3;
     private const int BlossomNoProgressSteps = 15;
     private const int BlossomTargetCheckMs = 700;
+    private const double BlossomNearDistance = 300;   // from here the walk homes in on the waypoint
+    private const int BlossomNearReadMs = 450;
+    private const double BlossomCloseEnough = 150;    // blocked this close to a waypoint = reached
 
     private IReadOnlyList<(int X, int Y)> _blossomRoute = [];
     private int _blossomWaypoint = -1;
@@ -44,6 +47,7 @@ public sealed partial class AutomationPilot
     private double _blossomBestDistance = double.MaxValue;
     private bool _blossomFocusTold;
     private (double X, double Y)? _blossomDir;   // the walk click (screen offset) until the next coordinate read
+    private bool _blossomNear;                   // within BlossomNearDistance of the waypoint: one click per read
     private long _blossomClickAt;
     private long _blossomReadAt;
     private long _blossomTargetAt;
@@ -442,7 +446,8 @@ public sealed partial class AutomationPilot
 
             _simpleClick = (ox, oy);
             _lastClick = (clickX, clickY, now);
-            _blossomClickAt = now + b.WalkClickEveryMs;
+            // Near a waypoint one click per read (the read sets the next one); else the same click again shortly.
+            _blossomClickAt = _blossomNear ? long.MaxValue : now + b.WalkClickEveryMs;
         }
 
         long next = Math.Min(Math.Min(_blossomClickAt, _blossomReadAt), Math.Min(_blossomTargetAt, _blossomTabAt + b.TabEveryMs));
@@ -473,7 +478,7 @@ public sealed partial class AutomationPilot
         }
 
         _blossomUnread = 0;
-        _blossomReadAt = now + b.WalkReadEveryMs;
+        _blossomReadAt = now + b.WalkReadEveryMs;   // near the waypoint: see _blossomNear below
         if (_blossomWaypoint < 0)
         {
             _blossomWaypointSteps = 0;
@@ -488,6 +493,12 @@ public sealed partial class AutomationPilot
         double needX = goal.X - coords.X, needY = goal.Y - coords.Y;
         double distance = Math.Sqrt(needX * needX + needY * needY);
         _overlays.Add(new OverlayItem(coords.Bounds, $"{coords} -> wp {_blossomWaypoint + 1} d={distance:0}", OverlayColor.Yellow));
+
+        // Near the waypoint (live run 5, user: it stopped north of waypoint 1 and did not correct it - the clicks between two
+        // reads ran on blind and overshot): one shorter click per read, every BlossomNearReadMs.
+        _blossomNear = distance < BlossomNearDistance;
+        if (_blossomNear)
+            _blossomReadAt = now + BlossomNearReadMs;
 
         if (_lastCoords is (int px, int py) && _simpleClick is (double cx, double cy))
         {
@@ -522,11 +533,15 @@ public sealed partial class AutomationPilot
 
         _lastCoords = (coords.X, coords.Y);
 
-        if (distance <= b.WaypointTolerance)
+        // Reached: within WaypointTolerance - or blocked close to it (a railing, a pond edge), which is as near as it gets.
+        bool closeEnough = distance > b.WaypointTolerance && _blossomStalls >= 2 && distance <= BlossomCloseEnough;
+        if (distance <= b.WaypointTolerance || closeEnough)
         {
             _simpleClick = null;
             _blossomDir = null;
-            Log?.Invoke(LogLevel.Info, $"Waypoint {_blossomWaypoint + 1} reached at {coords} - tabbing up to {b.WaypointWaitMs / 1000.0:0.#}s.");
+            Log?.Invoke(LogLevel.Info, closeEnough
+                ? $"Waypoint {_blossomWaypoint + 1} reached at {coords} (close enough - blocked {distance:0} away) - tabbing up to {b.WaypointWaitMs / 1000.0:0.#}s."
+                : $"Waypoint {_blossomWaypoint + 1} reached at {coords} - tabbing up to {b.WaypointWaitMs / 1000.0:0.#}s.");
             if (b.WaypointWaitMs <= 0)
             {
                 AdvanceBlossomWaypoint($"Waypoint {_blossomWaypoint + 1} done");
@@ -569,7 +584,7 @@ public sealed partial class AutomationPilot
         }
         else
         {
-            double reach = b.WalkClickPx * Math.Clamp(distance / 300.0, 0.45, 1.0);
+            double reach = b.WalkClickPx * Math.Clamp(distance / BlossomNearDistance, 0.3, 1.0);
             double ox = needX / distance * reach, oy = needY / distance * reach;
             double c = Math.Cos(_headingError), sn = Math.Sin(_headingError);
             (ox, oy) = (ox * c + oy * sn, -ox * sn + oy * c);

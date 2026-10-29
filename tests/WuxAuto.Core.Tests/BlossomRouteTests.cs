@@ -23,7 +23,8 @@ public class BlossomRouteTests
         Assert.Equal(7, b.TurnTaps);
         Assert.Equal(100, b.TurnTapMs);
         // Live 2026-10-29: waypoints 2 and 4 lie just past a railing - the walk stopped 86 and 67 units short.
-        Assert.Equal(100, b.WaypointTolerance);
+        // ...then 100 was too loose (live run 5, user: it stopped north of waypoint 1 and did not correct it): 40.
+        Assert.Equal(40, b.WaypointTolerance);
     }
 
     [Theory]

@@ -316,10 +316,11 @@ public sealed class BlossomSettings
     public int LoopFrom { get; set; } = 6;
 
     /// <summary>
-    /// Reached within this many units. Live 2026-10-29: waypoints 2, 4 and 5 lie just past a railing or a pond edge and the
-    /// walk stopped 86, 67 and 71 short; at 60 each was skipped as "not moving".
+    /// Reached within this many units. Live 2026-10-29: the old waypoints 2, 4 and 5 lay just past a railing (stopped 86, 67,
+    /// 71 short at 60), so it went to 100 - which let the walk stop 61 north of waypoint 1 and start every next leg off the
+    /// user's line (run 5). Now 40, with the walk homing in on the last 300 units, and blocked within 150 counts as reached.
     /// </summary>
-    public int WaypointTolerance { get; set; } = 100;
+    public int WaypointTolerance { get; set; } = 40;
 
     /// <summary>
     /// Camera turns when leaving a waypoint, "N:KC" = after waypoint N tap key K (A = left, D = right) C times

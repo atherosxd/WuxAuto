@@ -269,7 +269,7 @@ Blossom Garden needs no key.
    the target is gone 2 s, then 1 s later the loot key every 0.2 s for **Loot time** (5 s), then on to the waypoint it
    was heading for. A fight that never ends is given up after 2 minutes (then targets are ignored for 10 s). Blocked (a
    railing, the bridge): it zooms out again and steps right, then left, then back; still stuck after 5 steps (or 40 clicks
-   on one waypoint): on to the next waypoint. A waypoint counts as reached within 100 units. Started inside Blossom Garden,
+   on one waypoint): on to the next waypoint. A waypoint counts as reached within 40 units (it slows down and homes in on the last 300), or when blocked within 150 of it. Started inside Blossom Garden,
    it first makes sure the autohunt is off.
 6. Rebuff when **Rebuff every** (Auto War) is due - after a loot or at a waypoint, never mid-fight.
 

@@ -976,7 +976,7 @@ teleport in again (LOD's rule); still in town after the teleport = "destination 
   read); the target bar is read every 700 ms; Tab never holds the tick. **Camera turns** (user: "In waypoint 1, do a
   left turn / 4x A, then on waypoint 2 do right turn / D 5x"): `WaypointTurns` "1:A5", "2:D5", "3:A5", "4:D5" (user, with the new waypoints 1-6 after the 4th live run; "N:KC" or "N:CK", edited in the app as "Camera turns" = `WaypointTurnsText`) - when leaving that waypoint
   the walk taps the key (`TurnTapMs`), then learns the heading again from the next step. Game behind another window ->
-  the walk clicks and counts nothing. Tab every `TabEveryMs` 1000. Reached (<= `WaypointTolerance` **100**; live 2026-10-29
+  the walk clicks and counts nothing. Tab every `TabEveryMs` 1000. Reached (<= `WaypointTolerance` **40**, or blocked within 150 = "close enough"; within 300 one shorter click per read every 450 ms so it homes in - at 100 the walk stopped 61 north of waypoint 1 and every next leg started off the line, live run 5 (user); before that, live 2026-10-29
   waypoints 2, 4, 5 lie just past a railing / pond edge and the walk stopped 86, 67, 71 short at the old 60) -> stand + Tab
   <= `WaypointWaitMs` 3000 (clamped <= 5000, AFK checker; the pause reads no coordinates, so an unreadable minimap cannot
   stretch it), then the next. **Blocked** (live: wedged against the side of the bridge at ~13900, 15140 between waypoints 5

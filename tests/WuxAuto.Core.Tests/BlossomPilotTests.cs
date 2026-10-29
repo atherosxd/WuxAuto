@@ -432,6 +432,54 @@ public class BlossomPilotTests
         Assert.DoesNotContain(run.Lines, l => l.Contains("taking too long", StringComparison.Ordinal));
     }
 
+    // Live run 5 (user): "when going to waypoint 1, it stopped more to its north and did not correct it ... same for the
+    // others, that's why it is not aligned" - reached 61 units off at a 100-unit circle.
+
+    [Fact]
+    public async Task Waypoint_IsReachedPrecisely()
+    {
+        int x = 19107, y = 18424 + 700, seen = 0;
+        FakeGameInput? sent = null;
+        var (settings, input, ocr) = Harness(() =>
+        {
+            var clicks = sent!.Calls.Where(c => c.StartsWith("Click ", StringComparison.Ordinal)).ToList();
+            for (; seen < clicks.Count; seen++)
+            {
+                var p = clicks[seen]["Click ".Length..].Split(',').Select(int.Parse).ToArray();
+                x += (int)Math.Round((p[0] - Width / 2.0) * 0.5);   // the view looks north; a click walks half its length
+                y += (int)Math.Round((p[1] - Height / 2.0) * 0.5);
+            }
+
+            return $"{x} , {y}";
+        });
+        sent = input;
+        settings.Blossom.WalkReadEveryMs = 900;  // the default: between two reads the clicks run on blind
+        settings.Blossom.WalkClickEveryMs = 100;
+
+        var run = await RunAsync(settings, input, ocr, PilotPhase.BlossomWalk,
+            (_, lines) => lines.Any(l => l.StartsWith("Waypoint 1 reached", StringComparison.Ordinal)), 20000);
+
+        string line = run.Lines.FirstOrDefault(l => l.StartsWith("Waypoint 1 reached at ", StringComparison.Ordinal)) ?? string.Join("\n", run.Lines);
+        var at = line["Waypoint 1 reached at ".Length..].Split(' ')[0..2].Select(s => int.Parse(s.Trim(','))).ToArray();
+        double off = Math.Sqrt(Math.Pow(at[0] - 19107, 2) + Math.Pow(at[1] - 18424, 2));
+        Assert.True(off <= 40, $"reached {off:0} units off: {line}");
+    }
+
+    [Fact]
+    public async Task BlockedCloseToTheWaypoint_CountsAsReached()
+    {
+        var (settings, input, ocr) = Harness(() => "13964 , 14806"); // 120 south of waypoint 6, never moves
+        settings.Blossom.WalkReadEveryMs = 150;
+        settings.Blossom.WalkClickEveryMs = 100;
+
+        var run = await RunAsync(settings, input, ocr, PilotPhase.BlossomWalk,
+            (_, lines) => lines.Any(l => l.StartsWith("Waypoint 6", StringComparison.Ordinal) && !l.Contains("Walking", StringComparison.Ordinal)), 15000);
+
+        string log = string.Join("\n", run.Lines);
+        Assert.True(run.Lines.Any(l => l.StartsWith("Waypoint 6 reached", StringComparison.Ordinal) && l.Contains("close enough", StringComparison.Ordinal)), log);
+        Assert.DoesNotContain(run.Lines, l => l.StartsWith("Waypoint 6 skipped", StringComparison.Ordinal));
+    }
+
     /// <summary>OCR that misses the minimap title in a tall read (the whole minimap band) and reads it in a small one.</summary>
     private sealed class BandBlindOcr(FakeOcrEngine inner, int maxHeight) : IOcrEngine
     {
