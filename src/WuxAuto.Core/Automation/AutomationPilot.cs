@@ -349,6 +349,8 @@ public sealed partial class AutomationPilot
         _warReturnTrips.Clear();
         _warBarChecked = false;
         _warNoCaveTold = false;
+        _warTownHome = null;
+        _warZoneDispatched = false;
         _warMissingIcons.Clear();
         _warShuraSkipTold = false;
         _warHp = default;
@@ -651,8 +653,12 @@ public sealed partial class AutomationPilot
                     // Start dispatch sorts out where the character is), within the restart limit.
                     if (IsWar)
                     {
-                        if (inTown)
-                            BeginWarReturn(frame, $"in {HomeTown} during {_phase}");
+                        if (townSeen != null)
+                        {
+                            // A town home (or no cave saved) waits there; a cave home goes back.
+                            if (!WarWaitInTown(frame, townSeen, $"in {townSeen} during {_phase}"))
+                                BeginWarReturn(frame, $"in {HomeTown} during {_phase}");
+                        }
                         else
                             WarStartOver(frame, title);
 

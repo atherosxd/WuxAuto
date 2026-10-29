@@ -489,13 +489,13 @@
 
                             <TextBlock Grid.Row="5" Grid.Column="0" Grid.ColumnSpan="4" Style="{StaticResource Caption}"
                                        Visibility="{Binding Settings.War.HomeMap, Converter={x:Static vm:BoolConverters.NotEmptyToVisibility}}"
-                                       ToolTip="Read from the screen at Start, in the cave you wait in. It is where the pilot goes back to after the war.">
+                                       ToolTip="Read from the screen at Start, in the cave you wait in. It is where the pilot goes back to after the war. Start in a home town: the pilot waits in town instead.">
                                 <Run Text="Back to: " /><Run Text="{Binding Settings.War.HomeMap, Mode=OneWay}" /><Run Text=" / " /><Run Text="{Binding Settings.War.HomeMonster, Mode=OneWay}" />
                             </TextBlock>
                             <TextBlock Grid.Row="5" Grid.Column="0" Grid.ColumnSpan="4" Style="{StaticResource Caption}"
-                                       Text="Back to: (not set yet - press Start in the cave)"
+                                       Text="Back to: (no cave - waits in town; press Start in a cave to save one)"
                                        Visibility="{Binding Settings.War.HomeMap, Converter={x:Static vm:BoolConverters.EmptyToVisibility}}"
-                                       ToolTip="Read from the screen at Start, in the cave you wait in. It is where the pilot goes back to after the war." />
+                                       ToolTip="Read from the screen at Start, in the cave you wait in. It is where the pilot goes back to after the war. Start in a home town: the pilot waits in town instead." />
                         </Grid>
 
                         <TextBlock Text="Mini mode" Style="{StaticResource SectionTitle}" Margin="0,12,0,6" />
