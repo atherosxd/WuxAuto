@@ -123,7 +123,7 @@ monster, a player) does not count - Tab again next time. Targeted -> stop walkin
   Where a death puts the character is unknown **(user: never seen - AFK or a disconnect come first)**; a death that
   lands in town is the zone guard's town rule, a re-login is the reconnect.
 - Fight with the target never gone for `Blossom.FightMaxMs` 120000 -> warning, Tab, back to the walk (a target out
-  of reach would otherwise hold the character still) **(my call)**.
+  of reach would otherwise hold the character still) **(my call; user: a Jaso dies within 2 min even on an HP build)**.
 
 ### 3.6 Loot (`BlossomLoot`)
 **(user)** 1 s after the kill (`Blossom.LootDelayMs` 1000), spam `Lod.LootKey` every 200 ms
