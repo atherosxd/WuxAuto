@@ -25,7 +25,7 @@
             </Grid>
 
             <Grid ColumnDefinitions="*,120" RowDefinitions="Auto,Auto,Auto,Auto,Auto" RowSpacing="6">
-                <Label Text="Skill (wheel button 1, 2 or 3)" VerticalOptions="Center" />
+                <Label Text="Attack: the first attack icon found is used (any name; empty = no skill presses)" VerticalOptions="Center" />
                 <Entry x:Name="SkillKey" Grid.Column="1" />
                 <Label Grid.Row="1" Text="Hold skill (ms)" VerticalOptions="Center" />
                 <Entry x:Name="HoldSkillMs" Grid.Row="1" Grid.Column="1" Keyboard="Numeric" />

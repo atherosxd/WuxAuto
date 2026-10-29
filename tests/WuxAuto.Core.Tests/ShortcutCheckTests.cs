@@ -13,7 +13,6 @@ namespace WuxAuto.Core.Tests;
 /// shortcut's crop. A tap on the padlock toggles it, a tap on a (+) of the unlocked ring opens the picker, a tap on a
 /// picker entry's icon fills the slot (and the scripted shortcut source then "finds" it, as ShortcutMap would).
 /// </summary>
-[Collection("AppPaths")]
 public class ShortcutCheckTests : AppPathsScope
 {
     // ---------------------------------------------------------------- Review Focus 4

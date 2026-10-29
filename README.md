@@ -385,6 +385,28 @@ notifications back while a game is in front (Do not disturb / game mode), which 
 that is muted or on headphones. Notifications off for WuxAuto in Windows Settings ▸ System ▸
 Notifications → one log warning.
 
+## Android (experimental, not released yet)
+
+`src/WuxAuto.Mobile` is an Android app (.NET MAUI) that runs the same pilot on a phone or an Android emulator
+(tested in MuMu Player): it reads the screen through screen capture and plays the game with touches through its own
+accessibility service. There is no download yet - it is built from source only:
+
+```powershell
+cd src\WuxAuto.Mobile
+dotnet build ..\..\WuxAuto.Mobile.slnx -c Debug     # builds the APK (needs the .NET Android workload)
+```
+
+What it does today:
+
+* **Auto LOD only.** The Labyrinth and Auto War come later (the Laby button shows "coming in M5"). When the LOD
+  entries run out, the phone stops in town instead of switching modes.
+* LOD fights where the teleport lands - it does not walk to the boss yet.
+* The attack skill: the first attack icon found on the skill bar or the skill wheel; Settings ▸ Attack picks Hold
+  (the finger stays on it for the whole fight, the default) or Tap.
+* Every Start checks the shortcut ring round the joystick and adds a missing Teleport Scroll / Pick up to a free (+)
+  slot; a filled slot is never replaced.
+* In the game, the round **W** button is the control: tap = panel (Start / Stop, status), long-press = stop at once.
+
 ## Repository layout
 
 ```
@@ -400,6 +422,7 @@ src/WuxAuto                  the Windows app
   Interop/                   Win32 bindings, window enumeration, hotkeys
   Vision/                    Windows OCR
   ViewModels/, MainWindow.*  the UI
+src/WuxAuto.Mobile           the Android app (experimental, LOD only; see "Android")
 tests/WuxAuto.SelfTest       offline vision checks (synthetic frame, no game needed)
 tests/WuxAuto.Core.Tests     unit tests of the shared library
 tests/WuxAuto.UiShot         renders MainWindow to a PNG (no desktop session needed)

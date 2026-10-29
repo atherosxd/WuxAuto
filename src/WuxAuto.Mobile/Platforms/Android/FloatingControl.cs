@@ -21,7 +21,7 @@ namespace WuxAuto.Mobile;
 /// The floating control (spec §5.4), drawn by the accessibility service as TYPE_ACCESSIBILITY_OVERLAY windows (no
 /// "draw over other apps" permission): a round button - grey idle, green running, red error, with an amber ring while
 /// the running pilot waits - that the player drags (it snaps to the nearest edge; the spot is saved as fractions in
-/// <see cref="PhoneSettings.FloatingX"/>/<see cref="PhoneSettings.FloatingY"/>). Tap → a small panel (Laby / LOD,
+/// <see cref="PhoneSettings.FloatingX"/>/<see cref="PhoneSettings.FloatingY"/>). Tap → a small panel (LOD, Laby greyed out until M5,
 /// Start / Stop, a fixed 3-line status, the last kill, Open app); long-press → Panic.
 /// <para><b>It never covers what the pilot reads or taps</b> by where it sits, not by hiding: MediaProjection records
 /// overlays, and its frames arrive on their own clock, so the button cannot be hidden for "the" captured frame. The
@@ -154,7 +154,7 @@ public sealed class FloatingControl
         bool running = state == EngineState.Running;
         _startStop!.Text = running ? "Stop" : "Start";
         var mode = engine.Settings.Sequence.Mode;
-        Style(_laby!, "Laby", mode == RunMode.AutoLaby, !running);
+        Style(_laby!, LabyLater, selected: false, enabled: false); // until M5: LOD only on the phone
         Style(_lod!, "LOD", mode == RunMode.AutoLod, !running);
     }
 
@@ -243,7 +243,7 @@ public sealed class FloatingControl
         panel.Background = bg;
 
         var modes = new LinearLayout(ctx) { Orientation = Orientation.Horizontal };
-        _laby = PanelButton(ctx, "Laby", () => SetMode(RunMode.AutoLaby));
+        _laby = PanelButton(ctx, LabyLater, () => { });
         _lod = PanelButton(ctx, "LOD", () => SetMode(RunMode.AutoLod));
         modes.AddView(_laby, Weighted());
         modes.AddView(_lod, Weighted());
@@ -330,6 +330,9 @@ public sealed class FloatingControl
         _main.RemoveCallbacks(_idleClose);
         _main.PostDelayed(_idleClose, PanelIdleCloseMs);
     }
+
+    /// <summary>The Laby button's text until M5 ports the Labyrinth to the phone (it stays disabled).</summary>
+    const string LabyLater = "Laby: coming in M5";
 
     void SetMode(RunMode mode)
     {

@@ -11,8 +11,7 @@ namespace WuxAuto.Core.Tests;
 /// teleport put it to 1199,1782 and waits there tabbing; off, it stays put and only Tab goes out until
 /// the boss name shows (user, 2026-10-27).
 /// </summary>
-[Collection("AppPaths")] // AppPaths is static state
-public class LodStandStillTests
+public class LodStandStillTests : AppPathsScope
 {
     private const int Width = 1440;
     private const int Height = 900;

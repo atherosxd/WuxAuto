@@ -101,11 +101,17 @@ sealed class PhonePilot : IDisposable
     /// <param name="root">An empty folder for the settings / debug files (AppPaths).</param>
     public PhonePilot(string root, AppSettings? settings = null)
     {
+        AppPaths.IsolateThisFlow(); // this pilot's folders are its own (test classes run in parallel)
         AppPaths.Configure(root, PhoneAssets);
         Settings = settings ?? PhoneLodSettings();
         Analyzer = new ScreenAnalyzer(Settings, Ocr);
         Controls = new TouchControls(Settings, Touch, Shortcuts, sleep: _ => { });
-        Pilot = new AutomationPilot(Settings, Analyzer, Controls, PlatformProfile.Phone, Shortcuts);
+        Pilot = new AutomationPilot(Settings, Analyzer, Controls, PlatformProfile.Phone, Shortcuts)
+        {
+            // The fake ring and picker change at once: the shortcut check's step waits (300-900 ms for the real game) only
+            // cost the test time. Their order and the taps between them stay as they are.
+            ShortcutCheckWaitMs = ms => Math.Min(ms, 30),
+        };
         Pilot.Log += (_, text) => Lines.Add(text);
         Pilot.StateChanged += () =>
         {

@@ -203,6 +203,48 @@ public sealed class TouchControlsTests
     }
 
     [Fact]
+    public void SkillStillHeld_HoldMode_FalseAfterReleaseAll_TrueAgainAfterTheNextPress()
+    {
+        // M4 review #1: after ReleaseAll (panel / game behind / loop wait) the hold is gone - the pilot must press again.
+        var h = new Harness();
+        h.Settings.Phone.AttackMode = PhoneAttackMode.Hold;
+        h.Shortcuts.Skills["1"] = SkillButton;
+        Assert.False(h.Controls.SkillStillHeld("1"));   // never pressed
+
+        Assert.True(h.Controls.SkillDown("1"));
+        Assert.True(h.Controls.SkillStillHeld("1"));    // HoldAlive null = cannot tell = still held
+        h.Controls.ReleaseAll();
+        Assert.False(h.Controls.SkillStillHeld("1"));
+        Assert.True(h.Controls.SkillDown("1"));
+        Assert.True(h.Controls.SkillStillHeld("1"));
+        Assert.Equal(["Down:830,630", "Release", "Down:830,630"], h.Touch.Calls);
+
+        // Another held press took the finger: this skill is no longer held.
+        h.Shortcuts.Icons[GameAction.ShuraKey] = Icon;
+        h.Controls.ActionDown(GameAction.ShuraKey);
+        Assert.False(h.Controls.SkillStillHeld("1"));
+    }
+
+    [Fact]
+    public void SkillStillHeld_TapModeAndDryRun()
+    {
+        var h = new Harness();
+        h.Settings.Phone.AttackMode = PhoneAttackMode.Tap;
+        h.Shortcuts.Skills["1"] = SkillButton;
+        Assert.True(h.Controls.SkillDown("1"));
+        Assert.True(h.Controls.SkillStillHeld("1"));    // the one-tap "hold" lasts until SkillUp
+        h.Controls.ReleaseAll();
+        Assert.False(h.Controls.SkillStillHeld("1"));
+
+        var dry = new Harness();
+        dry.Settings.Phone.AttackMode = PhoneAttackMode.Hold;
+        dry.Touch.DryRun = true;
+        Assert.True(dry.Controls.SkillDown("1"));
+        Assert.True(dry.Controls.SkillStillHeld("1"));  // nothing pressed, nothing to press again
+        Assert.Empty(dry.Touch.Calls);
+    }
+
+    [Fact]
     public void ReleaseAll_NothingHeld_StillLiftsTheFinger()
     {
         // A joystick step on the loop thread is a held finger the controls do not track: Stop / F10 must end it too.

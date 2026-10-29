@@ -275,6 +275,12 @@ public sealed partial class AutomationPilot
     /// <summary>The phone's limit for <see cref="TickWithoutTitleAsync"/>: this long without a zone title, the game in front = fail (restart).</summary>
     internal int NoTitleLimitMs { get; set; } = 120_000;
 
+    /// <summary>
+    /// Phone: how long the pilot waits between two shortcut check steps, given the step's own wait (the game's ring and
+    /// picker need it). Tests shorten it - their fake ring changes at once - the apps keep the step's wait.
+    /// </summary>
+    internal Func<int, int> ShortcutCheckWaitMs { get; set; } = ms => ms;
+
     /// <summary>Ctrl + skill on manual skill presses: the setting, where the platform has a Ctrl key (desktop only).</summary>
     private bool CtrlSkillOn => _settings.Dungeon.CtrlSkill && Profile.SupportsCtrlSkill;
 
@@ -283,6 +289,10 @@ public sealed partial class AutomationPilot
     private bool PhoneTaps => Profile == PlatformProfile.Phone && _settings.Phone.AttackMode == PhoneAttackMode.Tap;
     private bool PhoneHolds => Profile == PlatformProfile.Phone && _settings.Phone.AttackMode == PhoneAttackMode.Hold;
     private int PhoneTapEveryMs => Math.Clamp(_settings.Phone.AttackTapEveryMs, 50, 2000);
+
+    /// <summary>The phone's word when the LOD entries run out (M4 ruling: Laby and Auto War are not ported yet).</summary>
+    public const string PhoneOutOfKeysText = "No LOD entries left - Laby and Auto War come later on the phone";
+
     private int HoldSkillMs => PhoneTaps ? 0 : _settings.Dungeon.HoldSkillMs;
     private int ManualAttackIntervalMs => PhoneTaps ? PhoneTapEveryMs : _settings.Dungeon.ManualAttackIntervalMs;
     private int LodSkillEveryMs => PhoneTaps ? PhoneTapEveryMs : _settings.Lod.SkillEveryMs;
@@ -1022,7 +1032,7 @@ public sealed partial class AutomationPilot
         {
             case ShortcutCheckOutcome.Working:
                 _detail = step.Detail;
-                _waitUntil = Environment.TickCount64 + Math.Max(0, step.WaitMs);
+                _waitUntil = Environment.TickCount64 + Math.Max(0, ShortcutCheckWaitMs(step.WaitMs));
                 break;
             case ShortcutCheckOutcome.Done:
                 _shortcutsChecked = true;
@@ -4053,8 +4063,14 @@ public sealed partial class AutomationPilot
         _manualPresses = 0;
         _manualHit = false;
         _holdUntil = null;
+        // Phone: the presses as the attack mode makes them (Tap: no held press, PhoneSettings.AttackTapEveryMs apart).
+        string presses = Profile != PlatformProfile.Phone
+            ? $"'{dungeon.SkillKey}' held {dungeon.HoldSkillMs} ms, then {SkillText(dungeon.SkillKey)} x{dungeon.ManualAttacks} ({dungeon.ManualAttackIntervalMs} ms apart)"
+            : HoldSkillMs > 0
+                ? $"'{dungeon.SkillKey}' held {HoldSkillMs} ms, then tapped x{dungeon.ManualAttacks} ({ManualAttackIntervalMs} ms apart; attack mode Hold)"
+                : $"'{dungeon.SkillKey}' tapped x{dungeon.ManualAttacks} ({ManualAttackIntervalMs} ms apart; attack mode {_settings.Phone.AttackMode})";
         Log?.Invoke(LogLevel.Success,
-            $"Attacking '{dungeon.FinalBoss}' by hand ({why}): '{dungeon.SkillKey}' held {dungeon.HoldSkillMs} ms, then {SkillText(dungeon.SkillKey)} x{dungeon.ManualAttacks} ({dungeon.ManualAttackIntervalMs} ms apart); the autohunt goes on after a new '{dungeon.AttackConfirmText}'.");
+            $"Attacking '{dungeon.FinalBoss}' by hand ({why}): {presses}; the autohunt goes on after a new '{dungeon.AttackConfirmText}'.");
         _waitUntil = Environment.TickCount64 + 200;
     }
 
@@ -5336,6 +5352,15 @@ public sealed partial class AutomationPilot
     /// </summary>
     private bool OutOfKeys(bool labyrinth, string why)
     {
+        // Phone (M4 ruling, until M5): Laby and Auto War are not ported - no mode switch, no Labyrinth teleport, no
+        // Regular War; stop in town and say so.
+        if (Profile == PlatformProfile.Phone)
+        {
+            Log?.Invoke(LogLevel.Warning, $"{why}. {(labyrinth ? "Laby and Auto War come later on the phone" : PhoneOutOfKeysText)}");
+            Stop(labyrinth ? "out of Temple of Fiends Keys" : "out of Den of Rebirth entries");
+            return false;
+        }
+
         if (labyrinth)
             _labyOut = true;
         else

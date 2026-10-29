@@ -15,7 +15,6 @@ namespace WuxAuto.Core.Tests;
 /// shortcuts, the walk up by the joystick, the town checks (Run orb, Settings visit) and the hand-off of frames without
 /// a zone title (reconnect, the 2-minute limit).
 /// </summary>
-[Collection("AppPaths")]
 public class PhoneLodFlowTests : AppPathsScope
 {
     // Task 1 / Task 4 boxes at 1920x1080.
@@ -200,12 +199,61 @@ public class PhoneLodFlowTests : AppPathsScope
         Assert.Contains("lifted by another touch", phone.Log);
     }
 
+    [Fact]
+    public async Task PhoneLod_HoldMode_ReleaseAll_NextTickPressesAgain()
+    {
+        // M4 review #1: the engine lifts every touch on a pause (the floating panel, the game behind, a loop wait); the
+        // fight's next tick must press the skill down again - HoldAlive cannot tell (null), the hold is simply gone.
+        using var phone = new PhonePilot(TempRoot());
+        phone.Settings.Phone.AttackMode = PhoneAttackMode.Hold;
+        phone.Settings.Lod.ApproachBoss = false;
+        phone.Shortcuts.Skills["1"] = Skill1;
+        phone.Ocr.Scene = () => [Title, Target];
+        using var frame = PhoneFrames.Grey();
+        string down = $"Down {Skill1.CenterX},{Skill1.CenterY}";
+
+        await phone.RunAsync(() => frame, PilotPhase.LodAttack, () => phone.Touch.Calls.Contains(down));
+        Assert.Equal([down], phone.Touch.Calls);
+
+        phone.Controls.ReleaseAll();                       // what the engine does on the pause
+        long deadline = Environment.TickCount64 + 3000;
+        while (phone.Touch.Calls.Count(c => c == down) < 2 && Environment.TickCount64 < deadline)
+        {
+            await phone.Pilot.TickAsync(frame, CancellationToken.None);
+            await Task.Delay(20);
+        }
+
+        Assert.Equal([down, "Release", down], phone.Touch.Calls);
+        Assert.Contains("lifted by another touch", phone.Log);
+    }
+
+    [Theory]
+    [InlineData(PhoneAttackMode.Tap, "'1' tapped x10 (100 ms apart; attack mode Tap)")]
+    [InlineData(PhoneAttackMode.Hold, "'1' held 3000 ms, then tapped x10 (300 ms apart; attack mode Hold)")]
+    public async Task PhoneStage5_ManualAttackLog_SaysWhatThePhoneDoes(PhoneAttackMode mode, string presses)
+    {
+        // Review minor 10: in Tap mode there is no held press - the log must not say "held 3000 ms".
+        var settings = PhonePilot.PhoneLodSettings();
+        settings.Sequence.Mode = RunMode.AutoLaby;
+        settings.Dungeon.Stages = [];                     // stage index 0 = past the last stage = the final boss
+        settings.Phone.AttackMode = mode;
+        using var phone = new PhonePilot(TempRoot(), settings);
+        phone.Shortcuts.Skills["1"] = Skill1;
+        phone.Ocr.Scene = () => [FakeOcrEngine.Line("[The Labyrinth (Adept)]", 1600, 70, 280, 16)];
+        using var frame = PhoneFrames.Grey();
+
+        await phone.RunAsync(() => frame, PilotPhase.SelectBoss,
+            () => phone.Lines.Any(l => l.StartsWith("Attacking ", StringComparison.Ordinal)), timeoutMs: 5000);
+
+        Assert.Contains(phone.Lines, l => l.StartsWith("Attacking ", StringComparison.Ordinal) && l.Contains($"): {presses};", StringComparison.Ordinal));
+    }
+
     [Theory]
     [InlineData(true)]
     [InlineData(false)]
     public async Task PhoneLod_TapMode_NoHold_OneTapPerAttackTapEveryMs(bool holdSkill)
     {
-        // AttackMode Tap (default; user, MuMu 2026-10-29: "no hold", "100ms taps"). Hold skill (LOD) on or off, the phone
+        // AttackMode Tap (user, MuMu 2026-10-29: "no hold", "100ms taps"; the default is Hold since). Hold skill (LOD) on or off, the phone
         // taps the attack icon at most once per PhoneSettings.AttackTapEveryMs and never presses it down.
         using var phone = new PhonePilot(TempRoot());
         phone.Settings.Phone.AttackMode = PhoneAttackMode.Tap;

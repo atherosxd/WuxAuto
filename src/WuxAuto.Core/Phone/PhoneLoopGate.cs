@@ -125,11 +125,15 @@ public sealed class PhoneLoopGate
     }
 
     /// <summary>
-    /// Whether the engine must lift every touch on this pass: on entering a wait in which a held finger would press on
-    /// something that is not the game (another app in front, the panel over the game). Once per entry.
+    /// Whether the engine must lift every touch on this pass: on entering any wait from ticking (no title - a disconnect
+    /// puts the login / character screen under a held finger -, no recent frame, no frame since a touch, the game behind,
+    /// the panel open; M4 review #2), and on entering a wait in which a held finger would press on something that is not
+    /// the game (another app in front, the panel over the game) from another wait. Once per entry; the fight presses
+    /// again on its next tick (<see cref="TouchControls.SkillStillHeld"/>).
     /// </summary>
     public static bool MustRelease(LoopDecision previous, LoopDecision current) =>
-        current.Kind is LoopWait.NotInFront or LoopWait.PanelOpen && previous.Kind != current.Kind;
+        (!current.Tick && previous.Tick)
+        || (current.Kind is LoopWait.NotInFront or LoopWait.PanelOpen && previous.Kind != current.Kind);
 
     /// <summary>
     /// Whether the engine hands this pass's frame to <see cref="AutomationPilot.TickWithoutTitleAsync"/> instead of the

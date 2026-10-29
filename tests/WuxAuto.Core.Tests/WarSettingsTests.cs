@@ -2,8 +2,7 @@ using WuxAuto.Core;
 
 namespace WuxAuto.Core.Tests;
 
-[Collection("AppPaths")]
-public class WarSettingsTests
+public class WarSettingsTests : AppPathsScope
 {
     [Fact]
     public void WarSettings_RoundTrip_AndOldFileLoadsDefaults()

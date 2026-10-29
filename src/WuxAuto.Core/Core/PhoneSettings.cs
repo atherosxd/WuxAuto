@@ -6,9 +6,9 @@ public sealed class PhoneSettings
     public int TapHoldMs { get; set; } = 60;
 
     /// <summary>
-    /// The phone pilot taps an attack skill once per this many ms, start to start - LOD skill spam and the manual attack
-    /// taps; never a hold (user, MuMu 2026-10-29: "no hold", then "actually make it 100ms taps, still no hold"). Replaces
-    /// the desktop's skill intervals on the phone; used clamped to 50-2000 ms. A tick slower than this (the LOD fight's
+    /// <see cref="AttackMode"/> Tap: the phone pilot taps an attack skill once per this many ms, start to start - LOD
+    /// skill spam and the manual attack taps (user, MuMu 2026-10-29: "actually make it 100ms taps"). Replaces the
+    /// desktop's skill intervals on the phone; clamped to 50-2000 ms. A tick slower than this (the LOD fight's
     /// whole-screen OCR) stretches it - the pilot logs the real rate.
     /// </summary>
     public int AttackTapEveryMs { get; set; } = 100;

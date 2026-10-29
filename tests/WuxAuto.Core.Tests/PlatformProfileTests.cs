@@ -5,8 +5,7 @@ using WuxAuto.Vision;
 
 namespace WuxAuto.Core.Tests;
 
-[Collection("AppPaths")]
-public class PlatformProfileTests
+public class PlatformProfileTests : AppPathsScope
 {
     [Fact]
     public void Desktop_IsTheDefault()
@@ -73,6 +72,63 @@ public class PlatformProfileTests
             if (Directory.Exists(root))
                 Directory.Delete(root, true);
         }
+    }
+
+    [Fact]
+    public void Normalize_ClampsEveryPhoneSetting_DefaultsUnchanged()
+    {
+        // M4 review minor 8: a hand-edited file must not divide by zero (TurnDragPxPerMs 0) or send empty gestures.
+        var defaults = new AppSettings();
+        SettingsStore.Normalize(defaults);
+        var d = new PhoneSettings();
+        var n = defaults.Phone;
+        Assert.Equal((d.TapHoldMs, d.AttackTapEveryMs, d.AttackMode, d.TapSettleMs, d.JoystickStepMs, d.SwipePxPerTurnMs),
+            (n.TapHoldMs, n.AttackTapEveryMs, n.AttackMode, n.TapSettleMs, n.JoystickStepMs, n.SwipePxPerTurnMs));
+        Assert.Equal((d.TurnDragMinPx, d.TurnDragEndHoldMs, d.TurnDragPxPerMs, d.TurnDragMinMs, d.PinchFromGap, d.PinchToGap),
+            (n.TurnDragMinPx, n.TurnDragEndHoldMs, n.TurnDragPxPerMs, n.TurnDragMinMs, n.PinchFromGap, n.PinchToGap));
+        Assert.Equal((d.PinchMs, d.ListSwipePx, d.FloatingX, d.FloatingY), (n.PinchMs, n.ListSwipePx, n.FloatingX, n.FloatingY));
+
+        var s = new AppSettings();
+        var p = s.Phone;
+        p.TapHoldMs = 0;
+        p.AttackTapEveryMs = 5;
+        p.AttackMode = (PhoneAttackMode)42;
+        p.TapSettleMs = -1;
+        p.JoystickStepMs = 0;
+        p.SwipePxPerTurnMs = double.NaN;
+        p.TurnDragMinPx = 0;
+        p.TurnDragEndHoldMs = -5;
+        p.TurnDragPxPerMs = 0;
+        p.TurnDragMinMs = 0;
+        p.PinchFromGap = 0;
+        p.PinchToGap = -3;
+        p.PinchMs = 0;
+        p.ListSwipePx = 0;
+        p.FloatingX = 7;
+        p.FloatingY = double.NaN;
+
+        SettingsStore.Normalize(s);
+
+        Assert.Equal(10, p.TapHoldMs);
+        Assert.Equal(50, p.AttackTapEveryMs);
+        Assert.Equal(PhoneAttackMode.Hold, p.AttackMode);
+        Assert.Equal(0, p.TapSettleMs);
+        Assert.Equal(100, p.JoystickStepMs);
+        Assert.Equal(0.5, p.SwipePxPerTurnMs);
+        Assert.Equal(1, p.TurnDragMinPx);
+        Assert.Equal(0, p.TurnDragEndHoldMs);
+        Assert.True(p.TurnDragPxPerMs > 0);
+        Assert.Equal(10, p.TurnDragMinMs);
+        Assert.Equal(20, p.PinchFromGap);
+        Assert.Equal(1, p.PinchToGap);
+        Assert.Equal(50, p.PinchMs);
+        Assert.Equal(10, p.ListSwipePx);
+        Assert.Equal(1, p.FloatingX);
+        Assert.Equal(0.03, p.FloatingY);
+
+        p.AttackTapEveryMs = 99_999;
+        SettingsStore.Normalize(s);
+        Assert.Equal(2000, p.AttackTapEveryMs);
     }
 
     /// <summary>Counts what reaches the input; every call succeeds.</summary>

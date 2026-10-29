@@ -115,6 +115,7 @@ static class PilotRun
         Action<string>? assets = null)
     {
         string root = Path.Combine(Path.GetTempPath(), "wux-core-" + Guid.NewGuid());
+        AppPaths.IsolateThisFlow(); // this run's folders are its own (test classes run in parallel)
         AppPaths.Configure(root, Path.Combine(root, "assets"));
         try
         {

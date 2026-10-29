@@ -12,8 +12,8 @@ namespace WuxAuto.Phone;
 // * Has(RunSkillKey) = the shortcut icon was found; Has(OpenInventory | ToggleSettings) = the menu was found (both confirmed)
 // * ZoomOut: one pinch per 5 notches, at least one (fingers 720 -> 192 px apart, 400 ms is about x0.5, 3 pinches = full range)  - ZoomOut_OnePinchPerFiveNotches
 // * TapSettleMs 100 (a tap right after the joystick is lost up to 38 ms)
-// Still unverified (the character had no skill on the wheel; nothing was toggled in town):
-// * skill long-press (SkillDown / SkillUp), Shura = ActionDown(ShuraKey) / StopAttack icon (no stop-attack shortcut exists in the picker),
+// * The attack skill held down (SkillDown, AttackMode Hold) hit the LOD boss for a whole fight (MuMu 2026-10-29, Task 8)
+// Still unverified: Shura = ActionDown(ShuraKey) / StopAttack icon (no stop-attack shortcut exists in the picker),
 //   Has(OpenAutohuntSettings) = menu found (which entry opens the autohunt settings is for the user to say)
 
 /// <summary>
@@ -89,14 +89,14 @@ public sealed class TouchControls(AppSettings settings, ITouchInput touch, IShor
     public bool SkillCtrlTap(string skill) => SkillTap(skill);
 
     /// <summary>
-    /// No hold on the phone (user, MuMu 2026-10-29: "no fast attack, just 1 tap per 600ms no hold either"): the "held"
-    /// skill is one plain <see cref="SkillTap"/>, nothing stays down; it counts as held until <see cref="SkillUp"/>.
-    /// A press held by <see cref="ActionDown"/> is let go first (one finger).
+    /// <see cref="PhoneSettings.AttackMode"/> Hold (the default; user, MuMu 2026-10-29: "I just tried holding the attack
+    /// skills, it worked"): the finger stays on the attack icon until <see cref="SkillUp"/> / <see cref="ReleaseAll"/> /
+    /// <see cref="Halt"/>, like <see cref="ActionDown"/>. Tap: the "held" skill is one plain <see cref="SkillTap"/>,
+    /// nothing stays down; it counts as held until <see cref="SkillUp"/>, and a press held by <see cref="ActionDown"/>
+    /// is let go first (one finger).
     /// </summary>
     public bool SkillDown(string skill) => Send(() =>
     {
-        // AttackMode Hold (user, MuMu 2026-10-29: "I just tried holding the attack skills, it worked"): the finger stays
-        // on the icon until SkillUp / ReleaseAll / Halt, like ActionDown.
         if (Phone.AttackMode == PhoneAttackMode.Hold)
             return Hold(SkillHold(skill), shortcuts.AttackSkill(skill), () => shortcuts.MissedAttackSkill(skill));
 
@@ -140,14 +140,25 @@ public sealed class TouchControls(AppSettings settings, ITouchInput touch, IShor
     }
 
     /// <summary>
-    /// Hold mode: false (and the skill counts as let go) when the finger this held is no longer down - the next gesture
-    /// lifts a held press, and the system can cancel it. Anything else: true.
+    /// Whether the skill's press is still on: true in a dry run (nothing was pressed) and for Tap mode's one-tap "hold"
+    /// until <see cref="SkillUp"/>; in Hold mode true while this finger is down (<see cref="ITouchInput.HoldAlive"/> not
+    /// false - the next gesture lifts a held press, and the system can cancel it). False (the skill counts as let go,
+    /// press it again) when the finger is gone, and when nothing holds this skill any more - <see cref="ReleaseAll"/>
+    /// (the floating panel, the game behind, a wait in the loop) or another held press took the finger (M4 review #1).
     /// </summary>
     public bool SkillStillHeld(string skill)
     {
+        if (touch.IsDryRun)
+            return true;
+
+        string what = SkillHold(skill);
         lock (_heldLock)
         {
-            if (_held != SkillHold(skill) || touch.HoldAlive != false)
+            if (_pressedSkill == what)
+                return true;
+            if (_held != what)
+                return false;
+            if (touch.HoldAlive != false)
                 return true;
             _held = null;
             return false;

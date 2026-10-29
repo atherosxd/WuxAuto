@@ -52,11 +52,11 @@ public partial class MainPage : ContentPage
         try
         {
             ServiceHint.IsVisible = PilotAccessibilityService.Instance == null;
-            var mode = engine.Settings.Sequence.Mode;
-            ModeLaby.IsChecked = mode == RunMode.AutoLaby;
-            ModeLod.IsChecked = mode == RunMode.AutoLod;
+            // LOD is the only mode on the phone until M5 (the Laby button stays disabled, "coming in M5").
+            ModeLod.IsChecked = true;
+            ModeLaby.IsChecked = false;
             bool running = engine.State == EngineState.Running;
-            ModeLaby.IsEnabled = ModeLod.IsEnabled = !running;
+            ModeLod.IsEnabled = !running;
             DryRun.IsChecked = engine.Settings.Sequence.DryRun;
             DryRun.IsEnabled = !running;
             StartButton.IsEnabled = !running;
@@ -81,10 +81,10 @@ public partial class MainPage : ContentPage
 
     private void OnModeChanged(object? sender, CheckedChangedEventArgs e)
     {
-        if (_syncing || !e.Value)
+        if (_syncing || !e.Value || sender != ModeLod)
             return;
         var engine = Engine;
-        var mode = sender == ModeLod ? RunMode.AutoLod : RunMode.AutoLaby;
+        var mode = RunMode.AutoLod;
         if (engine.Settings.Sequence.Mode == mode)
             return;
         engine.Settings.Sequence.Mode = mode;

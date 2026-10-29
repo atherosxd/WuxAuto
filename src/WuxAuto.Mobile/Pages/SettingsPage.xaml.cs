@@ -50,18 +50,15 @@ public partial class SettingsPage : ContentPage
             return;
         }
 
+        // Any name: on the phone the first attack icon found on the hotbar or the skill wheel is pressed, whatever the
+        // field says; only an empty field means something (no skill presses).
         string skill = (SkillKey.Text ?? string.Empty).Trim();
-        if (skill is not ("1" or "2" or "3"))
-        {
-            Saved.Text = "The skill is the wheel button 1, 2 or 3.";
-            return;
-        }
 
         var s = engine.Settings;
         s.Sequence.Loop = Loop.IsToggled;
         s.Sequence.RestartOnError = RestartOnError.IsToggled;
         s.Sequence.AutoReconnect = AutoReconnect.IsToggled;
-        s.Phone.AttackMode = Enum.TryParse<PhoneAttackMode>(AttackMode.SelectedItem as string, out var mode) ? mode : PhoneAttackMode.Tap;
+        s.Phone.AttackMode = Enum.TryParse<PhoneAttackMode>(AttackMode.SelectedItem as string, out var mode) ? mode : s.Phone.AttackMode;
         s.Lod.ApproachBoss = LodApproach.IsToggled;
         s.Sequence.DryRun = DryRun.IsToggled;
         s.Dungeon.SkillKey = skill;

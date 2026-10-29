@@ -263,8 +263,44 @@ public class PhoneLoopGateTests
         Assert.True(PhoneLoopGate.MustRelease(noTitle, behind));
         Assert.False(PhoneLoopGate.MustRelease(behind, behind));   // still behind: once is enough
         Assert.False(PhoneLoopGate.MustRelease(panel, panel));
-        Assert.False(PhoneLoopGate.MustRelease(go, noTitle));
         Assert.False(PhoneLoopGate.MustRelease(behind, go));
+        Assert.False(PhoneLoopGate.MustRelease(noTitle, noTitle));
+    }
+
+    [Fact]
+    public void MustRelease_OnEnteringAnyWaitFromTicking()
+    {
+        // M4 review #2: a held finger must not stay down through a disconnect (the login / character screen under it,
+        // DELETE CHARACTER there) or while the picture is old - every wait entered from a ticking pass lifts it.
+        foreach (var kind in Enum.GetValues<LoopWait>().Where(k => k != LoopWait.None))
+        {
+            Assert.True(PhoneLoopGate.MustRelease(LoopDecision.Go, LoopDecision.Wait(kind, "x")), kind.ToString());
+            Assert.False(PhoneLoopGate.MustRelease(LoopDecision.Wait(kind, "x"), LoopDecision.Wait(kind, "x")), kind.ToString());
+        }
+    }
+
+    [Fact]
+    public void MustRelease_ThroughTheGate_NoTitleAndStaleFrameAfterTicking()
+    {
+        var gate = new PhoneLoopGate();
+        long now = T0 + Ms(1_000);
+        gate.TitleChecked(now, read: true);
+        var ticking = DecideAt(gate, now, new CaptureState(true, now));
+        Assert.True(ticking.Tick);
+
+        // The title stops reading (a disconnect): past the grace the pass waits for it - and lifts the finger.
+        long later = now + Ms(PhoneLoopGate.TitleGraceMs + 1_000);
+        var noTitle = gate.Decide(later, new CaptureState(true, later), gameInFront: true, panelOpen: false, PilotPhase.LodAttack);
+        Assert.Equal(LoopWait.NoTitle, noTitle.Kind);
+        Assert.True(PhoneLoopGate.MustRelease(ticking, noTitle));
+
+        // A touch with no frame after it: the picture is from before the touch - wait and lift.
+        var gate2 = new PhoneLoopGate();
+        gate2.TitleChecked(now, read: true);
+        long afterTouch = now + Ms(PhoneLoopGate.TouchFrameMs + 500);
+        var stale = gate2.Decide(afterTouch, new CaptureState(true, now), true, false, PilotPhase.LodAttack, lastTouchTicks: now + Ms(100));
+        Assert.Equal(LoopWait.NoFrameSinceTouch, stale.Kind);
+        Assert.True(PhoneLoopGate.MustRelease(ticking, stale));
     }
 
     [Fact]

@@ -3,7 +3,6 @@ using WuxAuto.Phone;
 
 namespace WuxAuto.Core.Tests;
 
-[Collection("AppPaths")] // AppPaths is static state
 public class DebugBundleContentsTests : AppPathsScope
 {
     static readonly DateTime Now = new(2026, 10, 28, 15, 30, 0);

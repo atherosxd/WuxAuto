@@ -14,7 +14,6 @@ namespace WuxAuto.Core.Tests;
 /// synthetic frame where the game puts them, at 1920x1080 and scaled to the Xiaomi's 2608x1200 (the HUD scales with
 /// the height: left-hand items keep their distance from the left edge, right-hand ones from the right edge).
 /// </summary>
-[Collection("AppPaths")]
 public class ShortcutMapTests : AppPathsScope
 {
     // Where each crop was cut from (top-left at 1920x1080) and which edge it sits on.

@@ -73,6 +73,9 @@ public sealed class MobileEngine : IDisposable
     public MobileEngine(AppSettings settings, Func<CaptureService?> capture, ITouchInput touch, IOcrEngine ocr)
     {
         _settings = settings;
+        // Until M5 the phone runs Auto LOD only (Laby and Auto War are not ported): a saved Laby / War mode reads as LOD.
+        if (_settings.Sequence.Mode != RunMode.AutoLod)
+            _settings.Sequence.Mode = RunMode.AutoLod;
         _capture = capture;
         if (touch is AndroidTouchInput android)
         {
@@ -177,6 +180,12 @@ public sealed class MobileEngine : IDisposable
         if (_pilot.IsRunning || _startRequested)
         {
             Emit(LogLevel.Info, "Already running.");
+            return;
+        }
+
+        if (mode != RunMode.AutoLod)
+        {
+            Emit(LogLevel.Warning, $"{(mode == RunMode.AutoLaby ? "Laby" : mode.ToString())}: coming in M5 - only LOD runs on the phone for now.");
             return;
         }
 
@@ -376,7 +385,8 @@ public sealed class MobileEngine : IDisposable
             }
         }
 
-        // Another app in front or the panel over the game: a held finger would press on it - lift it (I-5).
+        // Any wait entered from ticking (no title - a disconnect -, an old picture, another app in front, the panel over the
+        // game): a held finger would press on what is there now - lift it (I-5, M4 review #2); the fight presses again.
         if (PhoneLoopGate.MustRelease(_lastDecision, decision))
             ReleaseQuietly($"waiting: {decision.Reason}");
         _lastDecision = decision;

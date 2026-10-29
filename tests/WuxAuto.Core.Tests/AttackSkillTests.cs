@@ -13,7 +13,6 @@ namespace WuxAuto.Core.Tests;
 /// are: a hotbar slot or a round button of the skill wheel round the sword. The skill name is ignored; the first icon
 /// in list order wins; none = nothing sent, and a skill spam on none costs no search per press.
 /// </summary>
-[Collection("AppPaths")]
 public class AttackSkillTests : AppPathsScope
 {
     // A hotbar slot (the bar's slots are ~80 px apart from x 646, y 988 at 1920x1080) and a wheel button

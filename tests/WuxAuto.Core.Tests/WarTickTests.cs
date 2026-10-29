@@ -12,8 +12,7 @@ namespace WuxAuto.Core.Tests;
 /// Auto War phases ticked on a blank 1920x1080 frame with a scripted OCR scene (<see cref="PilotRun"/>): the trip back's map
 /// pick by the row's whole name, and the war dialog joined only with the game in front.
 /// </summary>
-[Collection("AppPaths")] // AppPaths is static state
-public class WarTickTests
+public class WarTickTests : AppPathsScope
 {
     private const int Width = 1920;
     private const int Height = 1080;
@@ -414,162 +413,190 @@ public class WarTickTests
 
     private static int Tabs(FakeGameInput input) => input.Calls.Count(c => c == "KeyTap Tab");
 
-    [Fact]
-    public async Task NoTargetAfterFiveTabs_CtrlClicksTowardTheNearestPlayer_NotOurOwnName()
+    /// <summary>
+    /// The walk toward the nearest player after 5 Tabs without a target.
+    /// A class of its own: these tests wait on the pilot's real clock, and xUnit runs test classes in parallel.
+    /// </summary>
+    public class WalkTowardPlayers : AppPathsScope
     {
-        var settings = Fight();
-        var (input, run) = await RunFightAsync(settings, input =>
-            [
-                FakeOcrEngine.Line("OurOwnName", 910, 475, 100, 16),     // right above the character (0.5 w, 0.54 h)
-                MovingTag(input),
-            ],
-            done: (input, _) => CtrlClicks(input) >= 2,
-            timeoutMs: 30000);
+        [Fact]
+        public async Task NoTargetAfterFiveTabs_CtrlClicksTowardTheNearestPlayer_NotOurOwnName()
+        {
+            var settings = Fight();
+            var (input, run) = await RunFightAsync(settings, input =>
+                [
+                    FakeOcrEngine.Line("OurOwnName", 910, 475, 100, 16),     // right above the character (0.5 w, 0.54 h)
+                    MovingTag(input),
+                ],
+                done: (input, _) => CtrlClicks(input) >= 2,
+                timeoutMs: 30000);
 
-        string log = Log(input, run.Lines);
-        int first = input.Calls.FindIndex(c => c.StartsWith("CtrlClick", StringComparison.Ordinal));
-        Assert.True(first >= 0, "expected a Ctrl+click" + log);
-        Assert.Equal(5, input.Calls.Take(first).Count(c => c == "KeyTap Tab"));
-        var (x, y) = AutomationPilot.WarWalkClick(new PixelRect(1030, 835, 100, 16), Width, Height);
-        Assert.Equal($"CtrlClick {x},{y}", input.Calls[first]);
-        Assert.Contains("No target after 5 Tabs - walking toward 'zMADARAz' (step 1/6).", run.Lines);
-        Assert.Contains("No target after 6 Tabs - walking toward 'zMADARAz' (step 2/6).", run.Lines);
-        Assert.DoesNotContain(input.Calls, c => c.StartsWith("Click", StringComparison.Ordinal) && !c.StartsWith("CtrlClick", StringComparison.Ordinal));
+            string log = Log(input, run.Lines);
+            int first = input.Calls.FindIndex(c => c.StartsWith("CtrlClick", StringComparison.Ordinal));
+            Assert.True(first >= 0, "expected a Ctrl+click" + log);
+            Assert.Equal(5, input.Calls.Take(first).Count(c => c == "KeyTap Tab"));
+            var (x, y) = AutomationPilot.WarWalkClick(new PixelRect(1030, 835, 100, 16), Width, Height);
+            Assert.Equal($"CtrlClick {x},{y}", input.Calls[first]);
+            Assert.Contains("No target after 5 Tabs - walking toward 'zMADARAz' (step 1/6).", run.Lines);
+            Assert.Contains("No target after 6 Tabs - walking toward 'zMADARAz' (step 2/6).", run.Lines);
+            Assert.DoesNotContain(input.Calls, c => c.StartsWith("Click", StringComparison.Ordinal) && !c.StartsWith("CtrlClick", StringComparison.Ordinal));
+        }
+
+        [Fact]
+        public async Task BeforeTheWarHasStarted_NoWalk()
+        {
+            // Before "Gate is Open" (or a first target) everyone stands at the closed gate: Tab only.
+            var settings = Fight();
+            var (input, run) = await RunFightAsync(settings, input => [MovingTag(input)],
+                done: (input, _) => Tabs(input) >= 8, timeoutMs: 30000, warStarted: false);
+
+            string log = Log(input, run.Lines);
+            Assert.True(Tabs(input) >= 8, "expected 8 Tabs" + log);
+            Assert.Equal(0, CtrlClicks(input));
+        }
+
+        [Fact]
+        public async Task AUiWordThatStaysPut_IsIgnoredForTheWar_TheNextTagIsTheGoal()
+        {
+            // "SORT" (an open window's button) is nearest and does not move after the step; the player behind it does.
+            var settings = Fight();
+            var (input, run) = await RunFightAsync(settings, input =>
+                [
+                    FakeOcrEngine.Line("SORT", 1040, 800, 100, 16),
+                    FakeOcrEngine.Line("zMADARAz", 1300 + 60 * (CtrlClicks(input) % 2), 300, 100, 16),
+                ],
+                done: (input, _) => CtrlClicks(input) >= 3,
+                timeoutMs: 40000);
+
+            string log = Log(input, run.Lines);
+            Assert.Contains("No target after 5 Tabs - walking toward 'SORT' (step 1/6).", run.Lines);
+            Assert.Single(run.Lines, l => l.StartsWith("'SORT' stayed put after the step", StringComparison.Ordinal));
+            Assert.Contains("No target after 6 Tabs - walking toward 'zMADARAz' (step 2/6).", run.Lines);
+            Assert.Contains("No target after 7 Tabs - walking toward 'zMADARAz' (step 3/6).", run.Lines);
+            Assert.Single(run.Lines, l => l.Contains("walking toward 'SORT'", StringComparison.Ordinal));
+        }
     }
 
-    [Fact]
-    public async Task BeforeTheWarHasStarted_NoWalk()
+    /// <summary>
+    /// Six walk steps, then the 20 s rest (WarWalkRestMs - a real-clock wait in the pilot).
+    /// A class of its own: these tests wait on the pilot's real clock, and xUnit runs test classes in parallel.
+    /// </summary>
+    public class WalkRest : AppPathsScope
     {
-        // Before "Gate is Open" (or a first target) everyone stands at the closed gate: Tab only.
-        var settings = Fight();
-        var (input, run) = await RunFightAsync(settings, input => [MovingTag(input)],
-            done: (input, _) => Tabs(input) >= 8, timeoutMs: 30000, warStarted: false);
-
-        string log = Log(input, run.Lines);
-        Assert.True(Tabs(input) >= 8, "expected 8 Tabs" + log);
-        Assert.Equal(0, CtrlClicks(input));
-    }
-
-    [Fact]
-    public async Task AUiWordThatStaysPut_IsIgnoredForTheWar_TheNextTagIsTheGoal()
-    {
-        // "SORT" (an open window's button) is nearest and does not move after the step; the player behind it does.
-        var settings = Fight();
-        var (input, run) = await RunFightAsync(settings, input =>
-            [
-                FakeOcrEngine.Line("SORT", 1040, 800, 100, 16),
-                FakeOcrEngine.Line("zMADARAz", 1300 + 60 * (CtrlClicks(input) % 2), 300, 100, 16),
-            ],
-            done: (input, _) => CtrlClicks(input) >= 3,
-            timeoutMs: 40000);
-
-        string log = Log(input, run.Lines);
-        Assert.Contains("No target after 5 Tabs - walking toward 'SORT' (step 1/6).", run.Lines);
-        Assert.Single(run.Lines, l => l.StartsWith("'SORT' stayed put after the step", StringComparison.Ordinal));
-        Assert.Contains("No target after 6 Tabs - walking toward 'zMADARAz' (step 2/6).", run.Lines);
-        Assert.Contains("No target after 7 Tabs - walking toward 'zMADARAz' (step 3/6).", run.Lines);
-        Assert.Single(run.Lines, l => l.Contains("walking toward 'SORT'", StringComparison.Ordinal));
-    }
-
-    [Fact]
-    public async Task SixSteps_ThenTabOnlyFor20s_ThenANewSpell()
-    {
-        var settings = Fight();
-        long sixthAt = 0;
-        var (input, run) = await RunFightAsync(settings, input => [MovingTag(input)],
-            done: (input, _) =>
-            {
-                if (CtrlClicks(input) == 6 && sixthAt == 0)
-                    sixthAt = Environment.TickCount64;
-                return CtrlClicks(input) >= 7;
-            },
-            timeoutMs: 90000);
-
-        string log = Log(input, run.Lines);
-        Assert.True(CtrlClicks(input) >= 7, "expected a 7th step after the rest" + log);
-        long rested = Environment.TickCount64 - sixthAt;
-        Assert.True(rested >= AutomationPilot.WarWalkRestMs, $"the 7th step came {rested} ms after the 6th" + log);
-        Assert.Single(run.Lines, l => l.StartsWith("6 walk steps without a target - Tab only for 20s", StringComparison.Ordinal));
-        Assert.Contains(run.Lines, l => l.EndsWith("walking toward 'zMADARAz' (step 1/6).", StringComparison.Ordinal)
-                                        && !l.StartsWith("No target after 5 Tabs", StringComparison.Ordinal));
-        // Tabs went on during the rest.
-        int sixth = input.Calls.Select((c, i) => (c, i)).Where(p => p.c.StartsWith("CtrlClick", StringComparison.Ordinal)).Skip(5).First().i;
-        int seventh = input.Calls.Select((c, i) => (c, i)).Where(p => p.c.StartsWith("CtrlClick", StringComparison.Ordinal)).Skip(6).First().i;
-        Assert.True(input.Calls.Skip(sixth).Take(seventh - sixth).Count(c => c == "KeyTap Tab") >= 8, "Tab only during the rest" + log);
-    }
-
-    [Fact]
-    public async Task DryRun_TheWalkIsLoggedOnly()
-    {
-        var settings = Fight();
-        var (input, run) = await RunFightAsync(settings, input => [MovingTag(input)],
-            done: (_, lines) => lines.Count(l => l.Contains("Dry run - would Ctrl+click", StringComparison.Ordinal)) >= 2,
-            timeoutMs: 30000, dryRun: true);
-
-        string log = Log(input, run.Lines);
-        Assert.True(run.Lines.Count(l => l.Contains("Dry run - would Ctrl+click", StringComparison.Ordinal)) >= 2, "expected two dry-run steps" + log);
-        Assert.Equal(0, CtrlClicks(input));
-        Assert.Equal(0, input.Clicks);
-    }
-
-    [Fact]
-    public async Task TheGameBehindAnotherWindow_NoReadsAndNoWalk()
-    {
-        var settings = Fight();
-        FakeOcrEngine? ocr = null;
-        int readsWhenHidden = -1;
-        long hiddenAt = 0;
-        var (input, run) = await RunFightAsync(settings, input => [MovingTag(input)],
-            done: (input, _) =>
-            {
-                if (hiddenAt == 0 && Tabs(input) >= 4)
+        [Fact]
+        public async Task SixSteps_ThenTabOnlyFor20s_ThenANewSpell()
+        {
+            var settings = Fight();
+            long sixthAt = 0;
+            var (input, run) = await RunFightAsync(settings, input => [MovingTag(input)],
+                done: (input, _) =>
                 {
-                    input.InFront = false;
-                    hiddenAt = Environment.TickCount64;
-                    readsWhenHidden = ocr!.Reads;
-                }
+                    if (CtrlClicks(input) == 6 && sixthAt == 0)
+                        sixthAt = Environment.TickCount64;
+                    return CtrlClicks(input) >= 7;
+                },
+                timeoutMs: 90000);
 
-                return hiddenAt > 0 && Environment.TickCount64 - hiddenAt >= 5000;
-            },
-            timeoutMs: 30000, onOcr: o => ocr = o);
-
-        string log = Log(input, run.Lines);
-        Assert.True(hiddenAt > 0, "never hidden" + log);
-        Assert.Equal(readsWhenHidden, ocr!.Reads);
-        Assert.Equal(0, CtrlClicks(input));
-        Assert.Equal(4, Tabs(input));
+            string log = Log(input, run.Lines);
+            Assert.True(CtrlClicks(input) >= 7, "expected a 7th step after the rest" + log);
+            long rested = Environment.TickCount64 - sixthAt;
+            Assert.True(rested >= AutomationPilot.WarWalkRestMs, $"the 7th step came {rested} ms after the 6th" + log);
+            Assert.Single(run.Lines, l => l.StartsWith("6 walk steps without a target - Tab only for 20s", StringComparison.Ordinal));
+            Assert.Contains(run.Lines, l => l.EndsWith("walking toward 'zMADARAz' (step 1/6).", StringComparison.Ordinal)
+                                            && !l.StartsWith("No target after 5 Tabs", StringComparison.Ordinal));
+            // Tabs went on during the rest.
+            int sixth = input.Calls.Select((c, i) => (c, i)).Where(p => p.c.StartsWith("CtrlClick", StringComparison.Ordinal)).Skip(5).First().i;
+            int seventh = input.Calls.Select((c, i) => (c, i)).Where(p => p.c.StartsWith("CtrlClick", StringComparison.Ordinal)).Skip(6).First().i;
+            Assert.True(input.Calls.Skip(sixth).Take(seventh - sixth).Count(c => c == "KeyTap Tab") >= 8, "Tab only during the rest" + log);
+        }
     }
 
-    [Fact]
-    public async Task NoTarget_NoPlayerInView_NoClick_SaidOnce_ThreeEmptyLooksThenTheRest()
+    /// <summary>
+    /// The walk only with the game in front, logged only in a dry run.
+    /// A class of its own: these tests wait on the pilot's real clock, and xUnit runs test classes in parallel.
+    /// </summary>
+    public class WalkGuards : AppPathsScope
     {
-        var settings = Fight();
-        var (input, run) = await RunFightAsync(settings, _ => [FakeOcrEngine.Line("OurOwnName", 910, 475, 100, 16)],
-            done: (input, _) => Tabs(input) >= 14,
-            timeoutMs: 40000);
+        [Fact]
+        public async Task DryRun_TheWalkIsLoggedOnly()
+        {
+            var settings = Fight();
+            var (input, run) = await RunFightAsync(settings, input => [MovingTag(input)],
+                done: (_, lines) => lines.Count(l => l.Contains("Dry run - would Ctrl+click", StringComparison.Ordinal)) >= 2,
+                timeoutMs: 30000, dryRun: true);
 
-        string log = Log(input, run.Lines);
-        Assert.True(Tabs(input) >= 14, "expected 14 Tabs" + log);
-        Assert.Equal(0, CtrlClicks(input));
-        Assert.Single(run.Lines, l => l.Contains("no players in view", StringComparison.Ordinal));
-        // Looks after Tabs 5, 6, 7 - then the 20 s rest: no whole-screen look after Tab 8..14.
-        Assert.Single(run.Lines, l => l.StartsWith($"{AutomationPilot.WarWalkEmptyLooks} looks without a player in view", StringComparison.Ordinal));
+            string log = Log(input, run.Lines);
+            Assert.True(run.Lines.Count(l => l.Contains("Dry run - would Ctrl+click", StringComparison.Ordinal)) >= 2, "expected two dry-run steps" + log);
+            Assert.Equal(0, CtrlClicks(input));
+            Assert.Equal(0, input.Clicks);
+        }
+
+        [Fact]
+        public async Task TheGameBehindAnotherWindow_NoReadsAndNoWalk()
+        {
+            var settings = Fight();
+            FakeOcrEngine? ocr = null;
+            int readsWhenHidden = -1;
+            long hiddenAt = 0;
+            var (input, run) = await RunFightAsync(settings, input => [MovingTag(input)],
+                done: (input, _) =>
+                {
+                    if (hiddenAt == 0 && Tabs(input) >= 4)
+                    {
+                        input.InFront = false;
+                        hiddenAt = Environment.TickCount64;
+                        readsWhenHidden = ocr!.Reads;
+                    }
+
+                    return hiddenAt > 0 && Environment.TickCount64 - hiddenAt >= 5000;
+                },
+                timeoutMs: 30000, onOcr: o => ocr = o);
+
+            string log = Log(input, run.Lines);
+            Assert.True(hiddenAt > 0, "never hidden" + log);
+            Assert.Equal(readsWhenHidden, ocr!.Reads);
+            Assert.Equal(0, CtrlClicks(input));
+            Assert.Equal(4, Tabs(input));
+        }
     }
 
-    [Fact]
-    public async Task NoTarget_TheMinimapTitleUnread_NoWalk()
+    /// <summary>
+    /// No target and nothing to walk to.
+    /// A class of its own: these tests wait on the pilot's real clock, and xUnit runs test classes in parallel.
+    /// </summary>
+    public class NoTargetLooks : AppPathsScope
     {
-        // A login screen, a loading screen, a window over the minimap: no "Bohai Outpost" on the last read - no Ctrl+click
-        // (a saved server-list frame offers "• Online" as the nearest "name tag").
-        var settings = Fight();
-        var (input, run) = await RunFightAsync(settings, input => [MovingTag(input)],
-            done: (input, _) => Tabs(input) >= 8,
-            timeoutMs: 30000, titleGoneAtTheFirstTab: true);
+        [Fact]
+        public async Task NoTarget_NoPlayerInView_NoClick_SaidOnce_ThreeEmptyLooksThenTheRest()
+        {
+            var settings = Fight();
+            var (input, run) = await RunFightAsync(settings, _ => [FakeOcrEngine.Line("OurOwnName", 910, 475, 100, 16)],
+                done: (input, _) => Tabs(input) >= 14,
+                timeoutMs: 40000);
 
-        string log = Log(input, run.Lines);
-        Assert.True(Tabs(input) >= 8, "expected 8 Tabs" + log);
-        Assert.Equal(0, CtrlClicks(input));
-        Assert.Single(run.Lines, l => l.Contains("the minimap does not read", StringComparison.Ordinal));
+            string log = Log(input, run.Lines);
+            Assert.True(Tabs(input) >= 14, "expected 14 Tabs" + log);
+            Assert.Equal(0, CtrlClicks(input));
+            Assert.Single(run.Lines, l => l.Contains("no players in view", StringComparison.Ordinal));
+            // Looks after Tabs 5, 6, 7 - then the 20 s rest: no whole-screen look after Tab 8..14.
+            Assert.Single(run.Lines, l => l.StartsWith($"{AutomationPilot.WarWalkEmptyLooks} looks without a player in view", StringComparison.Ordinal));
+        }
+
+        [Fact]
+        public async Task NoTarget_TheMinimapTitleUnread_NoWalk()
+        {
+            // A login screen, a loading screen, a window over the minimap: no "Bohai Outpost" on the last read - no Ctrl+click
+            // (a saved server-list frame offers "• Online" as the nearest "name tag").
+            var settings = Fight();
+            var (input, run) = await RunFightAsync(settings, input => [MovingTag(input)],
+                done: (input, _) => Tabs(input) >= 8,
+                timeoutMs: 30000, titleGoneAtTheFirstTab: true);
+
+            string log = Log(input, run.Lines);
+            Assert.True(Tabs(input) >= 8, "expected 8 Tabs" + log);
+            Assert.Equal(0, CtrlClicks(input));
+            Assert.Single(run.Lines, l => l.Contains("the minimap does not read", StringComparison.Ordinal));
+        }
     }
 
     /// <summary>Auto War with autobuff and nothing to click: no buff icons, no Shura key - straight to the fight cycle.</summary>
