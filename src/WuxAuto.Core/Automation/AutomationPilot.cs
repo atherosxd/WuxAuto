@@ -163,6 +163,10 @@ public sealed partial class AutomationPilot
     private bool _manualHit;
     private long? _holdUntil;                // a held skill press (stage 5's first manual attack, stages 1-4 before J) is let go at this time
     private bool _heldBeforeHunt;            // stages 1-4: the held skill press before J is done (HoldBeforeAutohunt)
+    private bool _awaitQuietLog;             // stages 1-4 after the hold + J: wait for the combat log to stop changing before the clicks
+    private long _quietWaitStart;
+    private long _quietSince;
+    private string? _quietLog;
     private bool _huntOn;                    // stage 5: autohunt on, clicking round the centre until a new attack line shows
     private long _huntOnAt;
     private long? _huntBaselineAt;           // stage 5: the attack log re-read AutohuntSettleMs after J (the manual attacks' late hits are gone by then)
@@ -380,6 +384,8 @@ public sealed partial class AutomationPilot
         _warReturnTrips.Clear();
         _warBarChecked = false;
         _warNoCaveTold = false;
+        _warTownHome = null;
+        _warZoneDispatched = false;
         _warMissingIcons.Clear();
         _warShuraSkipTold = false;
         _warHp = default;
@@ -531,6 +537,10 @@ public sealed partial class AutomationPilot
         _manualHit = false;
         _holdUntil = null;
         _heldBeforeHunt = false;
+        _awaitQuietLog = false;
+        _quietWaitStart = 0;
+        _quietSince = 0;
+        _quietLog = null;
         _manualRounds = 0;
         _huntOn = false;
         _huntOnAt = 0;
@@ -674,8 +684,12 @@ public sealed partial class AutomationPilot
                     // Start dispatch sorts out where the character is), within the restart limit.
                     if (IsWar)
                     {
-                        if (inTown)
-                            BeginWarReturn(frame, $"in {HomeTown} during {_phase}");
+                        if (townSeen != null)
+                        {
+                            // A town home (or no cave saved) waits there; a cave home goes back.
+                            if (!WarWaitInTown(frame, townSeen, $"in {townSeen} during {_phase}"))
+                                BeginWarReturn(frame, $"in {HomeTown} during {_phase}");
+                        }
                         else
                             WarStartOver(frame, title);
 
@@ -3866,7 +3880,7 @@ public sealed partial class AutomationPilot
         // Stages 1-4 (user, 2026-10-27: "on other stages, before going autohunt, try to skill hold
         // first"): the boss in view -> one held skill press (the character runs at the boss and
         // attacks it), then J, then the centre clicks as before. The hold's last hits still print
-        // for a moment after J, so the log baseline for the clicks is taken again after a settle.
+        // for a moment after J, so the log baseline for the clicks is taken once the log goes quiet.
         if (!IsFinalBoss && !_autohuntPressed && HoldBeforeAutohunt)
         {
             if (!_heldBeforeHunt)
@@ -3893,10 +3907,42 @@ public sealed partial class AutomationPilot
                 return;
             }
 
-            _selectBaselineTaken = false;
+            _awaitQuietLog = confirm;
+            _quietWaitStart = Environment.TickCount64;
+            _quietLog = null; // the first read after the settle starts the quiet clock
             _detail = "autohunt on - letting the held attack's hits settle before the select clicks";
             _waitUntil = Environment.TickCount64 + AutohuntSettleMs;
             return;
+        }
+
+        // After the hold + J (live 2026-10-29: the Ctrl + skill tap right before J still printed hits
+        // 1-2 s later; one landed after centre click 1 and read as "selected" with the stage 2 boss
+        // above the centre): the clicks start once the log has not changed for SelectQuietMs, and
+        // that state is their baseline. A log that keeps changing gives up after SelectQuietMaxMs.
+        if (_awaitQuietLog)
+        {
+            long now = Environment.TickCount64;
+            string log = await ReadAttackLogAsync(frame, msgRoi, dungeon.AttackConfirmText);
+            if (log != _quietLog)
+            {
+                _quietLog = log;
+                _quietSince = now;
+            }
+
+            bool quiet = now - _quietSince >= SelectQuietMs;
+            bool capped = now - _quietWaitStart >= SelectQuietMaxMs;
+            if (!quiet && !capped)
+            {
+                _detail = $"autohunt on - waiting for the combat log to go quiet before the select clicks ({now - _quietWaitStart} ms)";
+                _waitUntil = now + 250;
+                return;
+            }
+
+            if (!quiet)
+                Log?.Invoke(LogLevel.Warning,
+                    $"Combat log still changing {SelectQuietMaxMs / 1000} s after '{dungeon.AutohuntKey}' - select clicks start anyway (stage {_stageIndex + 1}).");
+            _attackLog = log;
+            _awaitQuietLog = false;
         }
 
         if (_selectClickedAt.HasValue)
@@ -4233,6 +4279,12 @@ public sealed partial class AutomationPilot
 
     /// <summary>After J: attack lines this old are the held press' / manual attacks' own late hits, not the autohunt's (stage 5, and stages 1-4 with HoldBeforeAutohunt).</summary>
     private const int AutohuntSettleMs = 1000;
+
+    /// <summary>Stages 1-4 after the hold + J: the combat log must stay unchanged this long before the select clicks (late hits of the held press).</summary>
+    private const int SelectQuietMs = 1500;
+
+    /// <summary>Stages 1-4: the select clicks start after this long even if the log never goes quiet.</summary>
+    private const int SelectQuietMaxMs = 6000;
 
     /// <summary>
     /// Stage 5, autohunt just turned on (user, 2026-10-27: "then auto hunt then click on the boss";

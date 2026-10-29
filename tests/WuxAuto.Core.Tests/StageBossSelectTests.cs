@@ -42,6 +42,66 @@ public class StageBossSelectTests
         Assert.Contains(run.Lines, l => l.Contains("boss selected on click 1", StringComparison.Ordinal));
     }
 
+    /// <summary>
+    /// Live 2026-10-29 (v0.21.0): the Ctrl + skill tap right before J still printed hits ~1-2 s after
+    /// it, the baseline was taken 1 s after J, and one of those late lines after centre click 1 read as
+    /// "boss selected" - the clicks stopped at the centre while the stage 2 boss stood above it (before
+    /// the hold, stage 2 always needed click 2, stage 3 click 3). The clicks must wait for a quiet log.
+    /// </summary>
+    [Fact]
+    public async Task Stage1_HoldBeforeAutohunt_LateHitsAfterJ_DoNotCountAsTheSelection()
+    {
+        var (settings, input, _) = Harness(holdBeforeAutohunt: true);
+        settings.Dungeon.HoldSkillMs = 100;
+        var ocr = new FakeOcrEngine();
+        ocr.Scene = () =>
+        {
+            // the held press' late hits: a new line every 250 ms for 2 s after J
+            long? jAt = input.FirstAt("KeyTap J");
+            int late = jAt is long at ? (int)Math.Min((Environment.TickCount64 - at) / 250, 8) : 0;
+            // click 1 (the centre) misses, click 2 hits
+            int hits = Math.Max(0, input.Clicks - 1);
+            return
+            [
+                FakeOcrEngine.Line("[The Labyrinth (Adept)]", 1000, 10),
+                FakeOcrEngine.Line(settings.Dungeon.Stages[0], 700, 300),
+                .. Enumerable.Range(0, 8).Select(i =>
+                    FakeOcrEngine.Line($"Attack succeeded!Normal damage(+{100 + i + late + 50 * hits}) Attribu", 20, 200 + i * 18, 300)),
+            ];
+        };
+
+        var run = await RunStageAsync(settings, input, ocr);
+
+        Assert.Equal(PilotPhase.WatchBoss, run.Phase);
+        Assert.Equal(2, input.Clicks);
+        Assert.Contains(run.Lines, l => l.Contains("boss selected on click 2", StringComparison.Ordinal));
+        long jAt = input.FirstAt("KeyTap J")!.Value;
+        long firstClick = input.FirstAt($"Click {Width / 2},{Height / 2}")!.Value;
+        Assert.True(firstClick - jAt >= 2000, $"first click {firstClick - jAt} ms after J, inside the late hits");
+    }
+
+    /// <summary>A log that never goes quiet (something keeps hitting) must not hold the clicks back for ever.</summary>
+    [Fact]
+    public async Task Stage1_HoldBeforeAutohunt_LogNeverQuiet_ClicksAfterTheCap()
+    {
+        var (settings, input, _) = Harness(holdBeforeAutohunt: true);
+        settings.Dungeon.HoldSkillMs = 100;
+        var ocr = new FakeOcrEngine();
+        ocr.Scene = () =>
+        [
+            FakeOcrEngine.Line("[The Labyrinth (Adept)]", 1000, 10),
+            FakeOcrEngine.Line(settings.Dungeon.Stages[0], 700, 300),
+            .. Enumerable.Range(0, 8).Select(i =>
+                FakeOcrEngine.Line($"Attack succeeded!Normal damage(+{100 + i + Environment.TickCount64 / 250}) Attribu", 20, 200 + i * 18, 300)),
+        ];
+
+        var run = await RunStageAsync(settings, input, ocr);
+
+        Assert.Equal(PilotPhase.WatchBoss, run.Phase);
+        Assert.True(input.Clicks >= 1);
+        Assert.Contains(run.Lines, l => l.Contains("still changing", StringComparison.Ordinal));
+    }
+
     [Fact]
     public async Task Stage1_HoldSwitchOff_PressesJAfterTheSpawnWait_ThenCentreClicks()
     {

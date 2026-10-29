@@ -65,6 +65,10 @@ sealed class FakeGameInput : IGameInput
     public List<string> Calls { get; } = [];
     public int Clicks { get; private set; }
 
+    /// <summary>Environment.TickCount64 of the first time <paramref name="call"/> was sent, or null.</summary>
+    public long? FirstAt(string call) => _firstAt.TryGetValue(call, out long at) ? at : null;
+    private readonly Dictionary<string, long> _firstAt = [];
+
     /// <summary>Whether the game window is in front.</summary>
     public bool InFront { get; set; } = true;
 
@@ -93,6 +97,7 @@ sealed class FakeGameInput : IGameInput
     private bool Record(string call)
     {
         Calls.Add(call);
+        _firstAt.TryAdd(call, Environment.TickCount64);
         return true;
     }
 }

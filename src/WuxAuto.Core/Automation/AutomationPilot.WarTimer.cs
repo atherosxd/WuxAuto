@@ -114,9 +114,11 @@ public sealed partial class AutomationPilot
             if (_controls.IsGameInFront)
             {
                 string? title = await ReadMinimapTitleAsync(frame);
-                if (TownIn(title) != null)
+                // Waiting in town already: nothing to do there. Otherwise back to the cave (or, none saved, wait in town).
+                if (TownIn(title) is { } town && !WarStaysInTown)
                 {
-                    BeginWarReturn(frame, "sent to town while waiting");
+                    if (!WarWaitInTown(frame, town, "sent to town while waiting"))
+                        BeginWarReturn(frame, "sent to town while waiting");
                     return;
                 }
 
@@ -142,14 +144,16 @@ public sealed partial class AutomationPilot
             return;
         }
 
-        string spot = string.IsNullOrWhiteSpace(war.HomeMap) ? "the cave" : $"{war.HomeMap} / {(string.IsNullOrWhiteSpace(war.HomeMonster) ? "?" : war.HomeMonster)}";
+        string spot = WarStaysInTown
+            ? $"staying in {_warTownHome}"
+            : "back to " + (string.IsNullOrWhiteSpace(war.HomeMap) ? "the cave" : $"{war.HomeMap} / {(string.IsNullOrWhiteSpace(war.HomeMonster) ? "?" : war.HomeMonster)}");
         _detail = _warAt is long start
-            ? $"waiting for the {war.Destination} war in {Clock(start - now)} - back to {spot}"
+            ? $"waiting for the {war.Destination} war in {Clock(start - now)} - {spot}"
             : _warInProgress
-                ? $"the {war.Destination} war is in progress (missed) - timer read again in {Clock(_warNextReadAt - now)}; back to {spot}"
+                ? $"the {war.Destination} war is in progress (missed) - timer read again in {Clock(_warNextReadAt - now)}; {spot}"
                 : _warTimerFails > 0
-                    ? $"waiting for the {war.Destination} war (timer unread, next try in {Clock(_warNextReadAt - now)}) - back to {spot}"
-                    : $"waiting for the {war.Destination} war (timer not read yet) - back to {spot}";
+                    ? $"waiting for the {war.Destination} war (timer unread, next try in {Clock(_warNextReadAt - now)}) - {spot}"
+                    : $"waiting for the {war.Destination} war (timer not read yet) - {spot}";
         _waitUntil = now + 500;
     }
 
@@ -384,11 +388,14 @@ public sealed partial class AutomationPilot
         long now = Environment.TickCount64;
         var war = _settings.War;
         _warJoinUntil = _warClock.Now(now) + (WarJoinDeadline(now, _warAt, war.LeadMs, war.DialogWaitMs) - now);
-        _warJoinHuntOff = false;
+        // In town the autohunt is not on, and J there starts a Smart Farm journey: no autohunt step around the war.
+        _warJoinHuntOff = WarStaysInTown;
         _warJoinGaveUp = false;
         _warJoinZoneAt = now + 5000;
         ResetAutohuntCheck();
-        Log?.Invoke(LogLevel.Info, $"Joining the {war.Destination} war ({why}): autohunt off, then OK on the war dialog.");
+        Log?.Invoke(LogLevel.Info, WarStaysInTown
+            ? $"Joining the {war.Destination} war ({why}): OK on the war dialog."
+            : $"Joining the {war.Destination} war ({why}): autohunt off, then OK on the war dialog.");
         Advance(PilotPhase.WarJoin, 200);
     }
 
@@ -411,6 +418,13 @@ public sealed partial class AutomationPilot
 
         if (_warClock.Now(now) >= _warJoinUntil)
         {
+            if (WarStaysInTown)
+            {
+                Log?.Invoke(LogLevel.Warning, $"No {war.Destination} war dialog came - waiting for the next war in {_warTownHome}.");
+                BeginWarWait("no war dialog");
+                return;
+            }
+
             Log?.Invoke(LogLevel.Warning, $"No {war.Destination} war dialog came - turning the autohunt back on and waiting for the next war.");
             ResetAutohuntCheck();
             _warJoinGaveUp = true;
@@ -453,7 +467,7 @@ public sealed partial class AutomationPilot
             return;
         }
 
-        _detail = $"autohunt off - waiting for the {war.Destination} war dialog ({Clock(_warJoinUntil - _warClock.Now(now))} left)";
+        _detail = $"{(WarStaysInTown ? "in town" : "autohunt off")} - waiting for the {war.Destination} war dialog ({Clock(_warJoinUntil - _warClock.Now(now))} left)";
         _waitUntil = now + 700;
     }
 

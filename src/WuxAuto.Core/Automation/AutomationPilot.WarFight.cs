@@ -544,9 +544,10 @@ public sealed partial class AutomationPilot
             return true;
         }
 
-        if (TownIn(title) != null)
+        if (TownIn(title) is { } town)
         {
-            BeginWarReturn(frame, "the war is over");
+            if (!WarWaitInTown(frame, town, "the war is over"))
+                BeginWarReturn(frame, "the war is over");
             return false;
         }
 

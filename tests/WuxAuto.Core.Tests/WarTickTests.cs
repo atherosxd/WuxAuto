@@ -205,7 +205,7 @@ public class WarTickTests
 
         string log = "\nlog:\n" + string.Join("\n", run.Lines);
         Assert.True(run.Lines.Any(l => l.StartsWith("Pilot stopped: Auto War must be started inside a cave on page 3 of the teleport scroll, "
-                                                    + "or inside Bohai Outpost", StringComparison.Ordinal)), "no stop naming the cave and Bohai" + log);
+                                                    + "in a home town, or inside Bohai Outpost", StringComparison.Ordinal)), "no stop naming the cave and Bohai" + log);
     }
 
     [Fact]
@@ -224,8 +224,58 @@ public class WarTickTests
 
         string log = "\nlog:\n" + string.Join("\n", run.Lines);
         Assert.True(run.Phase == PilotPhase.WarEnter, $"phase {run.Phase}" + log);
-        Assert.Single(run.Lines, l => l == "No cave saved yet - after this war the pilot stops. Start it once inside the cave to remember it.");
+        Assert.Single(run.Lines, l => l == "No cave saved - after this war the pilot waits in town for the next one. Start it once inside a cave to hunt there between wars.");
         Assert.DoesNotContain(run.Lines, l => l.Contains("skill bar", StringComparison.Ordinal));
+    }
+
+    // ---------------------------------------------------------------- Start in town
+
+    private const string Town = "[Piercing City]";
+
+    [Fact]
+    public async Task Start_InTown_WithACaveSaved_WaitsInTown_NoTeleportNoAutohunt()
+    {
+        var settings = War();
+        var input = new FakeGameInput();
+        var ocr = new FakeOcrEngine { Scene = () => [FakeOcrEngine.Line(Town, 1500, 10, 300, 16)] };
+
+        using var frame = Blank.Bgra(Height, Width);
+        var run = await PilotRun.RunAsync(settings, input, ocr, frame, PilotPhase.CheckZone,
+            (pilot, _) => pilot.Phase == PilotPhase.WarWait);
+
+        string log = Log(input, run.Lines);
+        Assert.True(run.Phase == PilotPhase.WarWait, $"phase {run.Phase}" + log);
+        Assert.Contains("Auto War waits for the wars in Piercing City this Start (no cave trip, no autohunt).", run.Lines);
+        Assert.Contains(run.Lines, l => l.StartsWith("Waiting for the next Bohai Outpost war (Start in town - staying in Piercing City)", StringComparison.Ordinal));
+        Assert.DoesNotContain(run.Lines, l => l.StartsWith("Going back to", StringComparison.Ordinal));
+        Assert.DoesNotContain("KeyTap I", input.Calls);     // no teleport scroll
+        Assert.DoesNotContain("KeyTap J", input.Calls);     // no autohunt
+    }
+
+    [Fact]
+    public async Task Join_InTown_NoAutohuntStep_ClicksOK()
+    {
+        var settings = War();
+        var input = new FakeGameInput();
+        var ocr = new FakeOcrEngine
+        {
+            Scene = () =>
+            [
+                FakeOcrEngine.Line(Town, 1500, 10, 300, 16),
+                FakeOcrEngine.Line("[Bohai Outpost (Adept)] Confirm to move?", 800, 500, 400, 17),
+                FakeOcrEngine.Line("OK", 930, 580, 60, 17),
+            ],
+        };
+
+        using var frame = Blank.Bgra(Height, Width);
+        var run = await PilotRun.RunAsync(settings, input, ocr, frame, PilotPhase.CheckZone,
+            (pilot, _) => pilot.Phase == PilotPhase.WarEnter);
+
+        string log = Log(input, run.Lines);
+        Assert.True(run.Phase == PilotPhase.WarEnter, $"phase {run.Phase}" + log);
+        Assert.Contains(run.Lines, l => l.StartsWith("Joining the Bohai Outpost war (", StringComparison.Ordinal) && l.EndsWith("): OK on the war dialog.", StringComparison.Ordinal));
+        Assert.Contains("Click 960,588", input.Calls);
+        Assert.DoesNotContain("KeyTap J", input.Calls);
     }
 
     // ---------------------------------------------------------------- buffing and the fight cycle
