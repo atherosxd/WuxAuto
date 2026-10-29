@@ -31,6 +31,7 @@ public sealed class StampedTouch(ITouchInput inner, Func<long>? clock = null) : 
     public bool Joystick(int cx, int cy, int dx, int dy, int durationMs) => Stamp(() => inner.Joystick(cx, cy, dx, dy, durationMs));
     public bool PressDown(int x, int y) => Stamp(() => inner.PressDown(x, y));
     public void Release() => inner.Release();
+    public bool? HoldAlive => inner.HoldAlive;
 
     /// <summary>Stamps when the gesture begins (its effect can show while it runs) and only if it was sent.</summary>
     private bool Stamp(Func<bool> gesture)

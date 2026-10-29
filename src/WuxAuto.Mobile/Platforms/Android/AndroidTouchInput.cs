@@ -71,6 +71,8 @@ public sealed class AndroidTouchInput : ITouchInput, IDisposable
         get { lock (_lock) return _held != null; }
     }
 
+    public bool? HoldAlive => IsHolding;
+
     /// <summary>Starts the game's task and waits up to 3 s for it to become the active window. Do not call on the UI thread.</summary>
     public bool BringGameToFront()
     {

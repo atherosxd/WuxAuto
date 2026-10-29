@@ -134,38 +134,72 @@ public sealed class TouchControlsTests
     }
 
     [Fact]
-    public void SkillDownUp_HoldsTheSkillButton()
+    public void SkillDownUp_HoldMode_HoldsTheSkillButton()
     {
+        // User, MuMu 2026-10-29: "I just tried holding the attack skills, it worked, maybe add it as a setting".
         var h = new Harness();
+        h.Settings.Phone.AttackMode = PhoneAttackMode.Hold;
         h.Shortcuts.Skills["1"] = SkillButton;
         Assert.True(h.Controls.SkillDown("1"));
         Assert.True(h.Controls.SkillUp("1"));
         Assert.False(h.Controls.SkillUp("1"));
+        Assert.True(h.Controls.SkillTap("1")); // a tap stays a tap
+        Assert.Equal(["Down:830,630", "Release", "Tap:830,630,60"], h.Touch.Calls);
+    }
+
+    [Fact]
+    public void SkillDown_HoldMode_HaltLiftsIt()
+    {
+        var h = new Harness();
+        h.Settings.Phone.AttackMode = PhoneAttackMode.Hold;
+        h.Shortcuts.Skills["1"] = SkillButton;
+        h.Controls.SkillDown("1");
+        h.Controls.Halt();
         Assert.Equal(["Down:830,630", "Release"], h.Touch.Calls);
+        Assert.False(h.Controls.SkillUp("1"));
+    }
+
+    [Fact]
+    public void SkillDownUp_IsOnePlainTap_NothingStaysDown()
+    {
+        // User, MuMu 2026-10-29: "no fast attack, just 1 tap per 600ms no hold either" - a finger left down does not cast.
+        var h = new Harness();
+        h.Settings.Phone.AttackMode = PhoneAttackMode.Tap;
+        h.Shortcuts.Skills["1"] = SkillButton;
+        Assert.True(h.Controls.SkillDown("1"));
+        Assert.True(h.Controls.SkillUp("1"));
+        Assert.False(h.Controls.SkillUp("1"));
+        Assert.Equal(["Tap:830,630,60"], h.Touch.Calls);
     }
 
     [Fact]
     public void SecondHold_LetsGoOfTheFirst()
     {
         var h = new Harness();
+        h.Settings.Phone.AttackMode = PhoneAttackMode.Tap;
         h.Shortcuts.Skills["1"] = SkillButton;
         h.Shortcuts.Icons[GameAction.ShuraKey] = Icon;
-        h.Controls.SkillDown("1");
         h.Controls.ActionDown(GameAction.ShuraKey);
-        h.Controls.SkillUp("1"); // no longer held
-        h.Controls.ActionUp(GameAction.ShuraKey);
-        Assert.Equal(["Down:830,630", "Release", "Down:120,215", "Release"], h.Touch.Calls);
+        h.Controls.SkillDown("1"); // a tap: the held Shura is let go first
+        h.Controls.ActionUp(GameAction.ShuraKey); // no longer held
+        Assert.True(h.Controls.SkillUp("1"));
+        Assert.Equal(["Down:120,215", "Release", "Tap:830,630,60"], h.Touch.Calls);
     }
 
     [Fact]
-    public void ReleaseAll_EndsHeldSkillAndJoystick()
+    public void ReleaseAll_EndsTheHeldPressAndJoystick()
     {
         var h = new Harness();
+        h.Shortcuts.Icons[GameAction.ShuraKey] = Icon;
         h.Shortcuts.Skills["1"] = SkillButton;
+        h.Controls.ActionDown(GameAction.ShuraKey);
+        h.Controls.ReleaseAll();
+        h.Controls.ActionUp(GameAction.ShuraKey); // already let go
+        Assert.Equal(["Down:120,215", "Release"], h.Touch.Calls);
+
         h.Controls.SkillDown("1");
         h.Controls.ReleaseAll();
-        h.Controls.SkillUp("1"); // already let go
-        Assert.Equal(["Down:830,630", "Release"], h.Touch.Calls);
+        Assert.False(h.Controls.SkillUp("1")); // the skill "hold" ends with it
     }
 
     [Fact]
@@ -183,27 +217,28 @@ public sealed class TouchControlsTests
         // ReleaseAll from the UI thread; the loop thread's SkillDown must not land between clearing the held press
         // and the Release (it would be lifted while still counted as held).
         var h = new Harness();
-        h.Shortcuts.Skills["1"] = SkillButton;
+        h.Shortcuts.Icons[GameAction.ShuraKey] = Icon;
         Task<bool>? hold = null;
         bool finishedDuringRelease = false;
         h.Touch.OnRelease = () =>
         {
             h.Touch.OnRelease = null;
-            hold = Task.Run(() => h.Controls.SkillDown("1"));
+            hold = Task.Run(() => h.Controls.ActionDown(GameAction.ShuraKey));
             finishedDuringRelease = hold.Wait(150);
         };
 
         h.Controls.ReleaseAll();
         Assert.False(finishedDuringRelease);
         Assert.True(await hold!.WaitAsync(TimeSpan.FromSeconds(5)));
-        Assert.True(h.Controls.SkillUp("1")); // the hold that came after is still held - and can be let go
-        Assert.Equal(["Release", "Down:830,630", "Release"], h.Touch.Calls);
+        h.Controls.ActionUp(GameAction.ShuraKey); // the hold that came after is still held - and can be let go
+        Assert.Equal(["Release", "Down:120,215", "Release"], h.Touch.Calls);
     }
 
     [Fact]
     public void Release_WithTheGameBehind_StillLiftsTheFinger()
     {
         var h = new Harness();
+        h.Settings.Phone.AttackMode = PhoneAttackMode.Tap;
         h.Shortcuts.Skills["1"] = SkillButton;
         h.Shortcuts.Icons[GameAction.ShuraKey] = Icon;
         h.Controls.SkillDown("1");
@@ -214,7 +249,7 @@ public sealed class TouchControlsTests
         h.Touch.InFront = false;
         h.Controls.ActionUp(GameAction.ShuraKey);
         h.Controls.ReleaseAll();
-        Assert.Equal(["Down:830,630", "Release", "Down:120,215", "Release", "Release"], h.Touch.Calls);
+        Assert.Equal(["Tap:830,630,60", "Down:120,215", "Release", "Release"], h.Touch.Calls);
     }
 
     // --- Halt / Resume (Stop, Panic: nothing goes down until the next Start) ---------------------------------------
@@ -225,10 +260,11 @@ public sealed class TouchControlsTests
         var h = new Harness();
         h.Fill();
         h.Shortcuts.Skills["1"] = SkillButton;
-        h.Controls.SkillDown("1");
+        h.Shortcuts.Icons[GameAction.ShuraKey] = Icon;
+        h.Controls.ActionDown(GameAction.ShuraKey);
         h.Controls.Halt();
         Assert.True(h.Controls.IsHalted);
-        Assert.Equal(["Down:830,630", "Release"], h.Touch.Calls);
+        Assert.Equal(["Down:120,215", "Release"], h.Touch.Calls);
 
         h.Touch.Calls.Clear();
         Assert.False(h.Controls.Tap(10, 20));

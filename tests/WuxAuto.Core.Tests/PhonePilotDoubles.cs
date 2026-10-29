@@ -43,6 +43,10 @@ sealed class RecordingTouch : ITouchInput
     public bool PressDown(int x, int y) => Record($"Down {x},{y}");
     public void Release() => Calls.Add("Release");
 
+    /// <summary>What <see cref="ITouchInput.HoldAlive"/> reports (null = cannot tell, like the default).</summary>
+    public bool? Alive { get; set; }
+    public bool? HoldAlive => Alive;
+
     /// <summary>The taps only, as points.</summary>
     public List<Point> Taps => Calls.Where(c => c.StartsWith("Tap ", StringComparison.Ordinal))
         .Select(c => c[4..].Split(','))

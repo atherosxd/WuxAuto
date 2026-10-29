@@ -28,6 +28,12 @@ public interface ITouchInput
     /// <summary>Long press until <see cref="Release"/>.</summary>
     bool PressDown(int x, int y);
 
+    /// <summary>
+    /// Whether the press from <see cref="PressDown"/> is still down: false = it ended without <see cref="Release"/> (the
+    /// next gesture lifted it, the system cancelled it); null = this input cannot tell.
+    /// </summary>
+    bool? HoldAlive => null;
+
     /// <summary>Ends any held press; no-op when none.</summary>
     void Release();
 }

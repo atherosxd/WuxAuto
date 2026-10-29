@@ -99,22 +99,24 @@ public class AttackSkillTests : AppPathsScope
     [InlineData("phone_attack1")]
     [InlineData("phone_attack3")]
     [InlineData("phone_attack6")]
-    public void OnTheWheel_RoundButton_SkillDownHoldsIt(string template)
+    public void OnTheWheel_RoundButton_SkillDownTapsIt(string template)
     {
         using var analyzer = NewAnalyzer();
         var map = new ShortcutMap(analyzer);
         var touch = new RecordingTouch();
-        var controls = new TouchControls(new AppSettings(), touch, map, sleep: _ => { });
+        var tapMode = new AppSettings { Phone = { AttackMode = PhoneAttackMode.Tap } };
+        var controls = new TouchControls(tapMode, touch, map, sleep: _ => { });
         using var frame = Hud();
         var placed = PasteRound(frame, template, WheelCx, WheelCy, WheelDiameter);
 
         map.Refresh(frame);
 
         AssertAt(placed, map.AttackSkill("1"), template);
-        Assert.True(controls.SkillDown("1"));
-        Assert.Single(touch.Calls);
-        Assert.StartsWith("Down ", touch.Calls[0]);
+        Assert.True(controls.SkillDown("1")); // no hold on the phone: one plain tap
+        Assert.Single(touch.Taps);
+        Assert.InRange(touch.Taps[0].X, placed.CenterX - 5, placed.CenterX + 5);
         Assert.True(controls.SkillUp("1"));
+        Assert.DoesNotContain(touch.Calls, c => c.StartsWith("Down "));
     }
 
     [Fact]

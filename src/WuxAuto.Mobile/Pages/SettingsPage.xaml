@@ -16,15 +16,15 @@
                 <Switch x:Name="RestartOnError" Grid.Row="1" Grid.Column="1" />
                 <Label Grid.Row="2" Text="Auto reconnect" VerticalOptions="Center" />
                 <Switch x:Name="AutoReconnect" Grid.Row="2" Grid.Column="1" />
-                <Label Grid.Row="3" Text="Hold skill (LOD)" VerticalOptions="Center" />
-                <Switch x:Name="LodHoldSkill" Grid.Row="3" Grid.Column="1" />
+                <Label Grid.Row="3" Text="Attack: Tap / Hold (the attack skill icon)" VerticalOptions="Center" />
+                <Picker x:Name="AttackMode" Grid.Row="3" Grid.Column="1" WidthRequest="110" />
                 <Label Grid.Row="4" Text="Walk up to the boss (LOD)" VerticalOptions="Center" />
                 <Switch x:Name="LodApproach" Grid.Row="4" Grid.Column="1" />
                 <Label Grid.Row="5" Text="Dry run (no touches)" VerticalOptions="Center" />
                 <Switch x:Name="DryRun" Grid.Row="5" Grid.Column="1" />
             </Grid>
 
-            <Grid ColumnDefinitions="*,120" RowDefinitions="Auto,Auto,Auto,Auto" RowSpacing="6">
+            <Grid ColumnDefinitions="*,120" RowDefinitions="Auto,Auto,Auto,Auto,Auto" RowSpacing="6">
                 <Label Text="Skill (wheel button 1, 2 or 3)" VerticalOptions="Center" />
                 <Entry x:Name="SkillKey" Grid.Column="1" />
                 <Label Grid.Row="1" Text="Hold skill (ms)" VerticalOptions="Center" />
@@ -33,6 +33,8 @@
                 <Entry x:Name="LodLootMs" Grid.Row="2" Grid.Column="1" Keyboard="Numeric" />
                 <Label Grid.Row="3" Text="LOD buff every (ms)" VerticalOptions="Center" />
                 <Entry x:Name="LodBuffEveryMs" Grid.Row="3" Grid.Column="1" Keyboard="Numeric" />
+                <Label Grid.Row="4" Text="Attack tap every (ms, Tap mode)" VerticalOptions="Center" />
+                <Entry x:Name="AttackTapEveryMs" Grid.Row="4" Grid.Column="1" Keyboard="Numeric" />
             </Grid>
 
             <Button x:Name="SaveButton" Text="Save" Clicked="OnSave" />

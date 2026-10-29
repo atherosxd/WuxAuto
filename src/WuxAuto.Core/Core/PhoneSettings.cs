@@ -5,6 +5,22 @@ public sealed class PhoneSettings
 {
     public int TapHoldMs { get; set; } = 60;
 
+    /// <summary>
+    /// The phone pilot taps an attack skill once per this many ms, start to start - LOD skill spam and the manual attack
+    /// taps; never a hold (user, MuMu 2026-10-29: "no hold", then "actually make it 100ms taps, still no hold"). Replaces
+    /// the desktop's skill intervals on the phone; used clamped to 50-2000 ms. A tick slower than this (the LOD fight's
+    /// whole-screen OCR) stretches it - the pilot logs the real rate.
+    /// </summary>
+    public int AttackTapEveryMs { get; set; } = 100;
+
+    /// <summary>
+    /// How the phone presses the attack skill icon (user, MuMu 2026-10-29: "maybe add it as a setting if hold the attack
+    /// or tap"; default Hold: "the straight hold is better until the boss dies"): <see cref="PhoneAttackMode.Tap"/> = one
+    /// plain tap per <see cref="AttackTapEveryMs"/>, never held;
+    /// <see cref="PhoneAttackMode.Hold"/> = the finger stays on the icon (LOD: the whole fight; Laby: the held press).
+    /// </summary>
+    public PhoneAttackMode AttackMode { get; set; } = PhoneAttackMode.Hold;
+
     // Values below marked "measured" come from MuMu on 2026-10-28, see docs/superpowers/notes/2026-10-28-phone-checks.md.
 
     /// <summary>Pause after a joystick step before the next input; a tap right after the release was lost up to 38 ms, delivered from 41 ms (measured; 2x the threshold).</summary>
@@ -43,4 +59,11 @@ public sealed class PhoneSettings
     /// </summary>
     public double FloatingX { get; set; } = 0.40;
     public double FloatingY { get; set; } = 0.03;
+}
+
+/// <summary>How the phone presses the attack skill icon (<see cref="PhoneSettings.AttackMode"/>).</summary>
+public enum PhoneAttackMode
+{
+    Tap,
+    Hold,
 }

@@ -9,6 +9,7 @@ public partial class SettingsPage : ContentPage
     public SettingsPage()
     {
         InitializeComponent();
+        AttackMode.ItemsSource = Enum.GetNames<PhoneAttackMode>();
     }
 
     private static AppSettings Settings => EngineHost.Engine.Settings;
@@ -20,13 +21,14 @@ public partial class SettingsPage : ContentPage
         Loop.IsToggled = s.Sequence.Loop;
         RestartOnError.IsToggled = s.Sequence.RestartOnError;
         AutoReconnect.IsToggled = s.Sequence.AutoReconnect;
-        LodHoldSkill.IsToggled = s.Lod.HoldSkill;
+        AttackMode.SelectedItem = s.Phone.AttackMode.ToString();
         LodApproach.IsToggled = s.Lod.ApproachBoss;
         DryRun.IsToggled = s.Sequence.DryRun;
         SkillKey.Text = s.Dungeon.SkillKey;
         HoldSkillMs.Text = s.Dungeon.HoldSkillMs.ToString();
         LodLootMs.Text = s.Lod.LootMs.ToString();
         LodBuffEveryMs.Text = s.Lod.BuffEveryMs.ToString();
+        AttackTapEveryMs.Text = s.Phone.AttackTapEveryMs.ToString();
         bool running = EngineHost.Engine.State == EngineState.Running;
         SaveButton.IsEnabled = !running;
         Saved.Text = running ? "Stop the pilot to change settings." : string.Empty;
@@ -41,7 +43,8 @@ public partial class SettingsPage : ContentPage
             return;
         }
 
-        if (!TryMs(HoldSkillMs, out int hold) || !TryMs(LodLootMs, out int loot) || !TryMs(LodBuffEveryMs, out int buff))
+        if (!TryMs(HoldSkillMs, out int hold) || !TryMs(LodLootMs, out int loot) || !TryMs(LodBuffEveryMs, out int buff)
+            || !TryMs(AttackTapEveryMs, out int tapEvery))
         {
             Saved.Text = "Times are whole milliseconds (0 or more).";
             return;
@@ -58,13 +61,14 @@ public partial class SettingsPage : ContentPage
         s.Sequence.Loop = Loop.IsToggled;
         s.Sequence.RestartOnError = RestartOnError.IsToggled;
         s.Sequence.AutoReconnect = AutoReconnect.IsToggled;
-        s.Lod.HoldSkill = LodHoldSkill.IsToggled;
+        s.Phone.AttackMode = Enum.TryParse<PhoneAttackMode>(AttackMode.SelectedItem as string, out var mode) ? mode : PhoneAttackMode.Tap;
         s.Lod.ApproachBoss = LodApproach.IsToggled;
         s.Sequence.DryRun = DryRun.IsToggled;
         s.Dungeon.SkillKey = skill;
         s.Dungeon.HoldSkillMs = hold;
         s.Lod.LootMs = loot;
         s.Lod.BuffEveryMs = buff;
+        s.Phone.AttackTapEveryMs = Math.Clamp(tapEvery, 50, 2000);
         engine.Save();
         Saved.Text = $"Saved {DateTime.Now:HH:mm:ss}.";
     }

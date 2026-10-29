@@ -56,6 +56,32 @@ public sealed partial class AutomationPilot
     // Phone without a south-beam picture: no south turn, so no heading for a walk - stand and Tab (LodRun) instead.
     private bool _lodStayPut;
 
+    // Phone: attack taps since _phoneTapRateSince, for the real-rate line (the fight's OCR can stretch AttackTapEveryMs).
+    private int _phoneTaps;
+    private long _phoneTapRateSince;
+
+    /// <summary>Phone only: counts an LOD attack tap and logs the real rate every 30 s.</summary>
+    private void NotePhoneAttackTap(long now)
+    {
+        if (!PhoneTaps)
+            return;
+        if (_phoneTapRateSince == 0 || now - _phoneTapRateSince > 60_000)
+        {
+            _phoneTapRateSince = now;
+            _phoneTaps = 0;
+        }
+
+        _phoneTaps++;
+        long span = now - _phoneTapRateSince;
+        if (span >= 30_000)
+        {
+            Log?.Invoke(LogLevel.Trace,
+                $"Attack taps: {_phoneTaps - 1} in {span / 1000.0:0.0}s = one per {span / Math.Max(1, _phoneTaps - 1)} ms (asked: {PhoneTapEveryMs} ms).");
+            _phoneTapRateSince = now;
+            _phoneTaps = 1;
+        }
+    }
+
     /// <summary>The phone has no picture of the LOD south beam (<see cref="PhoneLodSouthTemplate"/>).</summary>
     private bool PhoneLodSouthMissing => Profile == PlatformProfile.Phone && !_analyzer.Library.TryGet(PhoneLodSouthTemplate, out _);
 
@@ -631,16 +657,25 @@ public sealed partial class AutomationPilot
 
         if (!string.IsNullOrWhiteSpace(skill))
         {
-            if (lod.HoldSkill)
+            if (LodHoldSkill)
             {
                 // Held down for the whole fight; ReleaseHeldSkill lets go on every way out. With
                 // CtrlSkill it is let go every SkillEveryMs for a Ctrl + skill tap, then held again.
-                if (_heldSkill != null && CtrlSkillOn && now - _lodSkillAt >= lod.SkillEveryMs)
+                if (_heldSkill != null && CtrlSkillOn && now - _lodSkillAt >= LodSkillEveryMs)
                 {
                     ReleaseHeldSkill();
                     Thread.Sleep(CtrlSkillGapMs);
                     _controls.SkillCtrlTap(skill);
                     Thread.Sleep(CtrlSkillGapMs);
+                }
+
+                // Phone: another touch (a Tab, a loot tap) lifts the held finger; press it again at once (user: "skill
+                // down all the way" until the boss dies).
+                if (_heldSkill != null && !_controls.SkillStillHeld(_heldSkill))
+                {
+                    Log?.Invoke(LogLevel.Trace, $"The held '{_heldSkill}' was lifted by another touch - pressing it again.");
+                    _heldSkill = null;
+                    _heldAction = null;
                 }
 
                 if (_heldSkill == null && _controls.SkillDown(skill))
@@ -649,9 +684,10 @@ public sealed partial class AutomationPilot
                     _lodSkillAt = now;
                 }
             }
-            else if (now - _lodSkillAt >= lod.SkillEveryMs && _controls.SkillTap(skill))
+            else if (now - _lodSkillAt >= LodSkillEveryMs && _controls.SkillTap(skill))
             {
                 _lodSkillAt = now;
+                NotePhoneAttackTap(now);
             }
         }
 
@@ -761,7 +797,7 @@ public sealed partial class AutomationPilot
         }
 
         _detail = $"spamming '{skill}' on '{lod.BossName}' (seen {(now - _lodBossSeenAt) / 1000.0:0.0}s ago)";
-        _waitUntil = now + Math.Min(lod.SkillEveryMs, 300);
+        _waitUntil = now + Math.Min(LodSkillEveryMs, 300);
     }
 
     private void BeginLodApproach(string why, bool ringOnly = false)

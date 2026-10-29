@@ -274,6 +274,16 @@ public sealed partial class AutomationPilot
     /// <summary>Ctrl + skill on manual skill presses: the setting, where the platform has a Ctrl key (desktop only).</summary>
     private bool CtrlSkillOn => _settings.Dungeon.CtrlSkill && Profile.SupportsCtrlSkill;
 
+    // Phone, AttackMode Tap (user, MuMu 2026-10-29: "no hold", "100ms taps"): no held skill press anywhere,
+    // one attack tap per PhoneSettings.AttackTapEveryMs. AttackMode Hold: LOD holds the skill for the whole fight. The desktop keeps its settings.
+    private bool PhoneTaps => Profile == PlatformProfile.Phone && _settings.Phone.AttackMode == PhoneAttackMode.Tap;
+    private bool PhoneHolds => Profile == PlatformProfile.Phone && _settings.Phone.AttackMode == PhoneAttackMode.Hold;
+    private int PhoneTapEveryMs => Math.Clamp(_settings.Phone.AttackTapEveryMs, 50, 2000);
+    private int HoldSkillMs => PhoneTaps ? 0 : _settings.Dungeon.HoldSkillMs;
+    private int ManualAttackIntervalMs => PhoneTaps ? PhoneTapEveryMs : _settings.Dungeon.ManualAttackIntervalMs;
+    private int LodSkillEveryMs => PhoneTaps ? PhoneTapEveryMs : _settings.Lod.SkillEveryMs;
+    private bool LodHoldSkill => PhoneHolds || (_settings.Lod.HoldSkill && !PhoneTaps);
+
     public event Action<LogLevel, string>? Log;
     public event Action? StateChanged;
 
@@ -2751,7 +2761,7 @@ public sealed partial class AutomationPilot
     private bool HoldBeforeAutohunt =>
         _settings.Dungeon.HoldBeforeAutohunt
         && !string.IsNullOrWhiteSpace(_settings.Dungeon.SkillKey)
-        && _settings.Dungeon.HoldSkillMs > 0;
+        && HoldSkillMs > 0;
 
     private string StageName(int index)
         => index < _settings.Dungeon.Stages.Count ? _settings.Dungeon.Stages[index] : _settings.Dungeon.FinalBoss;
@@ -4083,7 +4093,7 @@ public sealed partial class AutomationPilot
         var dungeon = _settings.Dungeon;
         long now = Environment.TickCount64;
         int taps = string.IsNullOrWhiteSpace(dungeon.SkillKey) ? 0 : dungeon.ManualAttacks;
-        bool hold = taps > 0 && dungeon.HoldSkillMs > 0;
+        bool hold = taps > 0 && HoldSkillMs > 0;
         int wanted = taps + (hold ? 1 : 0);
         const int maxRounds = MaxManualRounds;
 
@@ -4097,7 +4107,7 @@ public sealed partial class AutomationPilot
             _manualPresses = 1;
             _lastManualPressAt = Environment.TickCount64;
             _detail = $"attacking by hand: '{dungeon.SkillKey}' held {dungeon.HoldSkillMs} ms (1/{wanted})";
-            _waitUntil = _lastManualPressAt + dungeon.ManualAttackIntervalMs;
+            _waitUntil = _lastManualPressAt + ManualAttackIntervalMs;
             return;
         }
 
@@ -4130,9 +4140,9 @@ public sealed partial class AutomationPilot
         {
             // At least ManualAttackIntervalMs between two presses (user: 300 ms or more), measured
             // from the press itself - the log OCR above takes a varying part of each tick.
-            if (_manualPresses > 0 && now - _lastManualPressAt < dungeon.ManualAttackIntervalMs)
+            if (_manualPresses > 0 && now - _lastManualPressAt < ManualAttackIntervalMs)
             {
-                _waitUntil = _lastManualPressAt + dungeon.ManualAttackIntervalMs;
+                _waitUntil = _lastManualPressAt + ManualAttackIntervalMs;
                 return;
             }
 
@@ -4155,7 +4165,7 @@ public sealed partial class AutomationPilot
             _manualPresses++;
             _lastManualPressAt = Environment.TickCount64;
             _detail = $"attacking by hand: '{dungeon.SkillKey}' {_manualPresses}/{wanted}" + (_manualRounds > 0 ? $" (round {_manualRounds + 1}/{maxRounds})" : "");
-            _waitUntil = _lastManualPressAt + dungeon.ManualAttackIntervalMs;
+            _waitUntil = _lastManualPressAt + ManualAttackIntervalMs;
             return;
         }
 

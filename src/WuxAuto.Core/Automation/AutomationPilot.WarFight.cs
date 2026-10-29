@@ -1410,7 +1410,7 @@ public sealed partial class AutomationPilot
                 return;
             }
 
-            _warStepAt = now + _settings.Lod.SkillEveryMs;
+            _warStepAt = now + LodSkillEveryMs;
         }
 
         if (now >= _warTargetReadAt)

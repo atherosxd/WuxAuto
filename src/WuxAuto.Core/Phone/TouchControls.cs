@@ -44,6 +44,9 @@ public sealed class TouchControls(AppSettings settings, ITouchInput touch, IShor
     private readonly Lock _heldLock = new();
     private string? _held;
 
+    // The skill "held" by SkillDown ("skill:1"): one press went out, nothing stays down. Under _heldLock.
+    private string? _pressedSkill;
+
     // Stop / Panic: nothing goes down until Resume (the next Start). Volatile: set from the UI side, read by the loop.
     private volatile bool _halted;
 
@@ -76,16 +79,83 @@ public sealed class TouchControls(AppSettings settings, ITouchInput touch, IShor
     public bool Tap(int x, int y) => Send(() => touch.Tap(x, y, Phone.TapHoldMs));
     public bool UseItem(int x, int y) => Send(() => touch.Tap(x, y, Phone.TapHoldMs));
 
-    /// <summary>Taps the attack skill button (<see cref="IShortcutSource.AttackSkill"/>: on the phone the first attack icon found, whatever the name).</summary>
-    public bool SkillTap(string skill) => Send(() => TapCentre(shortcuts.AttackSkill(skill), () => shortcuts.MissedAttackSkill(skill)));
+    /// <summary>
+    /// One plain tap of the attack skill button (<see cref="IShortcutSource.AttackSkill"/>: on the phone the first attack
+    /// icon found, whatever the name). How often the pilot taps is its job (<see cref="PhoneSettings.AttackTapEveryMs"/>).
+    /// </summary>
+    public bool SkillTap(string skill) => Send(() => TapSkill(skill));
 
     /// <summary>No Ctrl on the phone: the same tap as <see cref="SkillTap"/>.</summary>
     public bool SkillCtrlTap(string skill) => SkillTap(skill);
 
-    /// <summary>Holds the attack skill button (see <see cref="SkillTap"/>).</summary>
-    public bool SkillDown(string skill) => Send(() => Hold(SkillHold(skill), shortcuts.AttackSkill(skill), () => shortcuts.MissedAttackSkill(skill)));
-    /// <summary>Lets go of the skill if it is held; a dry run reports true like <c>WindowInput.KeyUp</c> (nothing went down).</summary>
-    public bool SkillUp(string skill) => LetGo(SkillHold(skill)) || touch.IsDryRun;
+    /// <summary>
+    /// No hold on the phone (user, MuMu 2026-10-29: "no fast attack, just 1 tap per 600ms no hold either"): the "held"
+    /// skill is one plain <see cref="SkillTap"/>, nothing stays down; it counts as held until <see cref="SkillUp"/>.
+    /// A press held by <see cref="ActionDown"/> is let go first (one finger).
+    /// </summary>
+    public bool SkillDown(string skill) => Send(() =>
+    {
+        // AttackMode Hold (user, MuMu 2026-10-29: "I just tried holding the attack skills, it worked"): the finger stays
+        // on the icon until SkillUp / ReleaseAll / Halt, like ActionDown.
+        if (Phone.AttackMode == PhoneAttackMode.Hold)
+            return Hold(SkillHold(skill), shortcuts.AttackSkill(skill), () => shortcuts.MissedAttackSkill(skill));
+
+        lock (_heldLock)
+        {
+            if (_held != null)
+            {
+                _held = null;
+                touch.Release();
+            }
+        }
+
+        if (!TapSkill(skill))
+            return false;
+        lock (_heldLock)
+        {
+            if (_halted)
+                return false;
+            _pressedSkill = SkillHold(skill);
+        }
+
+        return true;
+    });
+
+    /// <summary>Lets go of the skill (Hold mode) or ends its "hold" (Tap mode, nothing is down); true if it was held. A dry run reports true like <c>WindowInput.KeyUp</c>.</summary>
+    public bool SkillUp(string skill)
+    {
+        if (LetGo(SkillHold(skill)))
+            return true;
+
+        lock (_heldLock)
+        {
+            if (_pressedSkill == SkillHold(skill))
+            {
+                _pressedSkill = null;
+                return true;
+            }
+        }
+
+        return touch.IsDryRun;
+    }
+
+    /// <summary>
+    /// Hold mode: false (and the skill counts as let go) when the finger this held is no longer down - the next gesture
+    /// lifts a held press, and the system can cancel it. Anything else: true.
+    /// </summary>
+    public bool SkillStillHeld(string skill)
+    {
+        lock (_heldLock)
+        {
+            if (_held != SkillHold(skill) || touch.HoldAlive != false)
+                return true;
+            _held = null;
+            return false;
+        }
+    }
+
+    private bool TapSkill(string skill) =>
+        TapCentre(shortcuts.AttackSkill(skill), () => shortcuts.MissedAttackSkill(skill));
 
     /// <summary>
     /// One joystick step towards the point (there is no attack-instead-of-walk on the stick, so
@@ -163,6 +233,7 @@ public sealed class TouchControls(AppSettings settings, ITouchInput touch, IShor
         lock (_heldLock)
         {
             _held = null;
+            _pressedSkill = null;
             touch.Release();
         }
     }

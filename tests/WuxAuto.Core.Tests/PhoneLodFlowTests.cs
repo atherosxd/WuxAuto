@@ -122,6 +122,7 @@ public class PhoneLodFlowTests : AppPathsScope
     public async Task PhoneLod_TargetsWithSwordAndSpamsSkillTap()
     {
         using var phone = new PhonePilot(TempRoot());
+        phone.Settings.Phone.AttackMode = PhoneAttackMode.Tap;
         phone.Settings.Lod.WalkToBossSpot = false;
         phone.Settings.Lod.ApproachBoss = false;
         phone.Settings.Lod.SkillEveryMs = 100;
@@ -146,12 +147,13 @@ public class PhoneLodFlowTests : AppPathsScope
     }
 
     [Fact]
-    public async Task PhoneLod_HeldSkill_StaysDown_NoCtrlLetGo()
+    public async Task PhoneLod_HoldMode_HoldsTheSkillForTheFight()
     {
-        // Desktop with CtrlSkill: the held key is let go every SkillEveryMs for Ctrl + skill. The phone has no Ctrl:
-        // one long press for the whole fight.
+        // AttackMode Hold (user, MuMu 2026-10-29: holding the icon attacks): one held press for the whole fight, whatever
+        // Hold skill (LOD) says; no Ctrl let-go on the phone.
         using var phone = new PhonePilot(TempRoot());
-        phone.Settings.Lod.HoldSkill = true;
+        phone.Settings.Phone.AttackMode = PhoneAttackMode.Hold;
+        phone.Settings.Lod.HoldSkill = false;
         phone.Settings.Lod.SkillEveryMs = 100;
         phone.Settings.Lod.ApproachBoss = false;
         phone.Shortcuts.Skills["1"] = Skill1;
@@ -163,6 +165,66 @@ public class PhoneLodFlowTests : AppPathsScope
 
         Assert.Equal(PilotPhase.LodAttack, phone.Pilot.Phase);
         Assert.Equal([$"Down {Skill1.CenterX},{Skill1.CenterY}"], phone.Touch.Calls);
+    }
+
+    [Fact]
+    public async Task PhoneLod_HoldMode_HoldLiftedByAnotherTouch_PressedAgain()
+    {
+        // The next gesture lifts a held finger (AndroidTouchInput); the pilot presses the hold again at once.
+        using var phone = new PhonePilot(TempRoot());
+        phone.Settings.Phone.AttackMode = PhoneAttackMode.Hold;
+        phone.Settings.Lod.ApproachBoss = false;
+        phone.Shortcuts.Skills["1"] = Skill1;
+        phone.Ocr.Scene = () => [Title, Target];
+        phone.Touch.Alive = true;
+        using var frame = PhoneFrames.Grey();
+        long lifted = Environment.TickCount64 + 600;
+        long until = lifted + 900;
+        bool liftedOnce = false;
+
+        await phone.RunAsync(() =>
+        {
+            if (!liftedOnce && Environment.TickCount64 > lifted)
+            {
+                liftedOnce = true;
+                phone.Touch.Alive = false; // e.g. a Tab tap went out
+            }
+            else if (liftedOnce && phone.Touch.Calls.Count(c => c.StartsWith("Down ")) >= 2)
+                phone.Touch.Alive = true;
+
+            return frame;
+        }, PilotPhase.LodAttack, () => Environment.TickCount64 > until);
+
+        string down = $"Down {Skill1.CenterX},{Skill1.CenterY}";
+        Assert.Equal([down, down], phone.Touch.Calls);
+        Assert.Contains("lifted by another touch", phone.Log);
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task PhoneLod_TapMode_NoHold_OneTapPerAttackTapEveryMs(bool holdSkill)
+    {
+        // AttackMode Tap (default; user, MuMu 2026-10-29: "no hold", "100ms taps"). Hold skill (LOD) on or off, the phone
+        // taps the attack icon at most once per PhoneSettings.AttackTapEveryMs and never presses it down.
+        using var phone = new PhonePilot(TempRoot());
+        phone.Settings.Phone.AttackMode = PhoneAttackMode.Tap;
+        phone.Settings.Lod.HoldSkill = holdSkill;
+        phone.Settings.Lod.SkillEveryMs = 100;
+        phone.Settings.Lod.ApproachBoss = false;
+        phone.Shortcuts.Skills["1"] = Skill1;
+        phone.Ocr.Scene = () => [Title, Target];
+        using var frame = PhoneFrames.Grey();
+        long start = Environment.TickCount64;
+        long until = start + 2000;
+
+        await phone.RunAsync(() => frame, PilotPhase.LodAttack, () => Environment.TickCount64 > until);
+        long elapsed = Environment.TickCount64 - start;
+
+        Assert.Equal(PilotPhase.LodAttack, phone.Pilot.Phase);
+        Assert.DoesNotContain(phone.Touch.Calls, c => c.StartsWith("Down "));
+        int skillTaps = phone.Touch.Taps.Count(t => t.X == Skill1.CenterX && t.Y == Skill1.CenterY);
+        Assert.InRange(skillTaps, 2, (int)(elapsed / phone.Settings.Phone.AttackTapEveryMs) + 1);
     }
 
     [Fact]
@@ -187,6 +249,7 @@ public class PhoneLodFlowTests : AppPathsScope
         // The first hit of a fight: stop (nothing to press here) and walk to the pink ring round the boss's feet - on the
         // phone a joystick step in the ring's direction (TouchControls.WalkTo), not a Ctrl+click.
         using var phone = new PhonePilot(TempRoot());
+        phone.Settings.Phone.AttackMode = PhoneAttackMode.Tap;
         phone.Settings.Lod.ApproachWaitMs = 100;
         phone.Settings.Lod.RingCheckEveryMs = 0;
         phone.Settings.Lod.SkillEveryMs = 100;
