@@ -24,6 +24,8 @@
   <ItemGroup>
     <!-- The shipped templates, for the TemplateLibrary tests. -->
     <None Include="..\..\src\WuxAuto\Assets\*.png" Link="Assets\%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
+    <!-- The phone templates, for the ShortcutMap tests. -->
+    <None Include="..\..\src\WuxAuto.Mobile\Assets\phone\*.png" Link="Assets\phone\%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
   <ItemGroup>

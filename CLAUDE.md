@@ -210,6 +210,87 @@ The app itself:
 | **Kill chime / Kill notification / Test alert** (user, 2026-10-26: friends run the pilot on a second PC next to their main one and LOD does not always loot everything - "a reminder to recheck"; "do the same for Laby") | `AutomationPilot.BossKilled` (string, loop thread) → `WuxEngine.BossKilled` → `MainViewModel.OnBossKilled` (UI thread) → `Core/KillAlert` (desktop project, `src/WuxAuto/Core/`). Raised in `OnLabyBossDead` (both `WatchBoss` kill paths, every stage incl. 5: "Stage 2: Spectral down") and at the **end** of `TickLodLoot` ("Bai Gu Great down" - after the loot, the reminder is to check what it left; both LOD kill paths go through it). Chime: `Sequence.KillSound` if set (**own sound, user 2026-10-27**: "Sound:" row under the check boxes, **Choose...** = `OpenFileDialog` *.mp3;*.wav;*.ogg → `KillAlert.ImportSoundAsync` copies it into `AppPaths.SoundsFolder` (`%LOCALAPPDATA%\WuxAuto\sounds`; same contents reused, same name with other contents → `name-2.ext`; **an .ogg is decoded to `name.wav`** by `Core/OggToWav` (user 2026-10-27 "also allow ogg"; NVorbis 0.10.5, MIT, managed - WPF `MediaPlayer` answers "Media file download failed" for OGG on this PC, Vorbis and Opus alike, and N / lite builds have even less): 16-bit PCM at the file's own rate and channels, decoded in `Task.Run` to `%TEMP%\wuxauto-ogg-*.wav`, then moved in; Ogg Opus ("OpusHead" in the first page), non-Ogg and damaged files and sounds over 5 min (`OggToWav.MaxLength`) are refused with a plain reason; a hand-edited `KillSound` pointing at an .ogg is not converted and falls back to the built-in chime), `ProbeAsync` must open it with sound within 5 s (else refused, the copy deleted), saved at once, played once; **Default** clears it; a set but missing / failing file → built-in + warning, the label shows "(missing)"), else `templates\chime.wav` if present (a bad file → built-in + warning), else `KillAlert.GenerateChime` (A5-C#6-E6, 1.6 s, 16-bit mono) written to `%LOCALAPPDATA%\WuxAuto\chime-builtin.wav` - **played from a file on purpose**: `SoundPlayer` from a stream hands a managed buffer to async `PlaySound` (pinned only during the call). Sound files (KillSound, chime.wav) play through WPF `MediaPlayer` (MP3 and every WAV kind; `SoundPlayer` only takes PCM WAV), kept open between kills, `Volume` 1.0 (it starts at 0.5), UI thread only (`PlayChimeAsync` waits for `MediaOpened` / `MediaFailed`; the SelfTest runs it on an STA thread with its own dispatcher); the built-in chime stays on `SoundPlayer`, so the fallback needs nothing from Windows Media. MP3, float WAV and names with `#` / `%20` verified with ffmpeg-made files (`--alert <file>`: opens, position moves, copy plays); OGG: mono 44.1 kHz, stereo 48 kHz and 5.1 convert and play, Opus and a 6 min file are refused; the SelfTest decodes `tests/WuxAuto.SelfTest/Sounds/tone.ogg` (1 s, 440 Hz left / 880 Hz right) and checks rate, channels and per-channel pitch; the **Choose...** dialog itself was not clicked in the real app. Notification: WinRT toast, silent, 2 h expiry, AUMID `atherosxd.WuxAuto` registered under `HKCU\Software\Classes\AppUserModelId` (DisplayName + `notify-icon.png` from the window icon) - an unpackaged app needs that; `ToastNotifier.Setting` throws "Element not found" here, so it is only read best-effort. `Sequence.KillChime` / `KillNotification` (on; check boxes under Loop). Status box + Mini window bottom row show `LastKillText`. A failure logs once per app start; **Test alert** always reports. Verified 2026-10-26 on this PC: chime plays, notification centre count for the AUMID 0 → 1, the button in the real app logs "chime OK" / "notification OK". Not yet seen during a live kill |
 | checkboxes | `Loop`, `Focus on start`, `Only while game is focused`, `Restore cursor` |
 
+**Phone app (M4, `src/WuxAuto.Mobile`, Android):** build **from `src\WuxAuto.Mobile`** — its `global.json` pins
+SDK 10.0.402 (maui-android workload); the repo root resolves SDK 11 rc, which has no android workload:
+
+```powershell
+cd src\WuxAuto.Mobile; dotnet build ..\..\WuxAuto.Mobile.slnx -c Debug   # -> bin\Debug\net10.0-android\io.github.atherosxd.wuxauto-Signed.apk
+$adb = 'C:\Program Files\Netease\MuMuPlayerARM\shell\adb.exe'; $dev = '10.0.2.80:5555'   # MuMu's IP changes on restart: Get-NetNeighbor -InterfaceAlias 'vEthernet (MuMuProVNet)'
+& $adb connect $dev; & $adb -s $dev install -r bin\Debug\net10.0-android\io.github.atherosxd.wuxauto-Signed.apk
+# enable the accessibility service (append to the existing list, never replace it)
+$svc = 'io.github.atherosxd.wuxauto/io.github.atherosxd.wuxauto.PilotAccessibilityService'
+$cur = ((& $adb -s $dev shell settings get secure enabled_accessibility_services) | Out-String).Trim(); if ($cur -eq 'null') { $cur = '' }
+if (($cur -split ':') -notcontains $svc) { & $adb -s $dev shell settings put secure enabled_accessibility_services ($(if ($cur) { "${cur}:$svc" } else { $svc })) }
+& $adb -s $dev shell settings put secure accessibility_enabled 1
+& $adb -s $dev logcat -s WuxAuto                                           # every log line also goes to logcat
+```
+
+MuMu display (owner, 2026-10-30): with MuMu's default display the MuMu *window* on the PC turned portrait when
+WuxAuto opened, though the app and the game inside stayed landscape (both activities are `SensorLandscape`). MuMu
+settings → device **Phone**, display **portrait** keeps the window and both apps landscape - a MuMu setting, not code.
+On a real phone the service is switched on by hand (Setup page; Android 13+: App info → ⋮ → Allow restricted
+settings first). Data (settings.json, logs, debug, templates) lives in `/sdcard/Android/data/io.github.atherosxd.wuxauto/files`.
+The round **W** button (accessibility overlay, default spot top strip 0.40/0.03) is the in-game control: tap =
+panel, long-press = Panic; the notification's Stop and the Pilot page also stop. Debug builds take adb probes
+(`DebugReceiver`, `am broadcast -a io.github.atherosxd.wuxauto.<PING|FRONT|SHOT|OCR|TAP|...> -p io.github.atherosxd.wuxauto`).
+
+**Phone fixes 2026-10-30 (Xiaomi 17 Pro Max 2608x1200 + MuMu buff report):** the Xiaomi HUD scales with the height
+exactly (every hit x1.11 = 1200/1080) - the "finds nothing" frames were login screens; its real failure was
+`ShortcutCheck` deciding "missing" from the login / loading screens' cached absences after a re-login. Now: `Begin`
+invalidates the `ShortcutMap`, the positions reset (every Start / restart) does too, and a shortcut is missing only
+when two searches in a row on frames whose zone title reads miss it (`MaxTitleLooks` 20 without the title, then
+anyway). ☰ zone anchored to the right edge (it sits 734 px from it at 1080). `phone_autohunt` = the yellow crossed
+swords on the ring (HUNT; AUTO BUFF is the same swords in white - `ShortcutMap.YellowFraction` tells them apart, ≥ 0.15
+yellow = HUNT); padlock templates cut to the gold lock (no see-through slot). A tap while a finger is held (Hold fight)
+= lift, 150 ms, tap, 400 ms, press again (`TouchControls.LiftBeforeTapMs` / `TapBeforeRepressMs`). Phone buff / loot
+log every tap ("Auto buff tapped at x,y", "Loot: N taps over M s"), warn once on "Force 90% and over required" and on
+a missing AUTO BUFF / Pick up, and check a buff ~3 s later on the row under the HP bar (timers if they read, else the
+row's pixels; unchanged = one more tap, then "Auto buff did not take"). Open: the Xiaomi ring shows a second padlock
+(top left, reads open, no (+) shown) - what it does is the owner's word.
+
+**Phone LOD, Xiaomi live test 2026-10-30 (`PhoneSettings`):** `LodArrivalWalkMs` 2000 - on arrival and back at the start
+after dying the joystick is pushed up-left on the screen for 2 s before the sword taps ("northwest", the boss arena is left
+of the arrival spot; the camera keeps the teleport's heading, there is no south turn on the phone). `LodBossTapAfterTabs` 3
+- three sword taps without the boss targeted → a plain tap on its pink ring, else just below its belt (`FindApproachSpot`).
+`HoldRepressMs` 2000 - the held attack is lifted and pressed again every 2 s (the player's own touch can end the held
+finger unseen; user asked 5 s, then 2 s). Open from that test: the sword "unselects the boss" (cause unknown - debug bundle
+pending) and a heads-up notification pausing the pilot. **Debug bundle 08:20 answered the sword one:** the minimap's
+"1218 , 1824" read as "1218 , 824" (leading 1 dropped at 2608x1200) six times in one run → a false "killed by the boss"
+(jump > `TeleportJump`) → fight left, sword tapped. The phone now needs a jump read twice (next read within 60,
+`CheckLodJump`); the desktop is unchanged. Also: the phone's LodRun reads the frame before the sword tap (the sword
+went out on its timer with the boss already targeted). Still open: on the phone the "pink ring" often hits the boss's
+pink weapon trail (second walk-up click 3-5 radii out); the owner asks for font 120 % and interface scale 1.10 (+ button)
+on the phone like the desktop's Settings visit (not ported yet).
+**Phone Settings visit + reconnect (2026-10-30, MuMu 2560x1440, verified live):** the phone runs the shared FontSize
+phase: ☰ → the "Settings (ESC)" tile (label read cut off as "ettings (ES"; the window counts as open only on a line that
+is exactly "SETTINGS") → VISUAL → **Interface scale** to `PhoneSettings.InterfaceScale` 1.10 with its − / + (AUTO = 1.00,
+steps of 0.01; first, because it resizes the window; the − is a ~2 px dash under `FindBrightBlobs`' 3 px floor, found by
+its own flat-blob search - the AUTO button's border was tapped once) → Font size to exactly `FontSizePercent` 120 → TAB
+target → **no SAVE** (the phone game keeps every change at once: scale and font survived a full game restart without
+it, and the chat box's text field lies over SAVE and opens the keyboard at every tap height at scale 1.10) → the
+window's X (`FindCloseBlobRightOf` reach 9, blobs ≥ 0.5 title heights - a 5x4 border speck was tapped once). Every
+tap waits until the value read moves (`BeforeLastTap`, ≤ 2.5 s: the capture lags; it stopped at 1.09 and overshot to
+1.11 before), and after a ☰ / tile tap fresh frames are read for 4 s before ☰ is tapped again (a second tap closed
+a menu that had just opened). Minimap title: ML Kit read "[" as "(" after a MuMu restart → on the phone a leading
+"(" / "{" counts as "[" (`WarText.PhoneTitleLine`). Reconnect: the pilot alone went server list → Online → CONNECT →
+LOG IN → OK → START GAME → town in 15 s; while "Login OK" reads it taps OK again (≥ 3 s apart), never START GAME behind
+the dialog. Two earlier "reconnect loops" were a hung game (gestures delivered, MuMu restarted itself after). Debug
+builds take START / STOP adb probes. **1920x1080 (same day, verified live):** reconnect + visit work there too. Two
+fixes: (1) the scale moves the shortcut rings - at 1.12 the left ring's Teleport Scroll slot sat off the screen edge and
+the shortcut check (before the visit) opened the ring editor for it; on the phone, **in town the visit now runs before
+the shortcut check** (`TickShortcutCheckAsync`, once per Start, not in a dry run; the check then starts over with
+`ShortcutCheck.Begin`), and a scale change invalidates the `ShortcutMap`; (2) the font row's right chevron lay past
+the 30-text-height band (label 14 px high, band end 1199, chevron at 1200) - the phone passes
+`ReadSettingRowAsync(..., chevronReach: 10)` (10 heights past the value); the desktop keeps the 30-height band (its
+same 1920x1080 cut-off is still open, §4.1). A menu button that is not found ends the visit after 10 tries.
+Review round (same day): HUNT is **not** a required shortcut (used where found, never added) and the town autohunt-off
+check does not run on the phone (its log read is unverified there); a hit whose colour cannot be told (dark middle) is
+neither HUNT nor AUTO BUFF; the buff check counts a miss only when timers that read did not go up **and** the first row
+of buff icons (0,125 340x55 at 1080) did not change - then one more buff through `TryLodBuff` (Shura + 400 ms mid-fight),
+else it only logs; no check in a dry run. The shortcut check's two misses are >= 1.5 s apart, and 20 looks without the
+zone title stop the check ("the game screen (zone title) was not seen") instead of deciding. A tap during a hold does not
+press the old hold again after a Halt / ReleaseAll / another hold (generation counter).
+
 ---
 
 ## 3. Repository map
@@ -238,8 +319,18 @@ src/WuxAuto.Core            net10.0 class library, platform-free (M1, 2026-10-27
                        references only the managed `Emgu.CV`; each host adds the native runtime (desktop:
                        `Emgu.CV.runtime.mini.windows`). CvHelpers supplies the OpenCV default
                        arguments that Emgu leaves to the caller
+  Phone/               the phone side's pure parts: TouchControls (IGameControls over ITouchInput), ShortcutMap
+                       (on-screen buttons by phone_* template), PhoneRegions, FrameGate, PhoneLoopGate (per-pass
+                       "tick or wait": capture, frame age, game in front, panel, zone title), FloatingSpot (W button
+                       spot + edge snap), DebugBundleContents (what the debug zip packs)
   RULE: Core must stay OS-free - no WPF, WinRT, Win32/P-Invoke, System.Windows.*, registry. Anything
   that touches the OS goes behind a Platform/ interface and is implemented in the desktop project.
+src/WuxAuto.Mobile          Android (MAUI, net10.0-android, minSdk 31), references Core; NOT in WuxAuto.slnx
+                            (WuxAuto.Mobile.slnx, built from src\WuxAuto.Mobile - §2). Engine/MobileEngine (loop:
+                            frame → PhoneLoopGate → ShortcutMap.Refresh → pilot.TickAsync, PlatformProfile.Phone),
+                            EngineHost; Pages/ (Pilot, Setup, Settings, Log); Platforms/Android: CaptureService
+                            (MediaProjection), PilotAccessibilityService + AndroidTouchInput (gestures), MlKitOcrEngine,
+                            FloatingControl, PilotNotification, DebugBundle, AssetInstaller, DebugReceiver (Debug only)
 src/WuxAuto                 WPF desktop app, references Core
   Assets/              shipped templates: teleportscroll, rightchevron, rightchevronfoc,
                        mapicon, flashlight, dungeongateopen, monstericon (.png)

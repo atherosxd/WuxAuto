@@ -190,8 +190,11 @@ public sealed class ScreenAnalyzer : IDisposable
     /// side of it. <paramref name="numeric"/> rows take the first word with a digit and fill
     /// <see cref="SettingRow.Percent"/>; text rows take the first OCR line right of the label.
     /// A dimmed chevron (the end of the option list) is still found (TAB target at Default, 1920x1080).
+    /// <paramref name="chevronReach"/> &gt; 0: the chevrons are also looked for up to that many text heights right of the
+    /// value, past the 30-height band (phone, MuMu 1920x1080: label 14 px high, band end x 1199, the font row's right
+    /// chevron at ~1205 - "could not be set to 120%"; the desktop has the same cut-off, still open there).
     /// </summary>
-    public async Task<SettingRow?> ReadSettingRowAsync(Mat frame, string label, bool numeric = true)
+    public async Task<SettingRow?> ReadSettingRowAsync(Mat frame, string label, bool numeric = true, int chevronReach = 0)
     {
         var full = new PixelRect(0, 0, frame.Width, frame.Height);
         var (hit, _, _) = await FindTextAsync(frame, full, label);
@@ -218,7 +221,10 @@ public sealed class ScreenAnalyzer : IDisposable
 
         // Chevrons: the nearest bright glyph left and right of the value, on the same row.
         var box = value.Value.Bounds;
-        var blobs = FindBrightBlobs(frame, band)
+        var chevronBand = chevronReach > 0 && box.Right + h * chevronReach > band.Right
+            ? PixelRect.FromBounds(band.X, band.Y, box.Right + h * chevronReach, band.Bottom).Clamp(frame.Width, frame.Height)
+            : band;
+        var blobs = FindBrightBlobs(frame, chevronBand)
             .Where(b => b.Height >= h * 0.6 && b.Height <= h * 2.5 && b.Width <= h * 1.6)
             .ToList();
         PixelRect? left = blobs.Where(b => b.Right <= box.X - 2).OrderByDescending(b => b.CenterX).Select(b => (PixelRect?)b).FirstOrDefault();
@@ -251,6 +257,63 @@ public sealed class ScreenAnalyzer : IDisposable
                 ordered.Max(w => w.Bounds.Right), ordered.Max(w => w.Bounds.Bottom));
             return (string.Join(' ', ordered.Select(w => w.Text)), bounds);
         }
+    }
+
+    /// <summary>
+    /// The phone's "Interface scale" row (MuMu 2560x1440, 2026-10-30: "Interface scale [AUTO] -  (AUTO)  +", one + read
+    /// "1.01"): the value is the word that reads as a number with two decimals (<see cref="ParseScale"/>), else the
+    /// rightmost "AUTO" word (the value; the left one is the AUTO button) = 1.00. The + is the nearest bright blob right of
+    /// the value; the - the nearest flat dash left of it (its own search, see below).
+    /// </summary>
+    public async Task<ScaleRow?> ReadScaleRowAsync(Mat frame, string label = "Interface scale")
+    {
+        var full = new PixelRect(0, 0, frame.Width, frame.Height);
+        var (hit, _, _) = await FindTextAsync(frame, full, label);
+        if (hit == null || !(TextMatcher.CoversMost(hit.Text, label) || TextMatcher.CoversMost(hit.LineText, label)))
+            return null;
+
+        var labelBox = hit.LineBounds.Width > 0 ? hit.LineBounds : hit.Bounds;
+        int h = Math.Max(8, labelBox.Height);
+        var band = PixelRect.FromBounds(labelBox.Right + h / 2, labelBox.Y - h, Math.Min(frame.Width, labelBox.Right + h * 30), labelBox.Bottom + h)
+            .Clamp(frame.Width, frame.Height);
+
+        var words = await Ocr.RecognizeAsync(frame, band, 2.0);
+        var number = words.Select(w => (Word: w, Value: ParseScale(w.Text))).FirstOrDefault(x => x.Value != null);
+        OcrWord? valueWord = number.Word;
+        double? value = number.Value;
+        bool auto = false;
+        if (valueWord == null)
+        {
+            valueWord = words.Where(w => TextMatcher.Normalize(w.Text).Contains("auto", StringComparison.Ordinal))
+                .OrderByDescending(w => w.Bounds.CenterX).FirstOrDefault();
+            if (valueWord == null)
+                return new ScaleRow(labelBox, null, false, null, null, null);
+            auto = true;
+            value = 1.00;
+        }
+
+        var box = valueWord.Bounds;
+        var blobs = FindBrightBlobs(frame, band)
+            .Where(b => b.Width <= h * 1.6 && b.Height <= h * 1.6 && (b.Height >= h * 0.5 || b.Width >= h * 0.5))
+            .Where(b => b.CenterY >= box.Y - h / 2 && b.CenterY <= box.Bottom + h / 2)
+            .ToList();
+        // The - is a flat dash, ~2 px tall at 2560x1440 - under the blob search's usual 3 px floor, so the AUTO button's right
+        // border (a tall thin line left of it) was the nearest blob and was tapped as the '-' (MuMu, 2026-10-30: "tapped '-'
+        // at 1293,395" set the scale to AUTO). Its own search: flat blobs of 1 px and up left of the value, none tall.
+        var dashBand = PixelRect.FromBounds(Math.Max(band.X, box.X - h * 6), box.CenterY - h / 2, box.X - 2, box.CenterY + h / 2 + 1)
+            .Clamp(frame.Width, frame.Height);
+        PixelRect? minus = dashBand.Width < 4 || dashBand.Height < 2 ? null : FindBrightBlobs(frame, dashBand, minHeight: 1)
+            .Where(b => b.Width >= Math.Max(6, h * 0.4) && b.Width >= b.Height * 3 && b.Height <= Math.Max(4, h / 4))
+            .OrderByDescending(b => b.CenterX).Select(b => (PixelRect?)b).FirstOrDefault();
+        PixelRect? plus = blobs.Where(b => b.X >= box.Right + 2).OrderBy(b => b.CenterX).Select(b => (PixelRect?)b).FirstOrDefault();
+        return new ScaleRow(labelBox, value, auto, minus, plus, valueWord.Text);
+    }
+
+    /// <summary>An interface scale as the row shows it ("1.01", "(1.10)", "1,05"); null for anything else.</summary>
+    public static double? ParseScale(string text)
+    {
+        var m = System.Text.RegularExpressions.Regex.Match(text.Trim(), @"^\(?([0-9])[.,]([0-9]{2})\)?$");
+        return m.Success ? int.Parse(m.Groups[1].Value) + int.Parse(m.Groups[2].Value) / 100.0 : null;
     }
 
     /// <summary>
@@ -439,14 +502,15 @@ public sealed class ScreenAnalyzer : IDisposable
     /// The user's active icon: 0.5 (the icon covers parts of the ring). Under a modal dialog the whole
     /// screen is dimmed (a 1920x1080 frame: ring V 66-86, the icon's flame 102 instead of 255), so the
     /// brightness floor follows the brightest pixel of the icon (150 of 255). 0 when the ring would
-    /// leave the frame.
+    /// leave the frame. <paramref name="minFraction"/> / <paramref name="maxFraction"/>: the band, as fractions of the
+    /// icon's width (the phone's Run orb has its ring further out, see <c>AutomationPilot.PhoneRunRingMin</c>).
     /// </summary>
-    public double RingFraction(Mat frame, PixelRect icon)
+    public double RingFraction(Mat frame, PixelRect icon, double minFraction = 0.68, double maxFraction = 0.85)
     {
         double cx = icon.X + icon.Width / 2.0;
         double cy = icon.Y + icon.Height / 2.0;
-        double rMin = icon.Width * 0.68;
-        double rMax = icon.Width * 0.85;
+        double rMin = icon.Width * minFraction;
+        double rMax = icon.Width * maxFraction;
         int margin = (int)Math.Ceiling(rMax) + 1;
         var roi = new PixelRect((int)cx - margin, (int)cy - margin, margin * 2 + 1, margin * 2 + 1);
         if (roi.X < 0 || roi.Y < 0 || roi.Right > frame.Width || roi.Bottom > frame.Height || rMin < 2)
@@ -832,11 +896,18 @@ public sealed class ScreenAnalyzer : IDisposable
     /// click there can land in the world. The TELEPORT SCROLL's X was a blob on all 12 saved frames with the list open
     /// (1024x768 to 2048x1152).
     /// </summary>
-    public PixelRect? FindCloseBlobRightOf(Mat frame, PixelRect title)
+    /// <param name="reach">How far right of the title to look, in title heights (the phone's SETTINGS X sits ~6.2 away at
+    /// 2560x1440, MuMu 2026-10-30).</param>
+    /// <param name="minHeights">The smallest blob side, in title heights (0 = the 3 px floor only). The phone's SETTINGS
+    /// window has specks on its top border left of the X (a 5x4 one at 1648,189 next to the 26x26 X at 1776,227, title 32
+    /// high) - the first live close tapped the speck.</param>
+    public PixelRect? FindCloseBlobRightOf(Mat frame, PixelRect title, int reach = 6, double minHeights = 0)
     {
         int h = Math.Max(6, title.Height);
-        var band = new PixelRect(title.Right + 2, title.Y - h, 6 * h, title.Height + 2 * h).Clamp(frame.Width, frame.Height);
-        return ButtonBlobs(frame, band, h).OrderBy(b => b.X).Select(b => (PixelRect?)b).FirstOrDefault();
+        var band = new PixelRect(title.Right + 2, title.Y - h, reach * h, title.Height + 2 * h).Clamp(frame.Width, frame.Height);
+        return ButtonBlobs(frame, band, h)
+            .Where(b => b.Width >= minHeights * h && b.Height >= minHeights * h)
+            .OrderBy(b => b.X).Select(b => (PixelRect?)b).FirstOrDefault();
     }
 
     /// <summary>
@@ -865,7 +936,8 @@ public sealed class ScreenAnalyzer : IDisposable
         return hsv;
     }
 
-    public IReadOnlyList<PixelRect> FindBrightBlobs(Mat frame, PixelRect roi)
+    /// <param name="minHeight">The lowest blob kept, in pixels (3 by default; the phone's interface-scale dash is 2 px tall).</param>
+    public IReadOnlyList<PixelRect> FindBrightBlobs(Mat frame, PixelRect roi, int minHeight = 3)
     {
         var blobs = new List<PixelRect>();
         roi = roi.Clamp(frame.Width, frame.Height);
@@ -892,7 +964,7 @@ public sealed class ScreenAnalyzer : IDisposable
 
         foreach (var (box, _) in CvHelpers.ExternalContours(mask))
         {
-            if (box.Width < 2 || box.Height < 3 || box.Width * box.Height < 6)
+            if (box.Width < 2 || box.Height < minHeight || box.Width * box.Height < 6)
                 continue;
 
             // The panel border/scrollbar runs the full height of the strip - not a glyph.

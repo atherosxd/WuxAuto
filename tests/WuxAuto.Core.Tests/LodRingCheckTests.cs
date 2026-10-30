@@ -13,8 +13,7 @@ namespace WuxAuto.Core.Tests;
 /// the target bar and a combat log that gains a hit with every skill tap. The frame never changes, so
 /// a ring away from the character stays away after every Ctrl+click.
 /// </summary>
-[Collection("AppPaths")] // AppPaths is static state
-public class LodRingCheckTests
+public class LodRingCheckTests : AppPathsScope
 {
     private const int Width = 1440;
     private const int Height = 900;

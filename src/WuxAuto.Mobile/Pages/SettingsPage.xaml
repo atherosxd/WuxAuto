@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<ContentPage xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
+             x:Class="WuxAuto.Mobile.Pages.SettingsPage"
+             Title="Settings">
+    <ScrollView>
+        <VerticalStackLayout Padding="16" Spacing="10">
+            <Label Text="Settings" FontSize="20" FontAttributes="Bold" />
+            <Label FontSize="12" TextColor="Gray"
+                   Text="The switches of the desktop's settings panel that apply on the phone. Everything else lives in settings.json (Android/data/io.github.atherosxd.wuxauto/files)." />
+
+            <Grid ColumnDefinitions="*,Auto" RowDefinitions="Auto,Auto,Auto,Auto,Auto,Auto" RowSpacing="6">
+                <Label Text="Loop (start the next run when one ends)" VerticalOptions="Center" />
+                <Switch x:Name="Loop" Grid.Column="1" />
+                <Label Grid.Row="1" Text="Restart on error" VerticalOptions="Center" />
+                <Switch x:Name="RestartOnError" Grid.Row="1" Grid.Column="1" />
+                <Label Grid.Row="2" Text="Auto reconnect" VerticalOptions="Center" />
+                <Switch x:Name="AutoReconnect" Grid.Row="2" Grid.Column="1" />
+                <Label Grid.Row="3" Text="Attack: Tap / Hold (the attack skill icon)" VerticalOptions="Center" />
+                <Picker x:Name="AttackMode" Grid.Row="3" Grid.Column="1" WidthRequest="110" />
+                <Label Grid.Row="4" Text="Walk up to the boss (LOD)" VerticalOptions="Center" />
+                <Switch x:Name="LodApproach" Grid.Row="4" Grid.Column="1" />
+                <Label Grid.Row="5" Text="Dry run (no touches)" VerticalOptions="Center" />
+                <Switch x:Name="DryRun" Grid.Row="5" Grid.Column="1" />
+            </Grid>
+
+            <Grid ColumnDefinitions="*,120" RowDefinitions="Auto,Auto,Auto,Auto,Auto" RowSpacing="6">
+                <Label Text="Attack: the first attack icon found is used (any name; empty = no skill presses)" VerticalOptions="Center" />
+                <Entry x:Name="SkillKey" Grid.Column="1" />
+                <Label Grid.Row="1" Text="Hold skill (ms)" VerticalOptions="Center" />
+                <Entry x:Name="HoldSkillMs" Grid.Row="1" Grid.Column="1" Keyboard="Numeric" />
+                <Label Grid.Row="2" Text="LOD loot time (ms)" VerticalOptions="Center" />
+                <Entry x:Name="LodLootMs" Grid.Row="2" Grid.Column="1" Keyboard="Numeric" />
+                <Label Grid.Row="3" Text="LOD buff every (ms)" VerticalOptions="Center" />
+                <Entry x:Name="LodBuffEveryMs" Grid.Row="3" Grid.Column="1" Keyboard="Numeric" />
+                <Label Grid.Row="4" Text="Attack tap every (ms, Tap mode)" VerticalOptions="Center" />
+                <Entry x:Name="AttackTapEveryMs" Grid.Row="4" Grid.Column="1" Keyboard="Numeric" />
+            </Grid>
+
+            <Button x:Name="SaveButton" Text="Save" Clicked="OnSave" />
+            <Label x:Name="Saved" FontSize="13" />
+        </VerticalStackLayout>
+    </ScrollView>
+</ContentPage>

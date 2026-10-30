@@ -1,0 +1,6 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/WuxAuto.Core/WuxAuto.Core.csproj" />
+    <Project Path="src/WuxAuto.Mobile/WuxAuto.Mobile.csproj" />
+  </Folder>
+</Solution>

@@ -3,15 +3,19 @@ using WuxAuto.Core;
 namespace WuxAuto.Core.Tests;
 
 /// <summary>
-/// Base for the tests of the "AppPaths" collection: <see cref="AppPaths"/> is static, so every test
-/// puts back the folders it found (xUnit disposes the class instance after each test) and the temp
-/// folders it made with <see cref="TempRoot"/> are deleted.
+/// Base for the tests that point <see cref="AppPaths"/> somewhere: each test gets folders of its own
+/// (<see cref="AppPaths.IsolateThisFlow"/>, set in the constructor - xUnit runs the constructor and the
+/// test in one async flow), so these classes run in parallel; every test still puts back the folders it
+/// found (xUnit disposes the class instance after each test) and the temp folders it made with
+/// <see cref="TempRoot"/> are deleted.
 /// </summary>
 public abstract class AppPathsScope : IDisposable
 {
     private readonly string _previousRoot = AppPaths.Root;
     private readonly string _previousAssets = AppPaths.AssetsFolder;
     private readonly List<string> _tempRoots = new();
+
+    protected AppPathsScope() => AppPaths.IsolateThisFlow();
 
     /// <summary>A new, empty folder under the temp path; deleted after the test.</summary>
     protected string TempRoot()

@@ -13,6 +13,7 @@ public enum GameAction
     RunSkillKey,
     ShuraKey,
     StopAttack,
+    TeleportScroll,
 }
 
 /// <summary>Which way the camera turns.</summary>
@@ -58,6 +59,12 @@ public interface IGameControls
 
     bool SkillDown(string skill);
     bool SkillUp(string skill);
+
+    /// <summary>
+    /// False when the skill held by <see cref="SkillDown"/> is no longer down though nobody let go of it (the phone: the
+    /// next touch lifted it, the system cancelled it) - it then counts as let go. Default true (a key stays down).
+    /// </summary>
+    bool SkillStillHeld(string skill) => true;
 
     /// <summary>Walks to the point; <paramref name="forceWalk"/> walks even onto a monster (desktop: Ctrl + click) instead of attacking it.</summary>
     bool WalkTo(int x, int y, bool forceWalk);

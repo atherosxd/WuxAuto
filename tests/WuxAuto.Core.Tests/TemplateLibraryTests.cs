@@ -3,7 +3,6 @@ using WuxAuto.Vision;
 
 namespace WuxAuto.Core.Tests;
 
-[Collection("AppPaths")]
 public class TemplateLibraryTests : AppPathsScope
 {
     // The legacy (OpenCvSharp) crop of flashlight3.png's largest opaque patch (Task 10).

@@ -7,7 +7,6 @@ using WuxAuto.Vision;
 namespace WuxAuto.Core.Tests;
 
 /// <summary>Images are read and written through .NET (ImageFile), so folders with non-ASCII names work whatever the OpenCV wrapper does with paths.</summary>
-[Collection("AppPaths")]
 public class ImageFileTests : AppPathsScope
 {
     [Fact]

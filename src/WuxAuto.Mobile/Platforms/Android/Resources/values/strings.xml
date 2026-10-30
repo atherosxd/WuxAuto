@@ -1,0 +1,4 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+	<string name="accessibility_description">WuxAuto plays the game for you: it reads the game window and touches the game\'s buttons, joystick and camera. It does nothing while another app is in front.</string>
+</resources>

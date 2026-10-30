@@ -6,19 +6,50 @@ namespace WuxAuto.Core;
 
 public static class AppPaths
 {
-    /// <summary>Data folder. Defaults to %LOCALAPPDATA%\WuxAuto; <see cref="Configure"/> moves it (other hosts, tests).</summary>
-    public static string Root { get; private set; } = Path.Combine(
+    private static string _root = Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "WuxAuto");
 
+    private static string _assetsFolder = Path.Combine(AppContext.BaseDirectory, "Assets");
+
+    /// <summary>The folders of one async flow (<see cref="IsolateThisFlow"/>); never set by the apps.</summary>
+    private sealed class FlowFolders(string root, string assetsFolder)
+    {
+        public string Root = root;
+        public string AssetsFolder = assetsFolder;
+    }
+
+    private static readonly AsyncLocal<FlowFolders?> Flow = new();
+
+    /// <summary>Data folder. Defaults to %LOCALAPPDATA%\WuxAuto; <see cref="Configure"/> moves it (other hosts, tests).</summary>
+    public static string Root => Flow.Value?.Root ?? _root;
+
     /// <summary>Shipped template images. Defaults to the Assets folder next to the executable.</summary>
-    public static string AssetsFolder { get; private set; } = Path.Combine(AppContext.BaseDirectory, "Assets");
+    public static string AssetsFolder => Flow.Value?.AssetsFolder ?? _assetsFolder;
 
     /// <summary>Points every folder at <paramref name="root"/>; the assets folder is set to <paramref name="assetsFolder"/>, or reset to the default Assets folder next to the executable when none is given.</summary>
     public static void Configure(string root, string? assetsFolder = null)
     {
-        Root = root;
-        AssetsFolder = assetsFolder ?? Path.Combine(AppContext.BaseDirectory, "Assets");
+        string assets = assetsFolder ?? Path.Combine(AppContext.BaseDirectory, "Assets");
+        if (Flow.Value is { } flow)
+        {
+            flow.Root = root;
+            flow.AssetsFolder = assets;
+            return;
+        }
+
+        _root = root;
+        _assetsFolder = assets;
     }
+
+    /// <summary>
+    /// Tests only: from here on this async flow (the test, and every task and thread it starts) has folders of its own,
+    /// starting from the current ones; <see cref="Configure"/> in it changes only those. Lets test classes that each
+    /// point AppPaths somewhere else run in parallel. The apps never call it, so for them nothing changes.
+    /// </summary>
+    internal static void IsolateThisFlow() => Flow.Value = new FlowFolders(Root, AssetsFolder);
+
+    /// <summary>Tests only: this async flow has folders of its own (<see cref="IsolateThisFlow"/>).</summary>
+    internal static bool IsThisFlowIsolated => Flow.Value != null;
 
     public static string SettingsFile => Path.Combine(Root, "settings.json");
     public static string DebugFolder => Path.Combine(Root, "debug");
@@ -229,19 +260,69 @@ public static class SettingsStore
         return true;
     }
 
-    public static void Save(AppSettings settings)
+    public static void Save(AppSettings settings) => TrySave(settings, out _);
+
+    // One writer at a time: the phone saves from its pages, the floating control and the pilot's loop thread.
+    private static readonly object SaveLock = new();
+
+    /// <summary>
+    /// Writes the settings file; false (and why in <paramref name="error"/>) when it could not be written. Saves are
+    /// serialised. <see cref="Save"/> ignores the outcome (non critical on the desktop).
+    /// </summary>
+    public static bool TrySave(AppSettings settings, out string? error)
     {
-        try
+        lock (SaveLock)
         {
-            AppPaths.EnsureCreated();
-            Normalize(settings);
-            File.WriteAllText(AppPaths.SettingsFile, JsonSerializer.Serialize(settings, JsonOptions));
-        }
-        catch
-        {
-            // ignored - non critical
+            try
+            {
+                AppPaths.EnsureCreated();
+                Normalize(settings);
+                File.WriteAllText(AppPaths.SettingsFile, JsonSerializer.Serialize(settings, JsonOptions));
+                error = null;
+                return true;
+            }
+            catch (Exception ex)
+            {
+                error = ex.Message;
+                return false;
+            }
         }
     }
+
+    /// <summary>
+    /// The phone's touch timings and sizes (M4 review minor 8): every one within a range that keeps the gestures sane -
+    /// no zero speed to divide by (<see cref="PhoneSettings.TurnDragPxPerMs"/>), no zero or negative sizes. The defaults
+    /// are all inside, so a file without the section (the desktop's) is unchanged.
+    /// </summary>
+    private static void NormalizePhone(PhoneSettings p)
+    {
+        p.TapHoldMs = Math.Clamp(p.TapHoldMs, 10, 1000);
+        p.AttackTapEveryMs = Math.Clamp(p.AttackTapEveryMs, 50, 2000);
+        if (!Enum.IsDefined(p.AttackMode))
+            p.AttackMode = PhoneAttackMode.Hold;
+        p.HoldRepressMs = Math.Clamp(p.HoldRepressMs, 0, 60000);
+        p.LodArrivalWalkMs = Math.Clamp(p.LodArrivalWalkMs, 0, 10000);
+        p.LodBossTapAfterTabs = Math.Clamp(p.LodBossTapAfterTabs, 0, 100);
+        p.FontSizePercent = p.FontSizePercent <= 0 ? 0 : Math.Clamp(p.FontSizePercent, 50, 200);
+        p.InterfaceScale = double.IsFinite(p.InterfaceScale) && p.InterfaceScale > 0 ? Math.Round(Math.Clamp(p.InterfaceScale, 0.5, 2.0), 2) : 0;
+        p.TapSettleMs = Math.Clamp(p.TapSettleMs, 0, 2000);
+        p.JoystickStepMs = Math.Clamp(p.JoystickStepMs, 100, 5000);
+        p.SwipePxPerTurnMs = ClampOr(p.SwipePxPerTurnMs, 0.05, 20, 0.5);
+        p.TurnDragMinPx = Math.Clamp(p.TurnDragMinPx, 1, 1000);
+        p.TurnDragEndHoldMs = Math.Clamp(p.TurnDragEndHoldMs, 0, 2000);
+        p.TurnDragPxPerMs = ClampOr(p.TurnDragPxPerMs, 0.01, 20, 0.3);
+        p.TurnDragMinMs = Math.Clamp(p.TurnDragMinMs, 10, 5000);
+        p.PinchFromGap = Math.Clamp(p.PinchFromGap, 20, 5000);
+        p.PinchToGap = Math.Clamp(p.PinchToGap, 1, 5000);
+        p.PinchMs = Math.Clamp(p.PinchMs, 50, 5000);
+        p.ListSwipePx = Math.Clamp(p.ListSwipePx, 10, 2000);
+        p.FloatingX = ClampOr(p.FloatingX, 0, 1, 0.40);
+        p.FloatingY = ClampOr(p.FloatingY, 0, 1, 0.03);
+    }
+
+    /// <summary><see cref="Math.Clamp(double, double, double)"/> that also turns NaN into <paramref name="fallback"/> (Clamp passes NaN through).</summary>
+    private static double ClampOr(double value, double min, double max, double fallback) =>
+        double.IsNaN(value) ? fallback : Math.Clamp(value, min, max);
 
     private static void NormalizeWar(AppSettings s)
     {
@@ -375,6 +456,8 @@ public static class SettingsStore
         s.Dungeon.NorthRefineTapMs = Math.Clamp(s.Dungeon.NorthRefineTapMs, 0, 500);
         s.Sequence.FontSizePercent = s.Sequence.FontSizePercent == 0 ? 0 : Math.Clamp(s.Sequence.FontSizePercent, 50, 200);
         s.Sequence.FontSizeMaxPercent = Math.Clamp(s.Sequence.FontSizeMaxPercent, Math.Max(50, s.Sequence.FontSizePercent), 200);
+        s.Phone ??= new PhoneSettings();
+        NormalizePhone(s.Phone);
         s.Lod ??= new LodSettings();
         s.Lod.Destination = string.IsNullOrWhiteSpace(s.Lod.Destination) ? "Ultimate Den of Rebirth" : s.Lod.Destination.Trim();
         s.Lod.TargetTolerance = Math.Clamp(s.Lod.TargetTolerance, 10, 500);

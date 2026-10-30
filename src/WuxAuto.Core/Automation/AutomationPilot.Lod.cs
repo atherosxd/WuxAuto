@@ -1,5 +1,6 @@
 using Emgu.CV;
 using WuxAuto.Core;
+using WuxAuto.Phone;
 using WuxAuto.Vision;
 using LogLevel = WuxAuto.Core.LogLevel;
 
@@ -22,6 +23,7 @@ public sealed partial class AutomationPilot
     private long _lodBossSeenAt;
     private long _lodCoordsAt;
     private (int X, int Y)? _lodAttackCoords;
+    private (int X, int Y)? _lodJumpPending;
     private int _lodKills;
     private int _lodStill;
     private bool _lodWaitLogged;
@@ -46,6 +48,50 @@ public sealed partial class AutomationPilot
     private bool _lodApproachRingOnly;
 
     private bool IsLod => _settings.Sequence.Mode == RunMode.AutoLod;
+
+    /// <summary>
+    /// Phone: the south-facing beam on the phone's LOD minimap (no crop yet - no LOD frame exists). The desktop's
+    /// flashlightLOD is a crop of the PC minimap and is not used on the phone.
+    /// </summary>
+    public const string PhoneLodSouthTemplate = "phone_flashlightlod";
+
+    // Phone without a south-beam picture: no south turn, so no heading for a walk - stand and Tab (LodRun) instead.
+    private bool _lodStayPut;
+
+    // Phone LOD (user, Xiaomi 2026-10-30): the up-left joystick walk on arrival, sword taps since the last boss read,
+    // when the held attack was last pressed (re-pressed every PhoneSettings.HoldRepressMs).
+    private bool _lodArrivalWalkDue;
+    private int _lodBladeTaps;
+    private long _lodHoldPressedAt;
+
+    // Phone: attack taps since _phoneTapRateSince, for the real-rate line (the fight's OCR can stretch AttackTapEveryMs).
+    private int _phoneTaps;
+    private long _phoneTapRateSince;
+
+    /// <summary>Phone only: counts an LOD attack tap and logs the real rate every 30 s.</summary>
+    private void NotePhoneAttackTap(long now)
+    {
+        if (!PhoneTaps)
+            return;
+        if (_phoneTapRateSince == 0 || now - _phoneTapRateSince > 60_000)
+        {
+            _phoneTapRateSince = now;
+            _phoneTaps = 0;
+        }
+
+        _phoneTaps++;
+        long span = now - _phoneTapRateSince;
+        if (span >= 30_000)
+        {
+            Log?.Invoke(LogLevel.Trace,
+                $"Attack taps: {_phoneTaps - 1} in {span / 1000.0:0.0}s = one per {span / Math.Max(1, _phoneTaps - 1)} ms (asked: {PhoneTapEveryMs} ms).");
+            _phoneTapRateSince = now;
+            _phoneTaps = 1;
+        }
+    }
+
+    /// <summary>The phone has no picture of the LOD south beam (<see cref="PhoneLodSouthTemplate"/>).</summary>
+    private bool PhoneLodSouthMissing => Profile == PlatformProfile.Phone && !_analyzer.Library.TryGet(PhoneLodSouthTemplate, out _);
 
     /// <summary>Teleport list entry and minimap zone for the selected mode (Auto War: the cave).</summary>
     private string Destination => IsWar ? WarHomeMap
@@ -100,9 +146,15 @@ public sealed partial class AutomationPilot
     private bool TryLodBuff(Mat? frame, long now, bool force, bool attacking = false)
     {
         var lod = _settings.Lod;
-        if (!_controls.Has(GameAction.Buff) || (!force && now - _lodBuffAt < lod.BuffEveryMs))
+        if (!force && now - _lodBuffAt < lod.BuffEveryMs)
             return false;
+        if (!_controls.Has(GameAction.Buff))
+        {
+            PhoneBuffMissing();
+            return false;
+        }
 
+        bool wasHeld = _heldSkill != null;
         ReleaseHeldSkill();
 
         // Mid-fight the buff is ignored until the attack stops (user): Shura (or Space) first.
@@ -113,12 +165,21 @@ public sealed partial class AutomationPilot
                 return false;
             Thread.Sleep(400);
         }
+        else if (PhoneBuffChecks && wasHeld)
+        {
+            // Phone: a tap right after the held skill's lift is lost (TouchControls.LiftBeforeTapMs).
+            Thread.Sleep(TouchControls.LiftBeforeTapMs);
+        }
 
         if (!_controls.Press(GameAction.Buff))
             return false;
 
         _lodBuffAt = now;
         _lodBuffs++;
+        PhoneBuffTapped(now);
+        // Phone: the fight presses the skill again on its next tick - not before the buff tap has been taken.
+        if (PhoneBuffChecks && (wasHeld || attacking))
+            Thread.Sleep(TouchControls.TapBeforeRepressMs);
         Log?.Invoke(LogLevel.Info, attacking
             ? $"Re-buffed ({stopped}, then '{lod.BuffKey}') mid-fight - buff {_lodBuffs}."
             : $"Buffed ('{lod.BuffKey}') - buff {_lodBuffs}; again in {lod.BuffEveryMs / 1000}s.");
@@ -228,9 +289,11 @@ public sealed partial class AutomationPilot
     /// accents, three scales, a key counts as there if any read sees it. Returns true when it
     /// handled the turn (switched or stopped). A hidden list (no lines) decides nothing.
     /// </summary>
-    private async Task<bool> CheckKeysAsync(Mat frame)
+    internal async Task<bool> CheckKeysAsync(Mat frame)
     {
-        if (!_settings.Sequence.CheckKeys || IsBlossom)   // Blossom Garden needs no key (user)
+        // The phone reads key counts from ☰ → Durations (M6), not this PC item list, and must never switch
+        // to the unported Laby / War flows (OutOfKeys rule). Blossom Garden needs no key (user).
+        if (!_settings.Sequence.CheckKeys || Profile == PlatformProfile.Phone || IsBlossom)
             return false;
 
         var roi = new NormRect(0.62, 0.50, 0.38, 0.50).ToPixels(frame.Width, frame.Height);
@@ -272,13 +335,33 @@ public sealed partial class AutomationPilot
             .Where(char.IsLetter).Select(char.ToLowerInvariant).ToArray());
     }
 
-    /// <summary>After the arrival zoom (or a respawn): buff, face south, then Tab for the boss (LodRun).</summary>
-    private void BeginFaceSouth(bool buff = true)
+    /// <summary>
+    /// After the arrival zoom (or a respawn): buff, face south, then Tab for the boss (LodRun). <paramref name="arrival"/>:
+    /// the character stands where the teleport puts it (arrival, back at the start after dying) - the phone walks up-left
+    /// first (<see cref="PhoneSettings.LodArrivalWalkMs"/>).
+    /// </summary>
+    private void BeginFaceSouth(bool buff = true, bool arrival = false)
     {
         // Buffs first (user: "upon teleporting, do the auto buff then the other"); a blocked key is
         // caught by the timer in the walk.
         if (buff)
             TryLodBuff(null, Environment.TickCount64, force: true);
+        // Phone without a picture of the south beam: no turn (it would spin on a score that never comes), no walk (the
+        // steering needs the heading) - Tab for the boss from where the teleport put the character (spec §6.9 targets with
+        // the sword anyway).
+        if (PhoneLodSouthMissing)
+        {
+            if (!_lodStayPut)
+                Log?.Invoke(LogLevel.Warning, $"No picture of the LOD minimap's south beam on the phone yet ('{PhoneLodSouthTemplate}') - " +
+                                              "skipping the south turn; tabbing for the boss from here instead of walking.");
+            _lodStayPut = true;
+            _lodArrivalWalkDue = arrival && _settings.Phone.LodArrivalWalkMs > 0;
+            _faceSouth = false;
+            _lodHeadingUnknown = false;
+            Advance(AfterFaceSouth(), 400);
+            return;
+        }
+
         _faceSouth = true;
         _earlyNorth = false;
         _compassAnchored = false;
@@ -304,6 +387,7 @@ public sealed partial class AutomationPilot
         _lastCoords = null;
         _stalledSteps = 0;
         _lodTabAt = 0;
+        _lodBladeTaps = 0;
         _lodStill = 0;
         _lodWaitLogged = false;
         return PilotPhase.LodRun;
@@ -364,6 +448,8 @@ public sealed partial class AutomationPilot
                 boss = new TextHit($"treasure icon {chest.Score:0.00}", chest.Score, chest.Bounds, string.Empty, chest.Bounds, 0);
         }
 
+        CheckBuffRefusal(lines.Select(line => line.Text), Environment.TickCount64);
+
         string hitText = _settings.Dungeon.AttackConfirmText;
         var log = _settings.Regions.AttackMessage.ToPixels(frame.Width, frame.Height);
         var hitLines = string.IsNullOrWhiteSpace(hitText) ? [] : lines
@@ -408,6 +494,17 @@ public sealed partial class AutomationPilot
         long now = Environment.TickCount64;
         if (now - _phaseStart >= lod.LootMs || !_controls.Has(GameAction.Loot))
         {
+            if (Profile == PlatformProfile.Phone)
+            {
+                if (_controls.Has(GameAction.Loot) || _phoneLootTaps > 0)
+                    Log?.Invoke(LogLevel.Info, $"Loot: {_phoneLootTaps} taps over {(now - _phaseStart) / 1000.0:0.#} s.");
+                else if (!_phoneLootMissingWarned)
+                {
+                    _phoneLootMissingWarned = true;
+                    Log?.Invoke(LogLevel.Warning, "Loot: the Pick up button is not on screen - nothing picked up (check the shortcut ring).");
+                }
+            }
+
             // The kill's second screenshot: what is left on the ground after looting.
             TakePendingKillShot(frame);
             // The kill alert waits for the loot step (user: the reminder is to check what it left).
@@ -418,7 +515,10 @@ public sealed partial class AutomationPilot
         }
 
         if (now - _lodLootAt >= 150 && _controls.Press(GameAction.Loot))
+        {
             _lodLootAt = now;
+            _phoneLootTaps++;
+        }
         _detail = $"looting ('{lod.LootKey}') {(now - _phaseStart) / 1000.0:0.0}s";
         _waitUntil = now + 60;
     }
@@ -437,6 +537,39 @@ public sealed partial class AutomationPilot
         _lodHitLines = null;
         _lodApproached = false;
         _lodRingWalks = 0;
+        _lodBladeTaps = 0;
+        _lodJumpPending = null;
+    }
+
+    private enum LodJump { None, Pending, Death }
+
+    /// <summary>
+    /// A coordinate read against the fight's baseline (<see cref="_lodAttackCoords"/>): within
+    /// <see cref="LodSettings.TeleportJump"/> = None; further = Death on the desktop. The phone needs the jump read twice
+    /// (the next read within 60 of the first): on the Xiaomi (2608x1200, 2026-10-30) the minimap's "1218 , 1824" read as
+    /// "1218 , 824" six times in one run, each a false "killed by the boss" that stopped the fight and sent the sword out.
+    /// Pending = a first, unconfirmed jump; the baseline stays.
+    /// </summary>
+    private LodJump CheckLodJump(GameCoordinates coords)
+    {
+        if (_lodAttackCoords is not (int ax, int ay) || coords.DistanceTo(ax, ay) <= _settings.Lod.TeleportJump)
+        {
+            _lodJumpPending = null;
+            return LodJump.None;
+        }
+
+        if (Profile != PlatformProfile.Phone)
+            return LodJump.Death;
+
+        if (_lodJumpPending is (int px, int py) && coords.DistanceTo(px, py) <= 60)
+        {
+            _lodJumpPending = null;
+            return LodJump.Death;
+        }
+
+        Log?.Invoke(LogLevel.Trace, $"Coordinates read {coords} (from {ax},{ay}) - a jump only counts when the next read agrees.");
+        _lodJumpPending = (coords.X, coords.Y);
+        return LodJump.Pending;
     }
 
     /// <summary>Back to finding the boss: Tab (and the walk with WalkToBossSpot), or the south turn first if the heading is unknown.</summary>
@@ -473,18 +606,29 @@ public sealed partial class AutomationPilot
         var lod = _settings.Lod;
         long now = Environment.TickCount64;
 
+        await PrepareBuffCheckAsync(frame, now, force: false);
         if (TryLodBuff(frame, now, force: false))
         {
             _waitUntil = now + 700;
             return;
         }
 
-        if (TapLodTab(now, lod.TabEveryMs))
+        if (_lodArrivalWalkDue)
+        {
+            WalkUpLeftOnArrival(frame, now);
+            return;
+        }
+
+        // Desktop: Tab on its timer before the read, as before (verified live there).
+        if (Profile != PlatformProfile.Phone && TapLodTab(now, lod.TabEveryMs))
         {
             _waitUntil = now + 250;
             return;
         }
 
+        // Phone: the boss first, Tab only without it (user, Xiaomi 2026-10-30: "even the boss name is clearly shown or the
+        // chest, it taps the blade?" - it did: the sword went out on its timer before the frame was read, and a tap with
+        // the boss already selected left it unselected).
         var boss = await FindLodBossAsync(frame);
         if (boss != null)
         {
@@ -494,9 +638,19 @@ public sealed partial class AutomationPilot
             return;
         }
 
+        if (TapLodBoss(frame, now))
+            return;
+
+        if (Profile == PlatformProfile.Phone && TapLodTab(Environment.TickCount64, lod.TabEveryMs))
+        {
+            _lodBladeTaps++;
+            _waitUntil = Environment.TickCount64 + 250;
+            return;
+        }
+
         // Stay put (user, 2026-10-27: "stay still on the same place upon teleport, just keep tabbing
-        // until the boss name shows") - no walk clicks, no coordinate reads.
-        if (!lod.WalkToBossSpot)
+        // until the boss name shows") - no walk clicks, no coordinate reads. The phone without a south turn too.
+        if (!lod.WalkToBossSpot || _lodStayPut)
         {
             if (!_lodWaitLogged)
             {
@@ -609,6 +763,7 @@ public sealed partial class AutomationPilot
 
         // Re-buff on the timer, also mid-fight: stop attacking first (Shura / Space), the skill
         // resumes on the next tick.
+        await PrepareBuffCheckAsync(frame, now, force: false);
         if (TryLodBuff(frame, now, force: false, attacking: true))
         {
             _waitUntil = now + 700;
@@ -617,11 +772,11 @@ public sealed partial class AutomationPilot
 
         if (!string.IsNullOrWhiteSpace(skill))
         {
-            if (lod.HoldSkill)
+            if (LodHoldSkill)
             {
                 // Held down for the whole fight; ReleaseHeldSkill lets go on every way out. With
                 // CtrlSkill it is let go every SkillEveryMs for a Ctrl + skill tap, then held again.
-                if (_heldSkill != null && _settings.Dungeon.CtrlSkill && now - _lodSkillAt >= lod.SkillEveryMs)
+                if (_heldSkill != null && CtrlSkillOn && now - _lodSkillAt >= LodSkillEveryMs)
                 {
                     ReleaseHeldSkill();
                     Thread.Sleep(CtrlSkillGapMs);
@@ -629,15 +784,35 @@ public sealed partial class AutomationPilot
                     Thread.Sleep(CtrlSkillGapMs);
                 }
 
+                // Phone: another touch (a Tab, a loot tap) lifts the held finger; press it again at once (user: "skill
+                // down all the way" until the boss dies).
+                if (_heldSkill != null && !_controls.SkillStillHeld(_heldSkill))
+                {
+                    Log?.Invoke(LogLevel.Trace, $"The held '{_heldSkill}' was lifted by another touch - pressing it again.");
+                    _heldSkill = null;
+                    _heldAction = null;
+                }
+
+                // Phone: lift and press again every HoldRepressMs (user, Xiaomi 2026-10-30: the player's own touch can
+                // end the held finger without the system saying so - "it also sometimes stop attacking").
+                if (_heldSkill != null && PhoneHolds && _settings.Phone.HoldRepressMs > 0
+                    && now - _lodHoldPressedAt >= _settings.Phone.HoldRepressMs)
+                {
+                    ReleaseHeldSkill();
+                    Thread.Sleep(TouchControls.LiftBeforeTapMs);
+                }
+
                 if (_heldSkill == null && _controls.SkillDown(skill))
                 {
                     _heldSkill = skill;
                     _lodSkillAt = now;
+                    _lodHoldPressedAt = now;
                 }
             }
-            else if (now - _lodSkillAt >= lod.SkillEveryMs && _controls.SkillTap(skill))
+            else if (now - _lodSkillAt >= LodSkillEveryMs && _controls.SkillTap(skill))
             {
                 _lodSkillAt = now;
+                NotePhoneAttackTap(now);
             }
         }
 
@@ -656,6 +831,7 @@ public sealed partial class AutomationPilot
             Log?.Invoke(LogLevel.Success, $"'{lod.DeathText}' - '{lod.BossName}' killed (kill {_lodKills}); looting with '{lod.LootKey}' for {lod.LootMs / 1000}s.");
             SaveLodKillShot(frame, $"lod_kill{_lodKills}");
             _lodLootAt = 0;
+            _phoneLootTaps = 0;
             Advance(PilotPhase.LodLoot, 0);
             return;
         }
@@ -716,7 +892,8 @@ public sealed partial class AutomationPilot
             var coords = await _analyzer.ReadCoordinatesAsync(frame);
             if (coords != null)
             {
-                if (_lodAttackCoords is (int ax, int ay) && coords.DistanceTo(ax, ay) > lod.TeleportJump)
+                var jump = CheckLodJump(coords);
+                if (jump == LodJump.Death && _lodAttackCoords is (int ax, int ay))
                 {
                     Log?.Invoke(LogLevel.Warning, $"Moved to {coords} (from {ax},{ay}) - killed by the boss? Turning south again from the start.");
                     DebugArtifacts.SaveFrame(frame, _overlays, "lod_died");
@@ -724,7 +901,8 @@ public sealed partial class AutomationPilot
                     return;
                 }
 
-                _lodAttackCoords = (coords.X, coords.Y);
+                if (jump == LodJump.None)
+                    _lodAttackCoords = (coords.X, coords.Y);
             }
         }
 
@@ -735,6 +913,7 @@ public sealed partial class AutomationPilot
             Log?.Invoke(LogLevel.Info, $"'{lod.BossName}' / treasure icon gone for {lod.LootAfterMissingMs / 1000.0:0.#}s - looting with '{lod.LootKey}' for {lod.LootMs / 1000}s, then looking for it again.");
             SaveLodKillShot(frame, "lod_gone");
             _lodLootAt = 0;
+            _phoneLootTaps = 0;
             Advance(PilotPhase.LodLoot, 0);
             return;
         }
@@ -747,7 +926,7 @@ public sealed partial class AutomationPilot
         }
 
         _detail = $"spamming '{skill}' on '{lod.BossName}' (seen {(now - _lodBossSeenAt) / 1000.0:0.0}s ago)";
-        _waitUntil = now + Math.Min(lod.SkillEveryMs, 300);
+        _waitUntil = now + Math.Min(LodSkillEveryMs, 300);
     }
 
     private void BeginLodApproach(string why, bool ringOnly = false)
@@ -909,7 +1088,8 @@ public sealed partial class AutomationPilot
     {
         var lod = _settings.Lod;
         var coords = await _analyzer.ReadCoordinatesAsync(frame);
-        if (coords != null && _lodAttackCoords is (int ax, int ay) && coords.DistanceTo(ax, ay) > lod.TeleportJump)
+        var jump = coords == null ? LodJump.None : CheckLodJump(coords);
+        if (jump == LodJump.Death && _lodAttackCoords is (int ax, int ay))
         {
             Log?.Invoke(LogLevel.Warning, $"Moved to {coords} (from {ax},{ay}) while walking up to '{lod.BossName}' - killed by the boss? Turning south again from the start.");
             DebugArtifacts.SaveFrame(frame, _overlays, "lod_died");
@@ -922,9 +1102,75 @@ public sealed partial class AutomationPilot
         _lodBossSeenAt = now;
         _lodSkillAt = 0;
         _lodCoordsAt = now;
-        _lodAttackCoords = coords == null ? null : (coords.X, coords.Y);
+        // A jump still to be confirmed keeps the old baseline: the next read in LodAttack decides.
+        if (jump == LodJump.None)
+            _lodAttackCoords = coords == null ? null : (coords.X, coords.Y);
         _lodRingCheckAt = reached ? now : now + 2L * lod.RingCheckEveryMs;
         Advance(PilotPhase.LodAttack, 0);
+    }
+
+    /// <summary>
+    /// Phone, LOD arrival: the joystick pushed up-left for <see cref="PhoneSettings.LodArrivalWalkMs"/> (user, Xiaomi
+    /// 2026-10-30: "walk/run using joystick for 2s going northwest, as when teleporting in the LOD, the Boss Arena is just
+    /// left of the character"). Up-left on the screen: the phone has no south turn, the camera keeps the teleport's heading.
+    /// </summary>
+    private void WalkUpLeftOnArrival(Mat frame, long now)
+    {
+        int ms = _settings.Phone.LodArrivalWalkMs;
+        if (_controls is not TouchControls touch)
+        {
+            _lodArrivalWalkDue = false;
+            return;
+        }
+
+        double reach = frame.Height * 0.2;
+        int x = (int)Math.Round(frame.Width * JoystickMath.CharacterX - reach);
+        int y = (int)Math.Round(frame.Height * JoystickMath.CharacterY - reach);
+        if (!touch.WalkToward(x, y, ms))
+        {
+            _detail = "joystick walk blocked (no joystick found, or the game is not in front)";
+            _waitUntil = now + 500;
+            if (now - _phaseStart > 10_000)
+            {
+                _lodArrivalWalkDue = false;
+                Log?.Invoke(LogLevel.Warning, "Could not walk up-left on arrival (no joystick found) - tabbing for the boss from here.");
+            }
+
+            return;
+        }
+
+        _lodArrivalWalkDue = false;
+        Log?.Invoke(LogLevel.Info, $"Walked up-left with the joystick for {ms / 1000.0:0.#}s (the boss arena is left of the arrival spot).");
+        _waitUntil = Environment.TickCount64 + 300;
+    }
+
+    /// <summary>
+    /// Phone, LOD: <see cref="PhoneSettings.LodBossTapAfterTabs"/> sword taps without the boss targeted - tap the boss
+    /// itself: its pink ring, else just below its belt (user, Xiaomi 2026-10-30: "if the blade doesn't select the boss,
+    /// try tapping the boss, using the build of it or just below it"). True when it tapped.
+    /// </summary>
+    private bool TapLodBoss(Mat frame, long now)
+    {
+        int after = _settings.Phone.LodBossTapAfterTabs;
+        if (Profile != PlatformProfile.Phone || after <= 0 || _lodBladeTaps < after)
+            return false;
+
+        _lodBladeTaps = 0;
+        if (FindApproachSpot(frame, useBelt: true) is not { } found)
+        {
+            Log?.Invoke(LogLevel.Trace, $"{after} sword taps without '{_settings.Lod.BossName}' - no pink ring or belt in view to tap.");
+            return false;
+        }
+
+        var (spot, what, _) = found;
+        int x = Math.Clamp(spot.CenterX, (int)(frame.Width * 0.25), (int)(frame.Width * RunClickRight));
+        int y = Math.Clamp(spot.CenterY, (int)(frame.Height * RunClickTop), (int)(frame.Height * 0.78));
+        if (!_controls.Tap(x, y))
+            return false;
+
+        Log?.Invoke(LogLevel.Info, $"{after} sword taps did not target '{_settings.Lod.BossName}' - tapped the boss ({what}) at {x},{y}.");
+        _waitUntil = now + 1000;
+        return true;
     }
 
     /// <summary>Lets go of a held skill key (phase change, stop, panic).</summary>
@@ -957,6 +1203,6 @@ public sealed partial class AutomationPilot
             return;
         }
 
-        BeginFaceSouth();
+        BeginFaceSouth(arrival: true);
     }
 }

@@ -94,6 +94,39 @@ public sealed class TemplateLibrary : IDisposable
             AddRotatedVariant(beam, beam + "west", RotateFlags.Rotate90CounterClockwise);
             AddRotatedVariant(beam, beam + "south", RotateFlags.Rotate180);
         }
+
+        // The phone's attack skill icons (hotbar crops) as the skill wheel draws them: the same picture x1.66, cut to a
+        // circle ~115 px across (measured on skillwheel_slot1: NCC 0.998 at x1.66, centred). The centre square that stays
+        // inside the circle, scaled up, is the wheel's template - the square crop with its corners scores ~0.58 there.
+        foreach (string name in _templates.Keys.Where(IsPhoneAttack).ToList())
+            AddWheelVariant(name, name + WheelSuffix);
+    }
+
+    /// <summary>The suffix of a phone attack icon's skill-wheel variant ("phone_attack1" → "phone_attack1wheel").</summary>
+    public const string WheelSuffix = "wheel";
+
+    /// <summary>The wheel draws a hotbar icon this much bigger.</summary>
+    public const double WheelScale = 1.66;
+
+    /// <summary>The share of the icon's side kept for the wheel variant (the circle's inscribed square, with a margin).</summary>
+    public const double WheelCore = 0.6;
+
+    private static bool IsPhoneAttack(string name) =>
+        name.StartsWith("phone_attack", StringComparison.OrdinalIgnoreCase) && !name.EndsWith(WheelSuffix, StringComparison.OrdinalIgnoreCase);
+
+    private void AddWheelVariant(string sourceName, string targetName)
+    {
+        if (_templates.ContainsKey(targetName) || !_templates.TryGetValue(sourceName, out var source))
+            return;
+
+        int side = (int)Math.Round(Math.Min(source.Width, source.Height) * WheelCore);
+        if (side < 8)
+            return;
+        var box = new Rectangle((source.Width - side) / 2, (source.Height - side) / 2, side, side);
+        var scaled = new Mat();
+        using (var core = new Mat(source.Gray, box))
+            CvInvoke.Resize(core, scaled, new Size((int)Math.Round(side * WheelScale), (int)Math.Round(side * WheelScale)), 0, 0, Inter.Cubic);
+        _templates[targetName] = new TemplateImage(targetName, source.Path, scaled);
     }
 
     /// <summary>

@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+	<uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+	<uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION" />
+	<uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+	<!-- The Setup page's "Battery exemption" opens the system's ask-to-exempt dialog for this app. -->
+	<uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
+	<!-- Android 11+ package visibility: the launch intent that brings the game back after the consent dialog. -->
+	<queries>
+		<package android:name="com.wuxen.wuxen2" />
+	</queries>
+	<application android:allowBackup="false" android:supportsRtl="true" android:label="WuxAuto"></application>
+</manifest>

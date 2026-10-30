@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using Emgu.CV;
 using WuxAuto.Core;
+using WuxAuto.Phone;
 using WuxAuto.Vision;
 using LogLevel = WuxAuto.Core.LogLevel;
 
@@ -54,6 +55,7 @@ public enum PilotPhase
     WarBack,
     WarArrive,
     WarHuntOn,
+    ShortcutCheck,
     Done,
     Failed,
 }
@@ -227,6 +229,7 @@ public sealed partial class AutomationPilot
     private bool _runSkillDue;                // RunSkill: in town this run, not checked yet
     private int _runSkillClicks;              // RunSkill: clicks on the icon this visit (<= 3)
     private bool _runKeyPressed;              // RunSkill: the fallback key went out this Start (a toggle - never twice)
+    private bool _runOrbTapped;               // RunSkill, phone: the orb was tapped this Start (its ring band is unverified - never twice)
     private int _huntOffPresses;              // AutohuntOff: taps of the autohunt key this visit (<= 3)
     private long _huntOffPressedAt;
     private List<string> _huntOffBaseline = [];   // autohunt log lines before the last tap
@@ -254,12 +257,60 @@ public sealed partial class AutomationPilot
     private int _refineGained;
     private bool _refinePending;
 
-    public AutomationPilot(AppSettings settings, ScreenAnalyzer analyzer, IGameControls controls)
+    /// <summary>What differs on this platform (no profile given = <see cref="PlatformProfile.Desktop"/>).</summary>
+    public PlatformProfile Profile { get; }
+
+    /// <param name="shortcuts">The phone's on-screen buttons (the shortcut check, the Run orb); null on the desktop.</param>
+    public AutomationPilot(AppSettings settings, ScreenAnalyzer analyzer, IGameControls controls, PlatformProfile? profile = null,
+        IShortcutSource? shortcuts = null)
     {
+        Profile = profile ?? PlatformProfile.Desktop;
         _settings = settings;
         _analyzer = analyzer;
         _controls = controls;
+        _shortcuts = shortcuts;
+        _shortcutCheck = new ShortcutCheck(analyzer, controls, shortcuts, (level, text) => Log?.Invoke(level, text),
+            async f => await ReadMinimapTitleAsync(f) != null);
     }
+
+    private readonly IShortcutSource? _shortcuts;
+    private readonly ShortcutCheck _shortcutCheck;
+    private bool _shortcutsChecked;          // phone: the shortcut check ran this Start
+    private bool _settingsBeforeShortcutsTried; // phone: the in-town Settings visit before the shortcut check was considered this Start
+    private bool _restartShortcutCheck;      // phone: that visit ran - the shortcut check starts over on a fresh map
+    private int _menuPressFails;             // phone: Settings visit taps on the menu button that found no button
+    private int _scaleTaps;                  // phone: - / + taps on the interface scale this visit
+    private bool _scaleChanged;              // phone: the interface scale was changed this visit
+    private string? _settingTapValue;        // phone: the Settings value shown when the last - / + / chevron was tapped
+    private long _settingTapAt;              // phone: when that tap went out
+    private long _phoneMenuTapAt;            // phone: when the menu button or its Settings tile was last tapped
+    private long _noTitleSince;              // phone: since when the loop has held the pilot for an unread zone title (0 = it ticks)
+
+    /// <summary>The phone's limit for <see cref="TickWithoutTitleAsync"/>: this long without a zone title, the game in front = fail (restart).</summary>
+    internal int NoTitleLimitMs { get; set; } = 120_000;
+
+    /// <summary>
+    /// Phone: how long the pilot waits between two shortcut check steps, given the step's own wait (the game's ring and
+    /// picker need it). Tests shorten it - their fake ring changes at once - the apps keep the step's wait.
+    /// </summary>
+    internal Func<int, int> ShortcutCheckWaitMs { get; set; } = ms => ms;
+
+    /// <summary>Ctrl + skill on manual skill presses: the setting, where the platform has a Ctrl key (desktop only).</summary>
+    private bool CtrlSkillOn => _settings.Dungeon.CtrlSkill && Profile.SupportsCtrlSkill;
+
+    // Phone, AttackMode Tap (user, MuMu 2026-10-29: "no hold", "100ms taps"): no held skill press anywhere,
+    // one attack tap per PhoneSettings.AttackTapEveryMs. AttackMode Hold: LOD holds the skill for the whole fight. The desktop keeps its settings.
+    private bool PhoneTaps => Profile == PlatformProfile.Phone && _settings.Phone.AttackMode == PhoneAttackMode.Tap;
+    private bool PhoneHolds => Profile == PlatformProfile.Phone && _settings.Phone.AttackMode == PhoneAttackMode.Hold;
+    private int PhoneTapEveryMs => Math.Clamp(_settings.Phone.AttackTapEveryMs, 50, 2000);
+
+    /// <summary>The phone's word when the LOD entries run out (M4 ruling: Laby and Auto War are not ported yet).</summary>
+    public const string PhoneOutOfKeysText = "No LOD entries left - Laby and Auto War come later on the phone";
+
+    private int HoldSkillMs => PhoneTaps ? 0 : _settings.Dungeon.HoldSkillMs;
+    private int ManualAttackIntervalMs => PhoneTaps ? PhoneTapEveryMs : _settings.Dungeon.ManualAttackIntervalMs;
+    private int LodSkillEveryMs => PhoneTaps ? PhoneTapEveryMs : _settings.Lod.SkillEveryMs;
+    private bool LodHoldSkill => PhoneHolds || (_settings.Lod.HoldSkill && !PhoneTaps);
 
     public event Action<LogLevel, string>? Log;
     public event Action? StateChanged;
@@ -327,6 +378,7 @@ public sealed partial class AutomationPilot
         PilotPhase.WarBack => "teleporting back to the cave",
         PilotPhase.WarArrive => "walking to the monster",
         PilotPhase.WarHuntOn => "turning the autohunt on",
+        PilotPhase.ShortcutCheck => "checking the shortcut ring",
         PilotPhase.Done => "sequence complete",
         PilotPhase.Failed => "failed",
         _ => "idle",
@@ -342,8 +394,13 @@ public sealed partial class AutomationPilot
     {
         _runCount = 0;
         _fontChecked = false;
+        _shortcutsChecked = false;
+        _settingsBeforeShortcutsTried = false;
+        _restartShortcutCheck = false;
+        _noTitleSince = 0;
         _regularWarOffChecked = false;
         _runKeyPressed = false;
+        _runOrbTapped = false;
         _labyOut = false;
         _lodOut = false;
         _restartTimes.Clear();
@@ -355,6 +412,7 @@ public sealed partial class AutomationPilot
         _warBuffedAt = 0;
         _lodBuffAt = 0;
         _lodBuffs = 0;
+        ResetPhoneBuffState();
         _lodApproachSnapshots = 0;
         _fontStep = 0;
         _warSpotChecked = false;
@@ -413,8 +471,9 @@ public sealed partial class AutomationPilot
     {
         // Positions are never carried over from an earlier run or a saved file: the game may now
         // run at another resolution. The learned template scales are dropped on the next tick
-        // (the vision loop owns the analyzer), when the client size is known for the log.
-        _settings.ResetPositions();
+        // (the vision loop owns the analyzer), when the client size is known for the log. The phone's
+        // regions depend on the screen size and are set again on that tick.
+        _settings.ResetPositions(Profile);
         _positionsResetPending = true;
 
         _attempts = 0;
@@ -466,6 +525,9 @@ public sealed partial class AutomationPilot
         _headingSamples = 0;
         _turnWest = false;
         _faceSouth = false;
+        _lodStayPut = false;
+        _lodArrivalWalkDue = false;
+        _lodBladeTaps = 0;
         _lodStill = 0;
         _lodWaitLogged = false;
         _fromWaypoint = false;
@@ -540,11 +602,18 @@ public sealed partial class AutomationPilot
             return;
 
         _overlays.Clear();
+        _noTitleSince = 0;
 
         if (_positionsResetPending)
         {
             _positionsResetPending = false;
             _analyzer.ResetScaleCache();
+            if (Profile == PlatformProfile.Phone)
+            {
+                _settings.ResetPositions(Profile, frame.Width, frame.Height);
+                // Every Start and restart: no shortcut position or "not there" (absent cool-down) from an earlier screen.
+                _shortcuts?.Invalidate();
+            }
             Log?.Invoke(LogLevel.Info,
                 $"Screen positions reset to the built-in defaults for the {frame.Width}x{frame.Height} client; template scales will be re-learned.");
         }
@@ -579,16 +648,7 @@ public sealed partial class AutomationPilot
 
                 if (_settings.Sequence.AutoReconnect && IsServersScreen(screenWords))
                 {
-                    ReleaseSweepKey();
-                    Log?.Invoke(LogLevel.Warning, $"Disconnected (login screens) during {_phase} - logging back in.");
-                    DebugArtifacts.SaveFrame(frame, _overlays, "disconnected");
-                    _reconnectStartedAt = now;
-                    _reconnectClicks = 0;
-                    _startGameClicked = false;
-                    _charScreenSince = 0;
-                    _startGameUnreadSaved = false;
-                    _reconnectStep = 0;
-                    Advance(PilotPhase.Reconnect, _settings.Sequence.ReconnectStepDelayMs);
+                    EnterReconnect(frame, now);
                     return;
                 }
 
@@ -751,6 +811,11 @@ public sealed partial class AutomationPilot
         // loading screen.
         TickKillShot(frame, now);
 
+        // Phone: a buff tap's check on the buff timers (~3 s after it), whatever the LOD phase is waiting for.
+        if (IsLod && _phase is PilotPhase.LodRun or PilotPhase.LodAttack or PilotPhase.LodApproach or PilotPhase.LodRespawn
+                or PilotPhase.LodLoot or PilotPhase.FaceNorth)
+            await TickPhoneBuffCheckAsync(frame, now);
+
         if (now < _waitUntil)
             return;
 
@@ -760,6 +825,9 @@ public sealed partial class AutomationPilot
             {
                 case PilotPhase.Focus:
                     TickFocus();
+                    break;
+                case PilotPhase.ShortcutCheck:
+                    await TickShortcutCheckAsync(frame);
                     break;
                 case PilotPhase.CheckZone:
                     await TickCheckZoneAsync(frame);
@@ -913,6 +981,77 @@ public sealed partial class AutomationPilot
         cancellationToken.ThrowIfCancellationRequested();
     }
 
+    /// <summary>
+    /// Phone: the loop held the pilot for something other than the zone title (the game behind, the panel open, no
+    /// recent frame - all decided before the title): the no-title clock of <see cref="TickWithoutTitleAsync"/> starts
+    /// again, so only an unbroken run of no-title passes counts towards its limit.
+    /// </summary>
+    public void NoTitlePaused() => _noTitleSince = 0;
+
+    /// <summary>Disconnected (a login screen read): from wherever the run is, log back in (<see cref="PilotPhase.Reconnect"/>).</summary>
+    private void EnterReconnect(Mat frame, long now)
+    {
+        ReleaseSweepKey();
+        Log?.Invoke(LogLevel.Warning, $"Disconnected (login screens) during {_phase} - logging back in.");
+        DebugArtifacts.SaveFrame(frame, _overlays, "disconnected");
+        _reconnectStartedAt = now;
+        _reconnectClicks = 0;
+        _startGameClicked = false;
+        _charScreenSince = 0;
+        _startGameUnreadSaved = false;
+        _reconnectStep = 0;
+        Advance(PilotPhase.Reconnect, _settings.Sequence.ReconnectStepDelayMs);
+    }
+
+    /// <summary>
+    /// Phone: the loop holds <see cref="TickAsync"/> while the minimap's zone title does not read (a launcher or login
+    /// frame is not black, so only the title proves the picture is the game - <c>PhoneLoopGate</c>). The login screens
+    /// have no minimap either, so on such a pass the loop calls this instead: only the disconnect check (every 5 s, as in
+    /// <see cref="TickAsync"/>; a login screen = <see cref="PilotPhase.Reconnect"/>, which then ticks normally) and the
+    /// no-title limit - <see cref="NoTitleLimitMs"/> (2 min) of no-title passes in a row = <see cref="Fail"/> (the zone
+    /// guard's own limit and restart path). The loop only gets here with the game in front and the panel shut; every
+    /// other pass calls <see cref="NoTitlePaused"/> (or <see cref="TickAsync"/>), which starts the clock again.
+    /// Nothing else is read and nothing is sent.
+    /// </summary>
+    public async Task TickWithoutTitleAsync(Mat frame, CancellationToken cancellationToken)
+    {
+        if (!IsRunning)
+            return;
+
+        _overlays.Clear();
+        long now = Environment.TickCount64;
+        if (_noTitleSince == 0)
+            _noTitleSince = now;
+
+        if (_settings.Sequence.AutoReconnect && _phase != PilotPhase.Reconnect && now >= _nextDisconnectCheckAt)
+        {
+            _nextDisconnectCheckAt = now + 5000;
+            try
+            {
+                var words = await _analyzer.Ocr.RecognizeAsync(frame, new PixelRect(0, 0, frame.Width, frame.Height), 1.0);
+                if (IsServersScreen(words))
+                {
+                    _noTitleSince = 0;
+                    EnterReconnect(frame, now);
+                    return;
+                }
+            }
+            catch (Exception ex)
+            {
+                Log?.Invoke(LogLevel.Trace, $"Disconnect check failed: {ex.Message}");
+            }
+        }
+
+        if (now - _noTitleSince > NoTitleLimitMs)
+        {
+            _noTitleSince = 0;
+            Fail(frame, $"The minimap's zone title has not read for {NoTitleLimitMs / 1000}s with the game in front (during {_phase}) - " +
+                        "stopped instead of sending input to a screen that is not the game.");
+        }
+
+        cancellationToken.ThrowIfCancellationRequested();
+    }
+
     // ---------------------------------------------------------------- phases
 
     private void TickFocus()
@@ -923,7 +1062,7 @@ public sealed partial class AutomationPilot
             {
                 Log?.Invoke(LogLevel.Info, "Game window is in the foreground; input will only go there.");
                 // The game needs a moment after activation before it takes keys reliably.
-                Advance(PilotPhase.CheckZone, _settings.Input.FocusSettleMs);
+                Advance(AfterFocus(), _settings.Input.FocusSettleMs);
                 return;
             }
 
@@ -939,7 +1078,65 @@ public sealed partial class AutomationPilot
             return;
         }
 
-        Advance(PilotPhase.CheckZone, 120);
+        Advance(AfterFocus(), 120);
+    }
+
+    /// <summary>The phone checks its shortcut ring once per Start before the zone check; the desktop goes straight to it.</summary>
+    private PilotPhase AfterFocus()
+    {
+        if (!Profile.ShortcutCheck || _shortcutsChecked)
+            return PilotPhase.CheckZone;
+
+        _shortcutCheck.Begin(IsLod);
+        return PilotPhase.ShortcutCheck;
+    }
+
+    /// <summary>
+    /// Phone, every Start (spec §6.1): the shortcuts the run needs on the ring, added in free (+) slots when missing
+    /// (<see cref="ShortcutCheck"/>). Missing with no free slot = stop for good with the shortcut's name: a restart would
+    /// find the same ring.
+    /// </summary>
+    private async Task TickShortcutCheckAsync(Mat frame)
+    {
+        // In town, the Settings visit first (MuMu 1920x1080, 2026-10-30): the interface scale moves the shortcut rings -
+        // at 1.12 the left ring's Teleport Scroll slot sat off the screen edge, the check took it for missing and opened
+        // the ring editor. Once per Start; elsewhere (a re-login mid-dungeon) the visit waits for the town as before. Not in a
+        // dry run: nothing is tapped, so no window opens and the visit would only wait. Only with the menu button in view
+        // (without it the visit cannot open anything; the town visit later tries again).
+        if (!_settingsBeforeShortcutsTried && SettingsVisitDue && !_controls.IsDryRun && _controls.Has(GameAction.ToggleSettings))
+        {
+            _settingsBeforeShortcutsTried = true;
+            if (TownIn(await ReadMinimapTitleAsync(frame)) != null)
+            {
+                Log?.Invoke(LogLevel.Info, "In town: setting the interface scale and font first - they move the shortcut rings.");
+                _restartShortcutCheck = true;
+                BeginSettingsVisit(TownTabTarget(_settings), skipFont: false, PilotPhase.ShortcutCheck);
+                return;
+            }
+        }
+
+        // Back from that visit: the ring may have moved - look again from scratch.
+        if (_restartShortcutCheck)
+        {
+            _restartShortcutCheck = false;
+            _shortcutCheck.Begin(IsLod);
+        }
+
+        var step = await _shortcutCheck.TickAsync(frame);
+        switch (step.Outcome)
+        {
+            case ShortcutCheckOutcome.Working:
+                _detail = step.Detail;
+                _waitUntil = Environment.TickCount64 + Math.Max(0, ShortcutCheckWaitMs(step.WaitMs));
+                break;
+            case ShortcutCheckOutcome.Done:
+                _shortcutsChecked = true;
+                Advance(PilotPhase.CheckZone, 120);
+                break;
+            default:
+                Fail(frame, step.Reason ?? "A needed shortcut is not on the ring.", restart: false);
+                break;
+        }
     }
 
     /// <summary>
@@ -976,6 +1173,7 @@ public sealed partial class AutomationPilot
                 // Resume (user): rebuff first - a fight may be running, so stop attacking for it
                 // (Shura, else Space) - then attack.
                 Log?.Invoke(LogLevel.Warning, $"Already at {Destination} with '{_settings.Lod.BossName}' in view - rebuffing, then attacking.");
+                await PrepareBuffCheckAsync(frame, Environment.TickCount64, force: true);
                 TryLodBuff(frame, Environment.TickCount64, force: true, attacking: true);
                 BeginLodFight();
                 _lodHeadingUnknown = true;
@@ -1020,7 +1218,10 @@ public sealed partial class AutomationPilot
             // Auto Laby, once per Start (user, 2026-10-29): Regular War off, or the autohunt may take the
             // character to a war mid-boss. LOD has no autohunt.
             _regularWarOffDue = townCheck && !IsLod && !IsBlossom && !_regularWarOffChecked && _settings.Sequence.RegularWarOffForLaby;
-            if (townCheck && _settings.Sequence.AutohuntOffInTown && _controls.Has(GameAction.ToggleAutohunt))
+            // Not on the phone yet: its combat-log read of the autohunt lines is not verified there, and a misread tap of
+            // HUNT in town starts a Smart Farm journey.
+            if (townCheck && _settings.Sequence.AutohuntOffInTown && Profile != PlatformProfile.Phone
+                && _controls.Has(GameAction.ToggleAutohunt))
             {
                 _huntOffPresses = 0;
                 _huntOffBaseline = [];
@@ -1122,16 +1323,30 @@ public sealed partial class AutomationPilot
             return PilotPhase.RegularWarOff;
         }
 
-        string? tabTarget = TownTabTarget(_settings);
-        bool settingsCheck = _settings.Sequence.FontSizePercent > 0 || tabTarget != null;
-        if (_fontChecked || !settingsCheck)
+        if (!SettingsVisitDue)
             return PilotPhase.OpenInventory;
 
-        // The Laby/LOD/Blossom visit, from the same read of the settings as the decision above.
-        _visitTabTarget = tabTarget;
+        // The Laby/LOD/Blossom visit (TAB target per mode: TownTabTarget).
+        _visitTabTarget = TownTabTarget(_settings);
         _visitSkipFont = false;
         _visitNext = PilotPhase.OpenInventory;
         return PilotPhase.FontSize;
+    }
+
+    /// <summary>
+    /// The town Settings visit has not run this Start and has something to do. Phone (user, 2026-10-30): its own font
+    /// size (exact) and the interface scale; the desktop's font range is not used there.
+    /// </summary>
+    private bool SettingsVisitDue
+    {
+        get
+        {
+            bool tabTarget = TownTabTarget(_settings) != null;
+            bool settingsCheck = Profile == PlatformProfile.Phone
+                ? _settings.Phone.FontSizePercent > 0 || _settings.Phone.InterfaceScale > 0 || tabTarget
+                : _settings.Sequence.FontSizePercent > 0 || tabTarget;
+            return !_fontChecked && settingsCheck;
+        }
     }
 
     /// <summary>
@@ -1300,7 +1515,16 @@ public sealed partial class AutomationPilot
 
         void Done() => Advance(AfterTownChecks(), 120);
 
-        var icon = FindRunSkill(frame);
+        bool phone = Profile == PlatformProfile.Phone;
+        var icon = phone ? FindPhoneRunOrb(frame) : FindRunSkill(frame);
+        if (icon == null && phone)
+        {
+            // Phone: no key to fall back on, and the hotbar copy of the icon has no ring (Task 1 #11) - nothing to do.
+            Log?.Invoke(LogLevel.Info, "The Run skill orb is not on screen - not checked (the phone has no Run key to fall back on).");
+            Done();
+            return;
+        }
+
         if (icon == null)
         {
             string missing = string.IsNullOrWhiteSpace(seq.RunSkillTemplate)
@@ -1342,7 +1566,9 @@ public sealed partial class AutomationPilot
             return;
         }
 
-        double ring = _analyzer.RingFraction(frame, icon.Bounds);
+        double ring = phone
+            ? _analyzer.RingFraction(frame, icon.Bounds, PhoneRunRingMin, PhoneRunRingMax)
+            : _analyzer.RingFraction(frame, icon.Bounds);
         bool on = ring >= seq.RunSkillRingMin;
         _overlays.Add(new OverlayItem(icon.Bounds.Inflate(icon.Bounds.Width / 3), $"ring {ring:0.00}", on ? OverlayColor.Green : OverlayColor.Red));
         int x = icon.Bounds.CenterX, y = icon.Bounds.CenterY;
@@ -1357,6 +1583,16 @@ public sealed partial class AutomationPilot
         if (_controls.IsDryRun)
         {
             Log?.Invoke(LogLevel.Info, $"Dry run - the Run skill is off (ring {ring:0.00}); would click its icon at {x},{y} (score {icon.Score:0.00}).");
+            Done();
+            return;
+        }
+
+        // Phone: the ring band is not verified on a real orb yet, and the orb is a toggle - a ring the reader misses would
+        // have every tap turn the skill off again. One tap per Start, the ring logged each time (review #3).
+        if (phone && _runOrbTapped)
+        {
+            Log?.Invoke(LogLevel.Warning, $"The Run skill still reads off (ring {ring:0.00} round the orb at {x},{y}) - it was tapped once this Start already, not again.");
+            DebugArtifacts.SaveFrame(frame, _overlays, "runskill_off");
             Done();
             return;
         }
@@ -1377,9 +1613,38 @@ public sealed partial class AutomationPilot
         }
 
         _runSkillClicks++;
-        Log?.Invoke(LogLevel.Info, $"The Run skill is off (ring {ring:0.00}) - clicked its icon at {x},{y} ({_runSkillClicks}/3, score {icon.Score:0.00}).");
+        if (phone)
+            _runOrbTapped = true;
+        Log?.Invoke(LogLevel.Info, phone
+            ? $"The Run skill is off (ring {ring:0.00}) - tapped its orb at {x},{y} (once per Start)."
+            : $"The Run skill is off (ring {ring:0.00}) - clicked its icon at {x},{y} ({_runSkillClicks}/3, score {icon.Score:0.00}).");
         _detail = $"clicked the Run skill icon ({_runSkillClicks}/3) - looking for its ring";
         _waitUntil = now + 900;
+    }
+
+    /// <summary>
+    /// The phone's Run ring (Task 1 #11): four gold arcs at r 66-72 px round the orb's centre at 1920x1080, where the
+    /// <c>phone_runskill</c> template is the 84 px square inside the orb (r 59) - 0.79-0.86 of the box width, with room
+    /// on both sides and clear of the orb's own edge (0.70).
+    /// </summary>
+    internal const double PhoneRunRingMin = 0.74;
+    internal const double PhoneRunRingMax = 0.92;
+
+    /// <summary>
+    /// Phone: the Run skill's orb as the shortcut map found it. Its copy on the hotbar has no ring (it would always read
+    /// off and get tapped), so a hit inside <see cref="RegionSettings.Hotbar"/> does not count.
+    /// </summary>
+    private TemplateMatch? FindPhoneRunOrb(Mat frame)
+    {
+        if (_shortcuts?.Find(GameAction.RunSkillKey) is not { } orb)
+            return null;
+
+        var bar = _settings.Regions.Hotbar.ToPixels(frame.Width, frame.Height);
+        if (bar.Contains(orb.CenterX, orb.CenterY))
+            return null;
+
+        _overlays.Add(new OverlayItem(orb, "run orb", OverlayColor.Green));
+        return new TemplateMatch("phone_runskill", 1.0, orb, 1.0);
     }
 
     /// <summary>
@@ -1452,15 +1717,20 @@ public sealed partial class AutomationPilot
     /// -> SAVE once if anything changed -> Escape -> the visit's next phase (the teleport for
     /// Laby/LOD). Only buttons found by their own text are clicked (the window also has CHARACTER
     /// SELECT and EXIT). Anything unexpected: close the window and carry on with the run - neither
-    /// setting is worth a failure.
+    /// setting is worth a failure. Phone (2026-10-30): the menu button, then its "Settings (ESC)" tile;
+    /// "Interface scale" stepped with - / + to <see cref="PhoneSettings.InterfaceScale"/> before the font
+    /// (it resizes the window); the font set to exactly <see cref="PhoneSettings.FontSizePercent"/>; every
+    /// tap waits for the screen to show it (the capture lags); no SAVE (the phone game keeps changes as they are made,
+    /// and the chat box's text field lies over SAVE); closed with the window's X.
     /// </summary>
     private async Task TickFontSizeAsync(Mat frame)
     {
-        const int OpenStep = 0, VisualStep = 1, TopStep = 2, FontStep = 3, TabStep = 4, SaveStep = 5, CloseStep = 9;
+        const int OpenStep = 0, VisualStep = 1, TopStep = 2, FontStep = 3, TabStep = 4, SaveStep = 5, ScaleStep = 6, CloseStep = 9;
         const int ListNotches = 10;   // one 10-notch scroll ran the 17-row VISUAL list end to end (1920x1080)
 
-        int low = _settings.Sequence.FontSizePercent;
-        int high = Math.Max(low, _settings.Sequence.FontSizeMaxPercent);
+        bool phone = Profile == PlatformProfile.Phone;
+        int low = phone ? _settings.Phone.FontSizePercent : _settings.Sequence.FontSizePercent;
+        int high = phone ? low : Math.Max(low, _settings.Sequence.FontSizeMaxPercent);
         var full = new PixelRect(0, 0, frame.Width, frame.Height);
         long now = Environment.TickCount64;
 
@@ -1491,7 +1761,7 @@ public sealed partial class AutomationPilot
 
         void AfterTab()
         {
-            if (_fontChanged || _tabChanged)
+            if (_fontChanged || _tabChanged || _scaleChanged)
                 _fontStep = SaveStep;
             else
                 Close();
@@ -1511,29 +1781,112 @@ public sealed partial class AutomationPilot
             return false;
         }
 
+        // Phone: a frame read right after a tap can still be from before it (the capture lags: MuMu 2560x1440 read 1.10 with
+        // 1.09 on screen and stopped one short, then overshot to 1.11 the next visit) - after a tap, wait until the value
+        // read has moved (2.5 s at most, then decide on what shows).
+        bool BeforeLastTap(string value)
+        {
+            if (!phone || _settingTapValue == null)
+                return false;
+            if (value == _settingTapValue && now - _settingTapAt < 2500)
+            {
+                _detail = $"waiting for the screen to show the last tap ({value})";
+                _waitUntil = now + 300;
+                return true;
+            }
+
+            _settingTapValue = null;
+            return false;
+        }
+
+        void NoteTap(string value)
+        {
+            _settingTapValue = value;
+            _settingTapAt = now;
+        }
+
         switch (_fontStep)
         {
             case OpenStep:
+                _settingTapValue = null;
                 _fontClicks = 0;
                 _fontTabClicks = 0;
                 _fontChanged = false;
                 _tabClicks = 0;
                 _tabScrolls = 0;
                 _tabChanged = false;
+                _scaleTaps = 0;
+                _scaleChanged = false;
                 _settingsChanges.Clear();
                 if (!_controls.Press(GameAction.ToggleSettings))
                 {
+                    // Phone: no menu button on screen (yet) - a few tries, then the visit is skipped this Start.
+                    if (phone && ++_menuPressFails >= 10)
+                    {
+                        _menuPressFails = 0;
+                        _fontChecked = true;
+                        Log?.Invoke(LogLevel.Warning, "The menu button was not found - leaving the font size and interface scale alone.");
+                        Advance(_visitNext, 300);
+                        return;
+                    }
+
                     _waitUntil = now + 300;
                     return;
                 }
 
+                _menuPressFails = 0;
+                _phoneMenuTapAt = now;
                 _fontStep = VisualStep;
                 _waitUntil = now + 900;
                 return;
 
             case VisualStep: // Settings open? then the VISUAL tab
             {
-                if (await Find("SETTINGS") == null)
+                // Phone: ToggleSettings only taps the menu button; the Settings window is its "Settings (ESC)" tile. The frame
+                // can still be from before the last tap (the capture lags; at 5 FPS a second menu-button tap 0.9 s after the
+                // first closed the menu it had just opened, MuMu 2026-10-30): fresh frames for up to 4 s after a tap, and
+                // never the menu button while the MENU window shows.
+                var settingsLines = phone ? await PhoneSettingsLinesAsync(frame) : null;
+                if (settingsLines != null && PhoneSettingsTitle(settingsLines) == null)
+                {
+                    if (_attempts < 3 && settingsLines.FirstOrDefault(l => IsSettingsTileText(l.Text)) is { Text: not null } tile)
+                    {
+                        _attempts++;
+                        if (!Click(tile.Bounds))
+                            return;
+                        _phoneMenuTapAt = now;
+                        _detail = "tapped the menu's Settings tile";
+                        _waitUntil = now + 1200;
+                        return;
+                    }
+
+                    if (now - _phoneMenuTapAt < 4000)
+                    {
+                        _detail = "waiting for the menu / the Settings window to show";
+                        _waitUntil = now + 400;
+                        return;
+                    }
+
+                    bool menuShows = settingsLines.Any(l => TextMatcher.Normalize(l.Text) == "menu");
+                    if (++_attempts < 3)
+                    {
+                        if (menuShows)
+                            _phoneMenuTapAt = now; // open, its tile unread: look again rather than toggle it shut
+                        else
+                            _fontStep = OpenStep;
+                        _waitUntil = now + 400;
+                        return;
+                    }
+
+                    Log?.Invoke(LogLevel.Warning, "The Settings window did not open (menu button, then its Settings tile) - leaving the font size and interface scale alone.");
+                    DebugArtifacts.SaveFrame(frame, _overlays, "settings_unopened");
+                    _fontChecked = true;
+                    _fontStep = OpenStep;
+                    Advance(_visitNext, 300);
+                    return;
+                }
+
+                if (!phone && await Find("SETTINGS") == null)
                 {
                     if (++_attempts < 3)
                     {
@@ -1567,13 +1920,72 @@ public sealed partial class AutomationPilot
             case TopStep: // the list may still be scrolled down from the last visit: back to the top
                 if (!ScrollList(ListNotches))
                     return;
-                _fontStep = FontStep;
+                // Phone: the interface scale first - it resizes the window, so every row moves after it.
+                _fontStep = phone && _settings.Phone.InterfaceScale > 0 ? ScaleStep : FontStep;
                 _waitUntil = now + 700;
                 return;
 
+            case ScaleStep: // phone: "Interface scale" stepped with - / + to the wanted value, one tap per fresh frame
+            {
+                double goal = _settings.Phone.InterfaceScale;
+                var row = await _analyzer.ReadScaleRowAsync(frame);
+                if (row?.Value is not double value)
+                {
+                    if (row == null && ++_fontTabClicks < 3) // still on SOUND: VISUAL again, as for the font row
+                    {
+                        _fontStep = VisualStep;
+                        _attempts = 0;
+                        _waitUntil = now + 500;
+                        return;
+                    }
+
+                    DebugArtifacts.SaveFrame(frame, _overlays, "scale_unread");
+                    Log?.Invoke(LogLevel.Warning, "No 'Interface scale' value was read in the Settings window - leaving it alone.");
+                    if (_scaleChanged)
+                        _settingsChanges.Add("interface scale (changed, then unread)");
+                    _fontStep = FontStep;
+                    return;
+                }
+
+                string shown = row.Auto ? "AUTO (1.00)" : $"{value:0.00}";
+                if (BeforeLastTap($"scale {shown}"))
+                    return;
+                int steps = (int)Math.Round((goal - value) * 100);
+                if (steps == 0)
+                {
+                    if (_scaleChanged)
+                        _settingsChanges.Add($"interface scale {value:0.00}");
+                    else
+                        Log?.Invoke(LogLevel.Info, $"Interface scale is already {shown}.");
+                    _fontStep = FontStep;
+                    return;
+                }
+
+                PixelRect? button = steps > 0 ? row.Plus : row.Minus;
+                if (button == null || _scaleTaps >= 40)
+                {
+                    string why = button == null ? $"no '{(steps > 0 ? "+" : "-")}' button seen" : "40 taps";
+                    Log?.Invoke(LogLevel.Warning, $"Interface scale is {shown} and could not be set to {goal:0.00} ({why}) - leaving it.");
+                    if (_scaleChanged)
+                        _settingsChanges.Add($"interface scale {value:0.00}");
+                    _fontStep = FontStep;
+                    return;
+                }
+
+                if (!Click(button.Value))
+                    return;
+                Log?.Invoke(LogLevel.Trace, $"Interface scale reads {shown}: tapped '{(steps > 0 ? "+" : "-")}' at {button.Value.CenterX},{button.Value.CenterY}.");
+                NoteTap($"scale {shown}");
+                _scaleTaps++;
+                _scaleChanged = true;
+                _detail = $"interface scale {shown} -> {goal:0.00}";
+                _waitUntil = now + 600;
+                return;
+            }
+
             case FontStep: // read the row, step towards the target
             {
-                var row = await _analyzer.ReadSettingRowAsync(frame, "Font size");
+                var row = await _analyzer.ReadSettingRowAsync(frame, "Font size", chevronReach: phone ? 10 : 0);
 
                 // Still on the SOUND tab: the VISUAL click right after the window opened did not
                 // take (run 32). Click it again, up to 3 times.
@@ -1590,6 +2002,9 @@ public sealed partial class AutomationPilot
                     AfterFont();
                     return;
                 }
+
+                if (row?.Percent is int shownPercent && BeforeLastTap($"font {shownPercent}"))
+                    return;
 
                 if (row?.Percent is not int percent)
                 {
@@ -1626,6 +2041,8 @@ public sealed partial class AutomationPilot
 
                 if (!Click(chevron.Value))
                     return;
+                if (phone)
+                    NoteTap($"font {percent}");
                 _fontChanged = true;
                 _detail = $"font size {percent}% -> {_fontGoal}%";
                 _waitUntil = now + 500;
@@ -1642,7 +2059,7 @@ public sealed partial class AutomationPilot
                     return;
                 }
 
-                var row = await _analyzer.ReadSettingRowAsync(frame, "TAB target", numeric: false);
+                var row = await _analyzer.ReadSettingRowAsync(frame, "TAB target", numeric: false, chevronReach: phone ? 10 : 0);
                 if (row?.ValueText is not string value)
                 {
                     if (_tabScrolls < 3)
@@ -1696,6 +2113,18 @@ public sealed partial class AutomationPilot
             case SaveStep: // SAVE - the exact word only
             {
                 string changes = _settingsChanges.Count > 0 ? string.Join(", ", _settingsChanges) : "settings changed";
+
+                // Phone: no SAVE. The phone game keeps a Settings change the moment it is made - interface scale 1.11 and
+                // font 110 % both survived closing with the X and a full restart of the game (MuMu 2560x1440, 2026-10-30) -
+                // and the chat box's text field lies over SAVE and takes the tap (it opened the keyboard at every height
+                // tried at scale 1.10).
+                if (phone)
+                {
+                    Log?.Invoke(LogLevel.Success, $"Set {changes} (the phone game keeps it without SAVE).");
+                    Close();
+                    return;
+                }
+
                 var save = await Find("SAVE");
                 if (save == null || TextMatcher.Normalize(save.Text) != "save")
                 {
@@ -1714,6 +2143,41 @@ public sealed partial class AutomationPilot
 
             default: // close the window (Escape toggles it), then the visit's next phase (Laby/LOD: the teleport)
             {
+                // Phone: the menu button would open the menu over it - the window's own X instead (never a blind tap).
+                if (phone)
+                {
+                    var title = PhoneSettingsTitle(await PhoneSettingsLinesAsync(frame));
+                    if (title != null && _attempts >= 3)
+                    {
+                        Log?.Invoke(LogLevel.Warning, "The Settings window is still open after 3 taps on its close button - leaving it open.");
+                        DebugArtifacts.SaveFrame(frame, _overlays, "settings_close_stuck");
+                    }
+                    else if (title != null)
+                    {
+                        _attempts++;
+                        if (_analyzer.FindCloseBlobRightOf(frame, title.Value, reach: 9, minHeights: 0.5) is not { } close)
+                        {
+                            Log?.Invoke(LogLevel.Warning, "The Settings window is open, but no close button shows right of its title - leaving it open.");
+                            DebugArtifacts.SaveFrame(frame, _overlays, "settings_close_stuck");
+                            _fontStep = OpenStep;
+                            Advance(_visitNext, 300);
+                            return;
+                        }
+
+                        if (!Click(close))
+                            return;
+                        _waitUntil = now + 900;
+                        return;
+                    }
+
+                    // The interface scale moved every shortcut: drop the cached positions.
+                    if (_scaleChanged)
+                        _shortcuts?.Invalidate();
+                    _fontStep = OpenStep;
+                    Advance(_visitNext, 300);
+                    return;
+                }
+
                 if (_attempts < 3 && await Find("SETTINGS") != null)
                 {
                     _attempts++;
@@ -1727,6 +2191,24 @@ public sealed partial class AutomationPilot
                 return;
             }
         }
+    }
+
+    /// <summary>Phone: the whole frame's OCR lines at x1, for the Settings title, the menu's Settings tile and the MENU title.</summary>
+    private async Task<IReadOnlyList<(string Text, PixelRect Bounds)>> PhoneSettingsLinesAsync(Mat frame) =>
+        ScreenAnalyzer.ToLines(await _analyzer.Ocr.RecognizeAsync(frame, new PixelRect(0, 0, frame.Width, frame.Height), 1.0));
+
+    /// <summary>
+    /// Phone: the Settings window's title - an OCR line that reads exactly "SETTINGS". The menu's own tile reads
+    /// "ettings (ES" at 2560x1440 (cut off), and a fuzzy match on it took the menu for the open window.
+    /// </summary>
+    private static PixelRect? PhoneSettingsTitle(IEnumerable<(string Text, PixelRect Bounds)> lines) =>
+        lines.Where(l => TextMatcher.Normalize(l.Text) == "settings").Select(l => (PixelRect?)l.Bounds).FirstOrDefault();
+
+    /// <summary>A menu tile label for Settings: "Settings (ESC)", cut off as "ettings (ES" - not the "SETTINGS" title.</summary>
+    public static bool IsSettingsTileText(string text)
+    {
+        string n = TextMatcher.Normalize(text);
+        return n.Contains("ettings", StringComparison.Ordinal) && n != "settings" && n.Length <= 14;
     }
 
     /// <summary>
@@ -1759,6 +2241,27 @@ public sealed partial class AutomationPilot
 
     private void TickOpenInventory(Mat frame)
     {
+        // Phone: the Teleport Scroll shortcut on the ring opens the destination list directly (Task 1) - no inventory.
+        if (Profile.TeleportViaShortcut)
+        {
+            if (!_controls.Has(GameAction.TeleportScroll))
+            {
+                Retry(frame, "The Teleport Scroll shortcut on the ring");
+                return;
+            }
+
+            if (!_controls.Press(GameAction.TeleportScroll))
+            {
+                _waitUntil = Environment.TickCount64 + 250;
+                _detail = "input blocked - waiting for the game to be in front";
+                return;
+            }
+
+            Log?.Invoke(LogLevel.Info, _controls.IsDryRun ? "Dry run - would tap the Teleport Scroll shortcut." : "Tapped the Teleport Scroll shortcut.");
+            Advance(PilotPhase.FindDestination, _settings.Sequence.InventoryOpenMs);
+            return;
+        }
+
         var scrollRoi = _settings.Regions.Scroll.ToPixels(frame.Width, frame.Height);
         var probe = _analyzer.FindIcon(frame, "teleportscroll", scrollRoi, ScrollThreshold);
 
@@ -2049,9 +2552,11 @@ public sealed partial class AutomationPilot
         string template = _analyzer.Library.TryGet(dungeon.FlashlightTemplate, out _) ? dungeon.FlashlightTemplate : "flashlight";
         // Auto LOD: the user's flashlightLOD crop already faces SOUTH - used as is for the south turn
         // (it was turned 180 degrees by mistake, and the pilot lined up facing north).
-        bool lodSouthCrop = IsLod && _faceSouth && _analyzer.Library.TryGet(_settings.Lod.FlashlightTemplate, out _);
+        // The phone has its own minimap, so its own crop (PhoneLodSouthTemplate).
+        string lodSouth = Profile == PlatformProfile.Phone ? PhoneLodSouthTemplate : _settings.Lod.FlashlightTemplate;
+        bool lodSouthCrop = IsLod && _faceSouth && _analyzer.Library.TryGet(lodSouth, out _);
         if (lodSouthCrop)
-            template = _settings.Lod.FlashlightTemplate;
+            template = lodSouth;
         if (_turnWest && !_westDone && _analyzer.Library.TryGet(template + "west", out _))
             template += "west";
         if (_faceSouth && !lodSouthCrop && _analyzer.Library.TryGet(template + "south", out _))
@@ -2563,12 +3068,14 @@ public sealed partial class AutomationPilot
                 return;
             }
 
-            Log?.Invoke(LogLevel.Info, $"Zoomed out (Ctrl + {dungeon.ZoomOutNotches} wheel notches down).");
+            Log?.Invoke(LogLevel.Info, Profile == PlatformProfile.Phone
+                ? $"Zoomed out ({Math.Max(1, dungeon.ZoomOutNotches / 5)} pinch(es))."
+                : $"Zoomed out (Ctrl + {dungeon.ZoomOutNotches} wheel notches down).");
         }
 
         if (IsLod)
         {
-            BeginFaceSouth();
+            BeginFaceSouth(arrival: true);
             return;
         }
 
@@ -2627,7 +3134,7 @@ public sealed partial class AutomationPilot
     private bool HoldBeforeAutohunt =>
         _settings.Dungeon.HoldBeforeAutohunt
         && !string.IsNullOrWhiteSpace(_settings.Dungeon.SkillKey)
-        && _settings.Dungeon.HoldSkillMs > 0;
+        && HoldSkillMs > 0;
 
     private string StageName(int index)
         => index < _settings.Dungeon.Stages.Count ? _settings.Dungeon.Stages[index] : _settings.Dungeon.FinalBoss;
@@ -3905,8 +4412,14 @@ public sealed partial class AutomationPilot
         _manualPresses = 0;
         _manualHit = false;
         _holdUntil = null;
+        // Phone: the presses as the attack mode makes them (Tap: no held press, PhoneSettings.AttackTapEveryMs apart).
+        string presses = Profile != PlatformProfile.Phone
+            ? $"'{dungeon.SkillKey}' held {dungeon.HoldSkillMs} ms, then {SkillText(dungeon.SkillKey)} x{dungeon.ManualAttacks} ({dungeon.ManualAttackIntervalMs} ms apart)"
+            : HoldSkillMs > 0
+                ? $"'{dungeon.SkillKey}' held {HoldSkillMs} ms, then tapped x{dungeon.ManualAttacks} ({ManualAttackIntervalMs} ms apart; attack mode Hold)"
+                : $"'{dungeon.SkillKey}' tapped x{dungeon.ManualAttacks} ({ManualAttackIntervalMs} ms apart; attack mode {_settings.Phone.AttackMode})";
         Log?.Invoke(LogLevel.Success,
-            $"Attacking '{dungeon.FinalBoss}' by hand ({why}): '{dungeon.SkillKey}' held {dungeon.HoldSkillMs} ms, then {SkillText(dungeon.SkillKey)} x{dungeon.ManualAttacks} ({dungeon.ManualAttackIntervalMs} ms apart); the autohunt goes on after a new '{dungeon.AttackConfirmText}'.");
+            $"Attacking '{dungeon.FinalBoss}' by hand ({why}): {presses}; the autohunt goes on after a new '{dungeon.AttackConfirmText}'.");
         _waitUntil = Environment.TickCount64 + 200;
     }
 
@@ -3917,7 +4430,7 @@ public sealed partial class AutomationPilot
     private const int CtrlSkillGapMs = KeyboardMouseControls.CtrlSkillGapMs;
 
     /// <summary>A skill press for the log: '1', or '1' + Ctrl+1 with CtrlSkill.</summary>
-    private string SkillText(string key) => _settings.Dungeon.CtrlSkill ? $"'{key}' + Ctrl+{key}" : $"'{key}'";
+    private string SkillText(string key) => CtrlSkillOn ? $"'{key}' + Ctrl+{key}" : $"'{key}'";
 
     /// <summary>
     /// Starts a held skill press: the key goes down now and stays down until <c>HoldSkillMs</c> is
@@ -3963,7 +4476,7 @@ public sealed partial class AutomationPilot
 
         ReleaseHeldSkill();
         _holdUntil = null;
-        if (dungeon.CtrlSkill)
+        if (CtrlSkillOn)
         {
             Thread.Sleep(CtrlSkillGapMs);
             _controls.SkillCtrlTap(dungeon.SkillKey);
@@ -3991,7 +4504,7 @@ public sealed partial class AutomationPilot
         var dungeon = _settings.Dungeon;
         long now = Environment.TickCount64;
         int taps = string.IsNullOrWhiteSpace(dungeon.SkillKey) ? 0 : dungeon.ManualAttacks;
-        bool hold = taps > 0 && dungeon.HoldSkillMs > 0;
+        bool hold = taps > 0 && HoldSkillMs > 0;
         int wanted = taps + (hold ? 1 : 0);
         const int maxRounds = MaxManualRounds;
 
@@ -4005,7 +4518,7 @@ public sealed partial class AutomationPilot
             _manualPresses = 1;
             _lastManualPressAt = Environment.TickCount64;
             _detail = $"attacking by hand: '{dungeon.SkillKey}' held {dungeon.HoldSkillMs} ms (1/{wanted})";
-            _waitUntil = _lastManualPressAt + dungeon.ManualAttackIntervalMs;
+            _waitUntil = _lastManualPressAt + ManualAttackIntervalMs;
             return;
         }
 
@@ -4038,9 +4551,9 @@ public sealed partial class AutomationPilot
         {
             // At least ManualAttackIntervalMs between two presses (user: 300 ms or more), measured
             // from the press itself - the log OCR above takes a varying part of each tick.
-            if (_manualPresses > 0 && now - _lastManualPressAt < dungeon.ManualAttackIntervalMs)
+            if (_manualPresses > 0 && now - _lastManualPressAt < ManualAttackIntervalMs)
             {
-                _waitUntil = _lastManualPressAt + dungeon.ManualAttackIntervalMs;
+                _waitUntil = _lastManualPressAt + ManualAttackIntervalMs;
                 return;
             }
 
@@ -4063,7 +4576,7 @@ public sealed partial class AutomationPilot
             _manualPresses++;
             _lastManualPressAt = Environment.TickCount64;
             _detail = $"attacking by hand: '{dungeon.SkillKey}' {_manualPresses}/{wanted}" + (_manualRounds > 0 ? $" (round {_manualRounds + 1}/{maxRounds})" : "");
-            _waitUntil = _lastManualPressAt + dungeon.ManualAttackIntervalMs;
+            _waitUntil = _lastManualPressAt + ManualAttackIntervalMs;
             return;
         }
 
@@ -5174,7 +5687,9 @@ public sealed partial class AutomationPilot
     /// </summary>
     private async Task<string?> ReadMinimapTitleAsync(Mat frame)
     {
-        var lines = await _analyzer.ReadMinimapLinesAsync(frame);
+        var lines = (await _analyzer.ReadMinimapLinesAsync(frame))
+            .Select(l => Profile == PlatformProfile.Phone ? WarText.PhoneTitleLine(l) : l)
+            .ToList();
         return lines.FirstOrDefault(l => ZoneMatches(l, Destination))
                ?? lines.FirstOrDefault(l => IsWar
                    ? WarText.IsZoneTitleLine(l)
@@ -5187,6 +5702,15 @@ public sealed partial class AutomationPilot
     /// </summary>
     private bool OutOfKeys(bool labyrinth, string why)
     {
+        // Phone (M4 ruling, until M5): Laby and Auto War are not ported - no mode switch, no Labyrinth teleport, no
+        // Regular War; stop in town and say so.
+        if (Profile == PlatformProfile.Phone)
+        {
+            Log?.Invoke(LogLevel.Warning, $"{why}. {(labyrinth ? "Laby and Auto War come later on the phone" : PhoneOutOfKeysText)}");
+            Stop(labyrinth ? "out of Temple of Fiends Keys" : "out of Den of Rebirth entries");
+            return false;
+        }
+
         if (labyrinth)
             _labyOut = true;
         else
@@ -5330,7 +5854,10 @@ public sealed partial class AutomationPilot
         // came up directly); the server list showing again starts over.
         bool servers = lines.Any(l => l.Text == "servers");
         bool loginForm = lines.Any(l => l.Text is "accountname" or "rememberme");
-        var gold = _analyzer.FindGoldButtons(frame);
+        // Phone: no login frame exists yet, so no guessed positions (gold buttons, the "Remember me" - BACK gap) - only
+        // buttons whose label reads (review #10).
+        bool guessButtons = Profile != PlatformProfile.Phone;
+        var gold = guessButtons ? _analyzer.FindGoldButtons(frame) : [];
         if (servers && _reconnectStep > 1)
             _reconnectStep = 0;
 
@@ -5340,6 +5867,27 @@ public sealed partial class AutomationPilot
         var startGame = StartGameButton();
         bool charScreen = lines.Any(l => l.Text is "characterselect" or "characterinfo" or "newcharacter"
                                               or "deletecharacter" or "selectworld");
+
+        // Phone: while "Login OK" reads, its dialog covers the character screen - START GAME reads through it, but a tap
+        // there does nothing (MuMu 2560x1440, 2026-10-29 22:33: the OK tap 2 s after LOG IN did not take, then 8 START
+        // GAME taps went nowhere). OK again, at most every 3 s, until the message is gone; never START GAME behind it.
+        if (Profile == PlatformProfile.Phone
+            && lines.Any(l => l.Text.Contains("loginok", StringComparison.Ordinal) || l.Text.Contains("login0k", StringComparison.Ordinal)))
+        {
+            startGame = null;
+            if (_reconnectStep > 3)
+            {
+                if (now - _lastOkRetryAt < 3000)
+                {
+                    _detail = "waiting for the 'Login OK' dialog to close";
+                    _waitUntil = Environment.TickCount64 + delay;
+                    return;
+                }
+
+                _reconnectStep = 3;
+            }
+        }
+
         if (_reconnectStep >= 4 && startGame == null && charScreen)
         {
             // "Login OK" still up: click its OK again - only a read "OK", never a guessed button here.
@@ -5432,6 +5980,9 @@ public sealed partial class AutomationPilot
             if (loginForm && gold.Count > 0)
                 return gold.OrderBy(b => Math.Abs(b.CenterX - frame.Width / 2) + Math.Abs(b.CenterY - frame.Height / 2)).First();
 
+            if (!guessButtons)
+                return null;
+
             var remember = lines.FirstOrDefault(l => l.Text == "rememberme");
             var back = lines.FirstOrDefault(l => l.Text == "back");
             if (remember.Text == null || back.Text == null || back.Bounds.Y <= remember.Bounds.Y)
@@ -5466,6 +6017,8 @@ public sealed partial class AutomationPilot
 
             _reconnectClicks++;
             _reconnectStep = pick + 1;
+            if (label == "OK" && Profile == PlatformProfile.Phone)
+                _lastOkRetryAt = Environment.TickCount64;
             if (label == "START GAME")
             {
                 _startGameClicked = true;
@@ -5571,8 +6124,19 @@ public sealed partial class AutomationPilot
         _waitUntil = Environment.TickCount64 + _settings.Sequence.RetryDelayMs;
     }
 
-    private void Fail(Mat? frame, string reason)
+    /// <param name="restart">False: stop for good even with Restart on error (a restart would hit the same wall).</param>
+    private void Fail(Mat? frame, string reason, bool restart = true)
     {
+        // Phone dry run: nothing was tapped, so a later step that needs a tap's result (the list a dry teleport never
+        // opened) cannot succeed - end the dry run there instead of failing and burning the restarts (MuMu, 2026-10-29).
+        if (Profile == PlatformProfile.Phone && _controls.IsDryRun)
+        {
+            Log?.Invoke(LogLevel.Info, $"Dry run stops here: {_phase} needs the real tap ({reason})");
+            ReleaseSweepKey();
+            Stop("dry run ended");
+            return;
+        }
+
         Log?.Invoke(LogLevel.Error, reason);
 
         if (frame != null)
@@ -5587,7 +6151,7 @@ public sealed partial class AutomationPilot
         // Start over from the top instead of stopping (user), a limited number of times.
         long now = Environment.TickCount64;
         _restartTimes.RemoveAll(t => now - t > 30 * 60 * 1000);
-        if (_settings.Sequence.RestartOnError && _restartTimes.Count < _settings.Sequence.MaxRestarts)
+        if (restart && _settings.Sequence.RestartOnError && _restartTimes.Count < _settings.Sequence.MaxRestarts)
         {
             _restartTimes.Add(now);
             Log?.Invoke(LogLevel.Warning,
@@ -5598,7 +6162,7 @@ public sealed partial class AutomationPilot
             return;
         }
 
-        if (_settings.Sequence.RestartOnError)
+        if (restart && _settings.Sequence.RestartOnError)
             Log?.Invoke(LogLevel.Error, $"{_settings.Sequence.MaxRestarts} restarts in 30 minutes - stopping.");
 
         IsRunning = false;

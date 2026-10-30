@@ -11,8 +11,7 @@ namespace WuxAuto.Core.Tests;
 /// combat log whose lines change after every click. Checks the input order the user relies on:
 /// stages 1-4 press J and then click round the centre until a new "Attack succeeded" line shows.
 /// </summary>
-[Collection("AppPaths")] // AppPaths is static state
-public class StageBossSelectTests
+public class StageBossSelectTests : AppPathsScope
 {
     private const int Width = 1440;
     private const int Height = 900;

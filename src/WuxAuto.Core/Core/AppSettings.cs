@@ -82,16 +82,26 @@ public sealed class AppSettings
     /// <summary>Auto War: the tribe war in Bohai Outpost (<see cref="RunMode.AutoWar"/>).</summary>
     public WarSettings War { get; set; } = new();
 
+    /// <summary>The phone app's touch timings (unused on the desktop).</summary>
+    public PhoneSettings Phone { get; set; } = new();
+
     /// <summary>Auto Blossom: the Jaso Practitioner route in Blossom Garden (<see cref="RunMode.AutoBlossom"/>).</summary>
     public BlossomSettings Blossom { get; set; } = new();
 
     public UiSettings Ui { get; set; } = new();
 
-    /// <summary>Puts every screen position (regions and click fractions) back to the built-in defaults.</summary>
-    public void ResetPositions()
+    /// <summary>
+    /// Puts every screen position (regions and click fractions) back to the built-in defaults. With
+    /// <see cref="PlatformProfile.Phone"/> the phone regions (<see cref="WuxAuto.Phone.PhoneRegions"/>) for a
+    /// <paramref name="width"/> x <paramref name="height"/> screen go over them (0 = size not known yet); any other
+    /// profile, or none, leaves the desktop defaults.
+    /// </summary>
+    public void ResetPositions(PlatformProfile? profile = null, int width = 0, int height = 0)
     {
         Regions = new RegionSettings();
         (Dungeon ??= new DungeonSettings()).ResetPositions();
+        if (profile == PlatformProfile.Phone)
+            WuxAuto.Phone.PhoneRegions.Apply(this, width, height);
     }
 }
 

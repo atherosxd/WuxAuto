@@ -6,8 +6,7 @@ namespace WuxAuto.Core.Tests;
 /// settings.json migrations: a saved value wins over the code default, so a default that must reach
 /// existing installs needs a step in SettingsStore.Migrate.
 /// </summary>
-[Collection("AppPaths")] // AppPaths is static state
-public class SettingsMigrationTests
+public class SettingsMigrationTests : AppPathsScope
 {
     [Fact]
     public void V22_OldLodDefaults_WalkOnAndTheNewSpot()

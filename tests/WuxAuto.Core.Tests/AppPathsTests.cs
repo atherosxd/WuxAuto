@@ -2,9 +2,45 @@ using WuxAuto.Core;
 
 namespace WuxAuto.Core.Tests;
 
-[Collection("AppPaths")] // static state: never in parallel
+[Collection("AppPaths")]
 public class AppPathsTests : AppPathsScope
 {
+    [Fact]
+    public async Task IsolatedFlows_ConfigureOnlyTheirOwnFolders_TheTestFlowIsIsolatedFromTheConstructor()
+    {
+        // The test classes run in parallel on this: AppPathsScope isolates in its constructor, and xUnit runs the
+        // constructor and the test in one async flow - a Configure here must not reach the process-wide folders.
+        Assert.True(AppPaths.IsThisFlowIsolated);
+        string before = AppPaths.Root;
+        string mine = TempRoot();
+        string global = RootSeenByAFlowThatNeverIsolated();
+        AppPaths.Configure(mine);
+        Assert.Equal(mine, AppPaths.Root);
+
+        string otherFlow = RootSeenByAFlowThatNeverIsolated();
+        Assert.Equal(global, otherFlow);                    // the process-wide folders did not move
+        Assert.NotEqual(mine, otherFlow);
+
+        var (a, b) = (TempRoot(), TempRoot());
+        var seen = await Task.WhenAll(
+            Task.Run(async () => { AppPaths.IsolateThisFlow(); AppPaths.Configure(a); await Task.Delay(50); return AppPaths.Root; }),
+            Task.Run(async () => { AppPaths.IsolateThisFlow(); AppPaths.Configure(b); await Task.Delay(50); return AppPaths.Root; }));
+        Assert.Equal([a, b], seen);
+        Assert.Equal(mine, AppPaths.Root);                  // child flows' Configure stays in them
+        Assert.NotEqual(before, mine);
+    }
+
+    /// <summary>The process-wide folders, as the apps see them: a thread started without this test's ExecutionContext.</summary>
+    private static string RootSeenByAFlowThatNeverIsolated()
+    {
+        string? root = null;
+        var thread = new Thread(() => root = AppPaths.Root);
+        using (ExecutionContext.SuppressFlow())
+            thread.Start();                                 // Start captures the context, so it goes under the suppression
+        thread.Join();
+        return root!;
+    }
+
     [Fact]
     public void Configure_MovesEveryFolderAndSettingsStoreFollows()
     {
@@ -19,6 +55,37 @@ public class AppPathsTests : AppPathsScope
         SettingsStore.Save(settings);
         Assert.True(File.Exists(Path.Combine(root, "settings.json")));
         Assert.Equal(RunMode.AutoLod, SettingsStore.Load().Sequence.Mode);
+    }
+
+    [Fact]
+    public void TrySave_ReportsAFailedWrite_AndSucceedsOtherwise()
+    {
+        string root = TempRoot();
+        AppPaths.Configure(root, Path.Combine(root, "assets"));
+        var settings = new AppSettings();
+
+        Assert.True(SettingsStore.TrySave(settings, out string? none));
+        Assert.Null(none);
+
+        // settings.json taken by a folder: the write fails, and says why instead of being swallowed.
+        File.Delete(AppPaths.SettingsFile);
+        Directory.CreateDirectory(AppPaths.SettingsFile);
+        Assert.False(SettingsStore.TrySave(settings, out string? error));
+        Assert.False(string.IsNullOrEmpty(error));
+    }
+
+    [Fact]
+    public async Task TrySave_FromManyThreads_LeavesAReadableFile()
+    {
+        string root = TempRoot();
+        AppPaths.Configure(root, Path.Combine(root, "assets"));
+        var settings = new AppSettings();
+
+        var saves = Enumerable.Range(0, 16).Select(_ => Task.Run(() => SettingsStore.TrySave(settings, out string? _))).ToArray();
+        bool[] results = await Task.WhenAll(saves);
+
+        Assert.All(results, Assert.True);
+        Assert.Equal(settings.Sequence.Mode, SettingsStore.Load(persistMigration: false).Sequence.Mode);
     }
 
     [Fact]
