@@ -5795,6 +5795,27 @@ public sealed partial class AutomationPilot
         var startGame = StartGameButton();
         bool charScreen = lines.Any(l => l.Text is "characterselect" or "characterinfo" or "newcharacter"
                                               or "deletecharacter" or "selectworld");
+
+        // Phone: while "Login OK" reads, its dialog covers the character screen - START GAME reads through it, but a tap
+        // there does nothing (MuMu 2560x1440, 2026-10-29 22:33: the OK tap 2 s after LOG IN did not take, then 8 START
+        // GAME taps went nowhere). OK again, at most every 3 s, until the message is gone; never START GAME behind it.
+        if (Profile == PlatformProfile.Phone
+            && lines.Any(l => l.Text.Contains("loginok", StringComparison.Ordinal) || l.Text.Contains("login0k", StringComparison.Ordinal)))
+        {
+            startGame = null;
+            if (_reconnectStep > 3)
+            {
+                if (now - _lastOkRetryAt < 3000)
+                {
+                    _detail = "waiting for the 'Login OK' dialog to close";
+                    _waitUntil = Environment.TickCount64 + delay;
+                    return;
+                }
+
+                _reconnectStep = 3;
+            }
+        }
+
         if (_reconnectStep >= 4 && startGame == null && charScreen)
         {
             // "Login OK" still up: click its OK again - only a read "OK", never a guessed button here.
@@ -5924,6 +5945,8 @@ public sealed partial class AutomationPilot
 
             _reconnectClicks++;
             _reconnectStep = pick + 1;
+            if (label == "OK" && Profile == PlatformProfile.Phone)
+                _lastOkRetryAt = Environment.TickCount64;
             if (label == "START GAME")
             {
                 _startGameClicked = true;

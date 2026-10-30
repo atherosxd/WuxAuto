@@ -37,6 +37,37 @@ public class ScreenAnalyzerTests
     public void ToLines_NoWords_NoLines() => Assert.Empty(ScreenAnalyzer.ToLines([]));
 
     [Fact]
+    public async Task ReadScaleRow_MinusIsTheDash_NotTheAutoButtonsBorder()
+    {
+        // MuMu 2560x1440 at scale 1.11: "Interface scale [AUTO] - 1.11 +" - the AUTO button's right border (a tall thin
+        // line) lies between the button and the dash, and was tapped as the '-' (the scale went to AUTO).
+        var ocr = new FakeOcrEngine
+        {
+            Scene = () =>
+            [
+                .. FakeOcrEngine.Words("Interface scale", 100, 200, 180, 24),
+                FakeOcrEngine.Line("AUTO", 330, 200, 60, 24),
+                FakeOcrEngine.Line("1.11", 520, 200, 50, 24),
+            ],
+        };
+        using var analyzer = new ScreenAnalyzer(new AppSettings(), ocr);
+        using var frame = new Mat(400, 900, DepthType.Cv8U, 4);
+        frame.SetTo(new MCvScalar(30, 30, 30, 255));
+        var white = new MCvScalar(255, 255, 255, 255);
+        CvInvoke.Rectangle(frame, new Rectangle(404, 196, 3, 32), white, -1);   // the AUTO button's right border
+        CvInvoke.Rectangle(frame, new Rectangle(450, 211, 24, 2), white, -1);   // the dash, 2 px tall as at 2560x1440
+        CvInvoke.Rectangle(frame, new Rectangle(620, 200, 24, 24), white, -1);  // the plus
+
+        var row = await analyzer.ReadScaleRowAsync(frame);
+
+        Assert.NotNull(row);
+        Assert.Equal(1.11, row.Value);
+        Assert.False(row.Auto);
+        Assert.Equal((450, 211), (row.Minus?.X, row.Minus?.Y));          // the dash, not the border at 404
+        Assert.Equal((620, 200), (row.Plus?.X, row.Plus?.Y));
+    }
+
+    [Fact]
     public void BestLeftmost_NoHits_Null() => Assert.Null(ScreenAnalyzer.BestLeftmost([]));
 
     [Fact]

@@ -977,6 +977,51 @@ public class PhoneLodFlowTests : AppPathsScope
     }
 
     [Fact]
+    public async Task PhoneReconnect_LoginOkStillUp_OkAgain_NeverStartGameBehindIt()
+    {
+        // MuMu 2560x1440, 2026-10-29 22:33: the OK tap 2 s after LOG IN did not take; START GAME reads through the "Login OK"
+        // dialog, and 8 taps on it went nowhere. Now: OK again (>= 3 s apart) while the message reads, START GAME only after.
+        using var phone = new PhonePilot(TempRoot());
+        phone.Settings.Sequence.ReconnectStepDelayMs = 50;
+        var ok = new PixelRect(1240, 780, 40, 24);
+        var startGame = new PixelRect(1480, 640, 200, 30);
+        int okTaps() => phone.Touch.Taps.Count(t => t == Centre(ok));
+        phone.Ocr.Scene = () =>
+        {
+            var words = new List<OcrWord>
+            {
+                FakeOcrEngine.Line("CHARACTER INFO", 100, 60, 260, 24),
+                FakeOcrEngine.Line("CHARACTER SELECT", 1500, 60, 300, 24),
+                FakeOcrEngine.Line("START GAME", startGame.X, startGame.Y, startGame.Width, startGame.Height),
+            };
+            if (okTaps() < 2)                                   // the first OK tap does not take
+            {
+                words.Add(FakeOcrEngine.Line("WARNING", 1210, 600, 100, 24));
+                words.Add(FakeOcrEngine.Line("Login OK", 1200, 690, 120, 24));
+                words.Add(FakeOcrEngine.Line("OK", ok.X, ok.Y, ok.Width, ok.Height));
+            }
+            return words;
+        };
+        using var frame = PhoneFrames.Grey();
+        phone.Pilot.Start(PilotPhase.LodRun);
+        await phone.Pilot.TickWithoutTitleAsync(frame, CancellationToken.None);
+        Assert.Equal(PilotPhase.Reconnect, phone.Pilot.Phase);
+
+        long until = Environment.TickCount64 + 8000;
+        while (Environment.TickCount64 < until && !phone.Touch.Taps.Contains(Centre(startGame)))
+        {
+            await phone.Pilot.TickAsync(frame, CancellationToken.None);
+            await Task.Delay(20);
+        }
+
+        var taps = phone.Touch.Taps;
+        Assert.Equal(2, okTaps());
+        int startAt = taps.IndexOf(Centre(startGame));
+        Assert.True(startAt > taps.LastIndexOf(Centre(ok)), string.Join(" | ", phone.Touch.Calls));  // START GAME only after the second OK
+        Assert.Contains(phone.Lines, l => l.StartsWith("Reconnect: clicked START GAME", StringComparison.Ordinal));
+    }
+
+    [Fact]
     public async Task PhoneReconnect_ReadAndClickOnly_NoGuessedButtons()
     {
         // Review #10: no phone login frame yet - the desktop's guessed LOG IN (gold button, the "Remember me" - BACK

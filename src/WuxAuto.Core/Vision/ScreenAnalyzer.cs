@@ -256,8 +256,8 @@ public sealed class ScreenAnalyzer : IDisposable
     /// <summary>
     /// The phone's "Interface scale" row (MuMu 2560x1440, 2026-10-30: "Interface scale [AUTO] -  (AUTO)  +", one + read
     /// "1.01"): the value is the word that reads as a number with two decimals (<see cref="ParseScale"/>), else the
-    /// rightmost "AUTO" word (the value; the left one is the AUTO button) = 1.00. The - and + are the nearest bright blobs
-    /// either side of the value; the - is a flat dash, so a blob counts when it is tall or wide enough.
+    /// rightmost "AUTO" word (the value; the left one is the AUTO button) = 1.00. The + is the nearest bright blob right of
+    /// the value; the - the nearest flat dash left of it (its own search, see below).
     /// </summary>
     public async Task<ScaleRow?> ReadScaleRowAsync(Mat frame, string label = "Interface scale")
     {
@@ -291,7 +291,14 @@ public sealed class ScreenAnalyzer : IDisposable
             .Where(b => b.Width <= h * 1.6 && b.Height <= h * 1.6 && (b.Height >= h * 0.5 || b.Width >= h * 0.5))
             .Where(b => b.CenterY >= box.Y - h / 2 && b.CenterY <= box.Bottom + h / 2)
             .ToList();
-        PixelRect? minus = blobs.Where(b => b.Right <= box.X - 2).OrderByDescending(b => b.CenterX).Select(b => (PixelRect?)b).FirstOrDefault();
+        // The - is a flat dash, ~2 px tall at 2560x1440 - under the blob search's usual 3 px floor, so the AUTO button's right
+        // border (a tall thin line left of it) was the nearest blob and was tapped as the '-' (MuMu, 2026-10-30: "tapped '-'
+        // at 1293,395" set the scale to AUTO). Its own search: flat blobs of 1 px and up left of the value, none tall.
+        var dashBand = PixelRect.FromBounds(Math.Max(band.X, box.X - h * 6), box.CenterY - h / 2, box.X - 2, box.CenterY + h / 2 + 1)
+            .Clamp(frame.Width, frame.Height);
+        PixelRect? minus = dashBand.Width < 4 || dashBand.Height < 2 ? null : FindBrightBlobs(frame, dashBand, minHeight: 1)
+            .Where(b => b.Width >= Math.Max(6, h * 0.4) && b.Width >= b.Height * 3 && b.Height <= Math.Max(4, h / 4))
+            .OrderByDescending(b => b.CenterX).Select(b => (PixelRect?)b).FirstOrDefault();
         PixelRect? plus = blobs.Where(b => b.X >= box.Right + 2).OrderBy(b => b.CenterX).Select(b => (PixelRect?)b).FirstOrDefault();
         return new ScaleRow(labelBox, value, auto, minus, plus, valueWord.Text);
     }
@@ -853,7 +860,8 @@ public sealed class ScreenAnalyzer : IDisposable
         return hsv;
     }
 
-    public IReadOnlyList<PixelRect> FindBrightBlobs(Mat frame, PixelRect roi)
+    /// <param name="minHeight">The lowest blob kept, in pixels (3 by default; the phone's interface-scale dash is 2 px tall).</param>
+    public IReadOnlyList<PixelRect> FindBrightBlobs(Mat frame, PixelRect roi, int minHeight = 3)
     {
         var blobs = new List<PixelRect>();
         roi = roi.Clamp(frame.Width, frame.Height);
@@ -880,7 +888,7 @@ public sealed class ScreenAnalyzer : IDisposable
 
         foreach (var (box, _) in CvHelpers.ExternalContours(mask))
         {
-            if (box.Width < 2 || box.Height < 3 || box.Width * box.Height < 6)
+            if (box.Width < 2 || box.Height < minHeight || box.Width * box.Height < 6)
                 continue;
 
             // The panel border/scrollbar runs the full height of the strip - not a glyph.
