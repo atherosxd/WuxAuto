@@ -270,7 +270,14 @@ a menu that had just opened). Minimap title: ML Kit read "[" as "(" after a MuMu
 "(" / "{" counts as "[" (`WarText.PhoneTitleLine`). Reconnect: the pilot alone went server list → Online → CONNECT →
 LOG IN → OK → START GAME → town in 15 s; while "Login OK" reads it taps OK again (≥ 3 s apart), never START GAME behind
 the dialog. Two earlier "reconnect loops" were a hung game (gestures delivered, MuMu restarted itself after). Debug
-builds take START / STOP adb probes. Not yet tried at 1920x1080.
+builds take START / STOP adb probes. **1920x1080 (same day, verified live):** reconnect + visit work there too. Two
+fixes: (1) the scale moves the shortcut rings - at 1.12 the left ring's Teleport Scroll slot sat off the screen edge and
+the shortcut check (before the visit) opened the ring editor for it; on the phone, **in town the visit now runs before
+the shortcut check** (`TickShortcutCheckAsync`, once per Start, not in a dry run; the check then starts over with
+`ShortcutCheck.Begin`), and a scale change invalidates the `ShortcutMap`; (2) the font row's right chevron lay past
+the 30-text-height band (label 14 px high, band end 1199, chevron at 1200) - the phone passes
+`ReadSettingRowAsync(..., chevronReach: 10)` (10 heights past the value); the desktop keeps the 30-height band (its
+same 1920x1080 cut-off is still open, §4.1). A menu button that is not found ends the visit after 10 tries.
 Review round (same day): HUNT is **not** a required shortcut (used where found, never added) and the town autohunt-off
 check does not run on the phone (its log read is unverified there); a hit whose colour cannot be told (dark middle) is
 neither HUNT nor AUTO BUFF; the buff check counts a miss only when timers that read did not go up **and** the first row

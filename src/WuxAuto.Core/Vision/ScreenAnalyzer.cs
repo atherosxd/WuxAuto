@@ -190,8 +190,11 @@ public sealed class ScreenAnalyzer : IDisposable
     /// side of it. <paramref name="numeric"/> rows take the first word with a digit and fill
     /// <see cref="SettingRow.Percent"/>; text rows take the first OCR line right of the label.
     /// A dimmed chevron (the end of the option list) is still found (TAB target at Default, 1920x1080).
+    /// <paramref name="chevronReach"/> &gt; 0: the chevrons are also looked for up to that many text heights right of the
+    /// value, past the 30-height band (phone, MuMu 1920x1080: label 14 px high, band end x 1199, the font row's right
+    /// chevron at ~1205 - "could not be set to 120%"; the desktop has the same cut-off, still open there).
     /// </summary>
-    public async Task<SettingRow?> ReadSettingRowAsync(Mat frame, string label, bool numeric = true)
+    public async Task<SettingRow?> ReadSettingRowAsync(Mat frame, string label, bool numeric = true, int chevronReach = 0)
     {
         var full = new PixelRect(0, 0, frame.Width, frame.Height);
         var (hit, _, _) = await FindTextAsync(frame, full, label);
@@ -218,7 +221,10 @@ public sealed class ScreenAnalyzer : IDisposable
 
         // Chevrons: the nearest bright glyph left and right of the value, on the same row.
         var box = value.Value.Bounds;
-        var blobs = FindBrightBlobs(frame, band)
+        var chevronBand = chevronReach > 0 && box.Right + h * chevronReach > band.Right
+            ? PixelRect.FromBounds(band.X, band.Y, box.Right + h * chevronReach, band.Bottom).Clamp(frame.Width, frame.Height)
+            : band;
+        var blobs = FindBrightBlobs(frame, chevronBand)
             .Where(b => b.Height >= h * 0.6 && b.Height <= h * 2.5 && b.Width <= h * 1.6)
             .ToList();
         PixelRect? left = blobs.Where(b => b.Right <= box.X - 2).OrderByDescending(b => b.CenterX).Select(b => (PixelRect?)b).FirstOrDefault();

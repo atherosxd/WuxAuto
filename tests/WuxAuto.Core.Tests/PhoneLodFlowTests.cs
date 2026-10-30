@@ -757,51 +757,58 @@ public class PhoneLodFlowTests : AppPathsScope
         Assert.Contains(phone.Lines, l => l.StartsWith("The Run skill is on (ring", StringComparison.Ordinal));
     }
 
-    [Theory]
-    [InlineData(0)]
-    [InlineData(900)]   // the capture lags: MuMu 2560x1440 stopped at 1.09, then overshot to 1.11
-    public async Task PhoneSettingsVisit_MenuTile_ScaleTo110_FontKept_NoSave_ClosedByX(int lagMs)
+    /// <summary>
+    /// A fake phone Settings window for the visit tests (MuMu 2560x1440, 2026-10-30): the menu button toggles the menu
+    /// with its "Settings (ESC)" tile (label cut to "ettings (ES"), the tile opens SETTINGS on VISUAL with
+    /// "Interface scale [AUTO] - (AUTO) +" (each + = 0.01), font 120 %, TAB target Default and SAVE; the X closes it.
+    /// The screen shows a tap <c>lagMs</c> later (the capture lags). The zone title reads "[Piercing City]" throughout.
+    /// </summary>
+    private sealed class FakeSettingsWindow
     {
-        // User, 2026-10-30: font 120 % and interface scale 1.10 "using the + sign". MuMu 2560x1440: the menu button, its
-        // "Settings (ESC)" tile (label cut to "ettings (ES"), VISUAL, "Interface scale [AUTO] - (AUTO) +" (one + = 1.01).
-        using var phone = new PhonePilot(TempRoot());
-        Assert.Equal(120, phone.Settings.Phone.FontSizePercent);
-        Assert.Equal(1.10, phone.Settings.Phone.InterfaceScale);
-        phone.Shortcuts.Menu = Menu;
-        var tile = new PixelRect(1460, 100, 120, 20);
-        var plus = new PixelRect(1170, 200, 24, 24);
-        var minus = new PixelRect(1010, 210, 24, 5);
-        var close = new PixelRect(1160, 62, 24, 24);
-        var save = new PixelRect(760, 800, 100, 30);
-        using var frame = PhoneFrames.Grey();
-        foreach (var r in new[] { plus, minus, close })
-            CvInvoke.Rectangle(frame, new Rectangle(r.X, r.Y, r.Width, r.Height), new MCvScalar(255, 255, 255, 255), -1);
+        public static readonly PixelRect Tile = new(1460, 100, 120, 20);
+        public static readonly PixelRect Plus = new(1170, 200, 24, 24);
+        public static readonly PixelRect Minus = new(1010, 210, 24, 5);
+        public static readonly PixelRect Close = new(1160, 62, 24, 24);
+        public static readonly PixelRect Save = new(760, 800, 100, 30);
 
-        int Taps(PixelRect r) => phone.Touch.Taps.Count(t => t == Centre(r));
-        // The screen shows a tap lagMs later (the menu, the window, each + step).
-        var tapsAt = new List<(Point At, long Ticks)>();
-        phone.Touch.OnTap = (x, y) =>
+        private readonly PhonePilot _phone;
+        private readonly int _lagMs;
+        private readonly List<(Point At, long Ticks)> _tapsAt = [];
+
+        public FakeSettingsWindow(PhonePilot phone, Mat frame, int lagMs = 0)
         {
-            lock (tapsAt)
-                tapsAt.Add((new Point(x, y), Environment.TickCount64));
-        };
-        int Shown(PixelRect r)
-        {
-            long now = Environment.TickCount64;
-            lock (tapsAt)
-                return tapsAt.Count(t => t.At == Centre(r) && now - t.Ticks >= lagMs);
+            _phone = phone;
+            _lagMs = lagMs;
+            phone.Shortcuts.Menu = Menu;
+            foreach (var r in new[] { Plus, Minus, Close })
+                CvInvoke.Rectangle(frame, new Rectangle(r.X, r.Y, r.Width, r.Height), new MCvScalar(255, 255, 255, 255), -1);
+            phone.Touch.OnTap = (x, y) =>
+            {
+                lock (_tapsAt)
+                    _tapsAt.Add((new Point(x, y), Environment.TickCount64));
+            };
+            phone.Ocr.Scene = Scene;
         }
 
-        phone.Ocr.Scene = () =>
+        public int Taps(PixelRect r) => _phone.Touch.Taps.Count(t => t == Centre(r));
+
+        private int Shown(PixelRect r)
+        {
+            long now = Environment.TickCount64;
+            lock (_tapsAt)
+                return _tapsAt.Count(t => t.At == Centre(r) && now - t.Ticks >= _lagMs);
+        }
+
+        private IReadOnlyList<OcrWord> Scene()
         {
             var words = new List<OcrWord> { FakeOcrEngine.Line("[Piercing City]", 1600, 70, 280, 16) };
-            bool settingsOpen = Shown(tile) > 0 && Taps(close) == 0;
-            if (Shown(Menu) % 2 == 1 && Taps(tile) == 0)            // the menu button toggles the menu
-                words.Add(FakeOcrEngine.Line("ettings (ES", tile.X, tile.Y, tile.Width, tile.Height));
+            bool settingsOpen = Shown(Tile) > 0 && Taps(Close) == 0;
+            if (Shown(Menu) % 2 == 1 && Taps(Tile) == 0)            // the menu button toggles the menu
+                words.Add(FakeOcrEngine.Line("ettings (ES", Tile.X, Tile.Y, Tile.Width, Tile.Height));
             if (!settingsOpen)
                 return words;
 
-            int steps = Shown(plus);
+            int steps = Shown(Plus);
             words.Add(FakeOcrEngine.Line("SETTINGS", 870, 60, 180, 28));
             words.Add(FakeOcrEngine.Line("VISUAL", 880, 110, 100, 24));
             words.AddRange(FakeOcrEngine.Words("Interface scale", 720, 200, 180, 24));
@@ -811,22 +818,67 @@ public class PhoneLodFlowTests : AppPathsScope
             words.Add(FakeOcrEngine.Line("120%", 1060, 260, 70, 24));
             words.AddRange(FakeOcrEngine.Words("TAB target", 720, 320, 130, 24));
             words.Add(FakeOcrEngine.Line("Default", 1040, 320, 100, 24));
-            words.Add(FakeOcrEngine.Line("SAVE", save.X, save.Y, save.Width, save.Height));
+            words.Add(FakeOcrEngine.Line("SAVE", Save.X, Save.Y, Save.Width, Save.Height));
             return words;
-        };
+        }
+
+        /// <summary>The visit's taps: menu, tile, ten + (AUTO -> 1.10), no -, no SAVE, the X.</summary>
+        public void AssertTheVisit()
+        {
+            Assert.Equal(1, Taps(Menu));
+            Assert.Equal(1, Taps(Tile));
+            Assert.Equal(10, Taps(Plus));                       // AUTO (1.00) -> 1.10
+            Assert.Equal(0, Taps(Minus));
+            // No SAVE on the phone: the game keeps the change, and the chat box's text field lies over SAVE.
+            Assert.DoesNotContain(_phone.Touch.Taps, t => t.X >= Save.X - 20 && t.X <= Save.Right + 20 && t.Y >= Save.Y - 20 && t.Y <= Save.Bottom + 40);
+            Assert.Equal(1, Taps(Close));
+            Assert.Contains(_phone.Lines, l => l == "Set interface scale 1.10 (the phone game keeps it without SAVE).");
+            Assert.Contains(_phone.Lines, l => l == "Font size is already 120%.");
+        }
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(900)]   // the capture lags: MuMu 2560x1440 stopped at 1.09, then overshot to 1.11
+    public async Task PhoneSettingsVisit_MenuTile_ScaleTo110_FontKept_NoSave_ClosedByX(int lagMs)
+    {
+        // User, 2026-10-30: font 120 % and interface scale 1.10 "using the + sign".
+        using var phone = new PhonePilot(TempRoot());
+        Assert.Equal(120, phone.Settings.Phone.FontSizePercent);
+        Assert.Equal(1.10, phone.Settings.Phone.InterfaceScale);
+        using var frame = PhoneFrames.Grey();
+        var window = new FakeSettingsWindow(phone, frame, lagMs);
 
         await phone.RunAsync(() => frame, PilotPhase.RunSkill, () => phone.Pilot.Phase == PilotPhase.OpenInventory, timeoutMs: 60000);
 
         Assert.Equal(PilotPhase.OpenInventory, phone.Pilot.Phase);
-        Assert.Equal(1, Taps(Menu));
-        Assert.Equal(1, Taps(tile));
-        Assert.Equal(10, Taps(plus));                       // AUTO (1.00) -> 1.10
-        Assert.Equal(0, Taps(minus));
-        // No SAVE on the phone: the game keeps the change, and the chat box's text field lies over SAVE.
-        Assert.DoesNotContain(phone.Touch.Taps, t => t.X >= save.X - 20 && t.X <= save.Right + 20 && t.Y >= save.Y - 20 && t.Y <= save.Bottom + 40);
-        Assert.Equal(1, Taps(close));
-        Assert.Contains(phone.Lines, l => l == "Set interface scale 1.10 (the phone game keeps it without SAVE).");
-        Assert.Contains(phone.Lines, l => l == "Font size is already 120%.");
+        window.AssertTheVisit();
+    }
+
+    [Fact]
+    public async Task PhoneStart_InTown_SettingsVisitBeforeTheShortcutCheck_Once()
+    {
+        // MuMu 1920x1080, 2026-10-30: at interface scale 1.12 the left ring's Teleport Scroll slot sat off the screen edge,
+        // and the shortcut check (which ran before the visit) took it for missing and opened the ring editor. In town the
+        // visit now runs first; the check then starts over on a fresh map, and the town visit is not repeated.
+        using var phone = new PhonePilot(TempRoot());
+        phone.Shortcuts.Icons[GameAction.TeleportScroll] = TeleportScroll;
+        phone.Shortcuts.Icons[GameAction.Loot] = PickUp;
+        phone.Shortcuts.Icons[GameAction.Buff] = AutoBuff;
+        using var frame = PhoneFrames.Grey();
+        var window = new FakeSettingsWindow(phone, frame);
+
+        await phone.RunAsync(() => frame, PilotPhase.Focus, () => phone.Pilot.Phase == PilotPhase.OpenInventory, timeoutMs: 60000);
+
+        Assert.Equal(PilotPhase.OpenInventory, phone.Pilot.Phase);
+        window.AssertTheVisit();
+        Assert.Contains(phone.Lines, l => l == "In town: setting the interface scale and font first - they move the shortcut rings.");
+        var phases = phone.Phases;
+        int visit = phases.IndexOf(PilotPhase.FontSize);
+        Assert.True(visit > phases.IndexOf(PilotPhase.ShortcutCheck), string.Join(" > ", phases));
+        Assert.Equal(PilotPhase.ShortcutCheck, phases[visit + 1]);                     // back to the check after the visit
+        Assert.True(phases.IndexOf(PilotPhase.CheckZone) > visit, string.Join(" > ", phases));
+        Assert.Single(phases, p => p == PilotPhase.FontSize);                           // not again in town
     }
 
     [Theory]

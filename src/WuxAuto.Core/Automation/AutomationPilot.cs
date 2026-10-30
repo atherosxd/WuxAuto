@@ -271,8 +271,11 @@ public sealed partial class AutomationPilot
     private readonly IShortcutSource? _shortcuts;
     private readonly ShortcutCheck _shortcutCheck;
     private bool _shortcutsChecked;          // phone: the shortcut check ran this Start
+    private bool _settingsBeforeShortcutsTried; // phone: the in-town Settings visit before the shortcut check was considered this Start
+    private bool _restartShortcutCheck;      // phone: that visit ran - the shortcut check starts over on a fresh map
+    private int _menuPressFails;             // phone: Settings visit taps on the menu button that found no button
     private int _scaleTaps;                  // phone: - / + taps on the interface scale this visit
-    private bool _scaleChanged;              // phone: the interface scale was changed this visit (SAVE needed)
+    private bool _scaleChanged;              // phone: the interface scale was changed this visit
     private string? _settingTapValue;        // phone: the Settings value shown when the last - / + / chevron was tapped
     private long _settingTapAt;              // phone: when that tap went out
     private long _phoneMenuTapAt;            // phone: when the menu button or its Settings tile was last tapped
@@ -382,6 +385,8 @@ public sealed partial class AutomationPilot
         _runCount = 0;
         _fontChecked = false;
         _shortcutsChecked = false;
+        _settingsBeforeShortcutsTried = false;
+        _restartShortcutCheck = false;
         _noTitleSince = 0;
         _regularWarOffChecked = false;
         _runKeyPressed = false;
@@ -1049,6 +1054,29 @@ public sealed partial class AutomationPilot
     /// </summary>
     private async Task TickShortcutCheckAsync(Mat frame)
     {
+        // In town, the Settings visit first (MuMu 1920x1080, 2026-10-30): the interface scale moves the shortcut rings -
+        // at 1.12 the left ring's Teleport Scroll slot sat off the screen edge, the check took it for missing and opened
+        // the ring editor. Once per Start; elsewhere (a re-login mid-dungeon) the visit waits for the town as before. Not in a
+        // dry run: nothing is tapped, so no window opens and the visit would only wait.
+        if (!_settingsBeforeShortcutsTried && SettingsVisitDue && !_controls.IsDryRun)
+        {
+            _settingsBeforeShortcutsTried = true;
+            if (TownIn(await ReadMinimapTitleAsync(frame)) != null)
+            {
+                Log?.Invoke(LogLevel.Info, "In town: setting the interface scale and font first - they move the shortcut rings.");
+                _restartShortcutCheck = true;
+                BeginSettingsVisit(_settings.Sequence.TabTargetDefault ? "Default" : null, skipFont: false, PilotPhase.ShortcutCheck);
+                return;
+            }
+        }
+
+        // Back from that visit: the ring may have moved - look again from scratch.
+        if (_restartShortcutCheck)
+        {
+            _restartShortcutCheck = false;
+            _shortcutCheck.Begin(IsLod);
+        }
+
         var step = await _shortcutCheck.TickAsync(frame);
         switch (step.Outcome)
         {
@@ -1244,19 +1272,30 @@ public sealed partial class AutomationPilot
             return PilotPhase.RegularWarOff;
         }
 
-        bool tabDefault = _settings.Sequence.TabTargetDefault;
-        // Phone (user, 2026-10-30): its own font size (exact) and the interface scale; the desktop's range is not used.
-        bool settingsCheck = Profile == PlatformProfile.Phone
-            ? _settings.Phone.FontSizePercent > 0 || _settings.Phone.InterfaceScale > 0 || tabDefault
-            : _settings.Sequence.FontSizePercent > 0 || tabDefault;
-        if (_fontChecked || !settingsCheck)
+        if (!SettingsVisitDue)
             return PilotPhase.OpenInventory;
 
-        // The Laby/LOD visit, from the same read of the TAB target box as the decision above.
-        _visitTabTarget = tabDefault ? "Default" : null;
+        // The Laby/LOD visit (TAB target to Default with the check box).
+        _visitTabTarget = _settings.Sequence.TabTargetDefault ? "Default" : null;
         _visitSkipFont = false;
         _visitNext = PilotPhase.OpenInventory;
         return PilotPhase.FontSize;
+    }
+
+    /// <summary>
+    /// The town Settings visit has not run this Start and has something to do. Phone (user, 2026-10-30): its own font
+    /// size (exact) and the interface scale; the desktop's font range is not used there.
+    /// </summary>
+    private bool SettingsVisitDue
+    {
+        get
+        {
+            bool tabDefault = _settings.Sequence.TabTargetDefault;
+            bool settingsCheck = Profile == PlatformProfile.Phone
+                ? _settings.Phone.FontSizePercent > 0 || _settings.Phone.InterfaceScale > 0 || tabDefault
+                : _settings.Sequence.FontSizePercent > 0 || tabDefault;
+            return !_fontChecked && settingsCheck;
+        }
     }
 
     /// <summary>
@@ -1730,10 +1769,21 @@ public sealed partial class AutomationPilot
                 _settingsChanges.Clear();
                 if (!_controls.Press(GameAction.ToggleSettings))
                 {
+                    // Phone: no menu button on screen (yet) - a few tries, then the visit is skipped this Start.
+                    if (phone && ++_menuPressFails >= 10)
+                    {
+                        _menuPressFails = 0;
+                        _fontChecked = true;
+                        Log?.Invoke(LogLevel.Warning, "The menu button was not found - leaving the font size and interface scale alone.");
+                        Advance(_visitNext, 300);
+                        return;
+                    }
+
                     _waitUntil = now + 300;
                     return;
                 }
 
+                _menuPressFails = 0;
                 _phoneMenuTapAt = now;
                 _fontStep = VisualStep;
                 _waitUntil = now + 900;
@@ -1884,7 +1934,7 @@ public sealed partial class AutomationPilot
 
             case FontStep: // read the row, step towards the target
             {
-                var row = await _analyzer.ReadSettingRowAsync(frame, "Font size");
+                var row = await _analyzer.ReadSettingRowAsync(frame, "Font size", chevronReach: phone ? 10 : 0);
 
                 // Still on the SOUND tab: the VISUAL click right after the window opened did not
                 // take (run 32). Click it again, up to 3 times.
@@ -1958,7 +2008,7 @@ public sealed partial class AutomationPilot
                     return;
                 }
 
-                var row = await _analyzer.ReadSettingRowAsync(frame, "TAB target", numeric: false);
+                var row = await _analyzer.ReadSettingRowAsync(frame, "TAB target", numeric: false, chevronReach: phone ? 10 : 0);
                 if (row?.ValueText is not string value)
                 {
                     if (_tabScrolls < 3)
@@ -2069,6 +2119,9 @@ public sealed partial class AutomationPilot
                         return;
                     }
 
+                    // The interface scale moved every shortcut: drop the cached positions.
+                    if (_scaleChanged)
+                        _shortcuts?.Invalidate();
                     _fontStep = OpenStep;
                     Advance(_visitNext, 300);
                     return;

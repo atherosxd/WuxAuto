@@ -37,6 +37,36 @@ public class ScreenAnalyzerTests
     public void ToLines_NoWords_NoLines() => Assert.Empty(ScreenAnalyzer.ToLines([]));
 
     [Fact]
+    public async Task ReadSettingRow_ChevronPastThe30HeightBand_FoundOnlyWithChevronReach()
+    {
+        // MuMu 1920x1080: "Font size" 14 px high ends at x 779, so the 30-height band ends at 1199; the right chevron sits
+        // at 1200 (left one at 999, value "110%" at 1083) - the phone's visit could not raise the font.
+        var ocr = new FakeOcrEngine
+        {
+            Scene = () =>
+            [
+                .. FakeOcrEngine.Words("Font size", 702, 348, 77, 14),
+                FakeOcrEngine.Line("110%", 1083, 348, 43, 14),
+            ],
+        };
+        using var analyzer = new ScreenAnalyzer(new AppSettings(), ocr);
+        using var frame = new Mat(1080, 1920, DepthType.Cv8U, 4);
+        frame.SetTo(new MCvScalar(30, 30, 30, 255));
+        var white = new MCvScalar(255, 255, 255, 255);
+        CvInvoke.Rectangle(frame, new Rectangle(999, 342, 12, 22), white, -1);   // '<'
+        CvInvoke.Rectangle(frame, new Rectangle(1200, 342, 12, 22), white, -1);  // '>'
+
+        var desktop = await analyzer.ReadSettingRowAsync(frame, "Font size");
+        var phone = await analyzer.ReadSettingRowAsync(frame, "Font size", chevronReach: 10);
+
+        Assert.Equal(110, desktop?.Percent);
+        Assert.Equal(999, desktop?.Left?.X);
+        Assert.Null(desktop?.Right);                                              // the desktop's band, unchanged
+        Assert.Equal(999, phone?.Left?.X);
+        Assert.Equal(1200, phone?.Right?.X);
+    }
+
+    [Fact]
     public async Task ReadScaleRow_MinusIsTheDash_NotTheAutoButtonsBorder()
     {
         // MuMu 2560x1440 at scale 1.11: "Interface scale [AUTO] - 1.11 +" - the AUTO button's right border (a tall thin
