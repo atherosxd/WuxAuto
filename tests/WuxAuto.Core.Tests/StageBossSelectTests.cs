@@ -101,10 +101,16 @@ public class StageBossSelectTests : AppPathsScope
         Assert.Contains(run.Lines, l => l.Contains("still changing", StringComparison.Ordinal));
     }
 
+    /// <summary>
+    /// The default (user, 2026-10-31: "revert the old auto hunt > click center upon boss spawn" - with the
+    /// held press first the autohunt sometimes started and did not attack): J after the spawn wait, then
+    /// Tab, then the centre clicks; no held key.
+    /// </summary>
     [Fact]
-    public async Task Stage1_HoldSwitchOff_PressesJAfterTheSpawnWait_ThenCentreClicks()
+    public async Task Stage1_Default_PressesJAfterTheSpawnWait_ThenCentreClicks()
     {
-        var (settings, input, ocr) = Harness(holdBeforeAutohunt: false);
+        var (settings, input, ocr) = Harness();
+        Assert.False(settings.Dungeon.HoldBeforeAutohunt);
 
         var run = await RunStageAsync(settings, input, ocr);
 
@@ -118,6 +124,38 @@ public class StageBossSelectTests : AppPathsScope
         Assert.Equal(1, input.Clicks);
     }
 
+    /// <summary>The default flow: the autohunt alone does not attack an unselected boss, so a missed centre click is followed by the ring round it.</summary>
+    [Fact]
+    public async Task Stage1_Default_CentreMisses_ClicksOnUntilAHit()
+    {
+        var (settings, input, _) = Harness();
+        var ocr = new FakeOcrEngine();
+        ocr.Scene = () =>
+        {
+            // clicks 1 and 2 miss, click 3 hits
+            int hits = Math.Max(0, input.Clicks - 2);
+            return
+            [
+                FakeOcrEngine.Line("[The Labyrinth (Adept)]", 1000, 10),
+                FakeOcrEngine.Line(settings.Dungeon.Stages[0], 700, 300),
+                .. Enumerable.Range(0, 8).Select(i =>
+                    FakeOcrEngine.Line($"Attack succeeded!Normal damage(+{100 + i + hits}) Attribu", 20, 200 + i * 18, 300)),
+            ];
+        };
+
+        var run = await RunStageAsync(settings, input, ocr);
+
+        Assert.Equal(PilotPhase.WatchBoss, run.Phase);
+        Assert.Equal(3, input.Clicks);
+        Assert.Equal(1, input.Calls.Count(c => c == "KeyTap J"));
+        Assert.DoesNotContain(input.Calls, c => c.StartsWith("KeyDown", StringComparison.Ordinal));
+        Assert.Contains(run.Lines, l => l.Contains("boss selected on click 3", StringComparison.Ordinal));
+        int j = Index(input, "KeyTap J");
+        int firstClick = input.Calls.FindIndex(c => c.StartsWith("Click ", StringComparison.Ordinal));
+        Assert.True(j < firstClick, "J must come before the clicks:\n" + string.Join("\n", input.Calls));
+        Assert.Equal($"Click {Width / 2},{Height / 2}", input.Calls[firstClick]);
+    }
+
     private static int Index(FakeGameInput input, string call)
     {
         int at = input.Calls.IndexOf(call);
@@ -125,10 +163,11 @@ public class StageBossSelectTests : AppPathsScope
         return at;
     }
 
-    private static (AppSettings Settings, FakeGameInput Input, FakeOcrEngine Ocr) Harness(bool holdBeforeAutohunt)
+    private static (AppSettings Settings, FakeGameInput Input, FakeOcrEngine Ocr) Harness(bool? holdBeforeAutohunt = null)
     {
         var settings = new AppSettings();
-        settings.Dungeon.HoldBeforeAutohunt = holdBeforeAutohunt;
+        if (holdBeforeAutohunt is bool hold)
+            settings.Dungeon.HoldBeforeAutohunt = hold;
         settings.Dungeon.BossSpawnWaitMs = 0;
         settings.Dungeon.TabSettleMs = 0;
         settings.Dungeon.BossSelectDelayMs = 0;

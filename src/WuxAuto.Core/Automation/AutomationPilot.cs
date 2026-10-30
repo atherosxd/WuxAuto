@@ -4064,9 +4064,10 @@ public sealed partial class AutomationPilot
             elapsed = 0;
         }
 
-        // Stages 1-4: autohunt on after the spawn wait, as it always was (user: that works) - unless
-        // a held skill press comes first (HoldBeforeAutohunt, user 2026-10-27: "on other stages,
-        // before going autohunt, try to skill hold first"); J then follows the hold in SelectBoss.
+        // Stages 1-4: autohunt on after the spawn wait, then Tab and the centre clicks in SelectBoss (user:
+        // that works; back as the default 2026-10-31) - unless the held skill press is switched on
+        // (HoldBeforeAutohunt, off by default; user 2026-10-27: "on other stages, before going autohunt,
+        // try to skill hold first"); J then follows the hold in SelectBoss.
         // Stage 5 only after the boss is attacked by hand (SelectBoss -> EngageAutohunt) - it
         // engaged there before the character was at the boss (user).
         if (!IsFinalBoss && !_autohuntPressed && !HoldBeforeAutohunt && elapsed >= spawnWait)
@@ -4236,10 +4237,11 @@ public sealed partial class AutomationPilot
             return;
         }
 
-        // Stages 1-4 (user, 2026-10-27: "on other stages, before going autohunt, try to skill hold
-        // first"): the boss in view -> one held skill press (the character runs at the boss and
-        // attacks it), then J, then the centre clicks as before. The hold's last hits still print
-        // for a moment after J, so the log baseline for the clicks is taken once the log goes quiet.
+        // Stages 1-4 with HoldBeforeAutohunt on (off by default since 2026-10-31; user, 2026-10-27: "on
+        // other stages, before going autohunt, try to skill hold first"): the boss in view -> one held
+        // skill press (the character runs at the boss and attacks it), then J, then the centre clicks.
+        // The hold's last hits still print for a moment after J, so the log baseline for the clicks is
+        // taken once the log goes quiet.
         if (!IsFinalBoss && !_autohuntPressed && HoldBeforeAutohunt)
         {
             if (!_heldBeforeHunt)

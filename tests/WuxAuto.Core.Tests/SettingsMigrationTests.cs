@@ -69,7 +69,7 @@ public class SettingsMigrationTests : AppPathsScope
             war["ShuraHoldMs"] = 1500;     // proves the file was read, not replaced by defaults
         });
 
-        Assert.Equal(25, loaded.Version);
+        Assert.True(loaded.Version >= 23, $"version {loaded.Version}");
         Assert.Equal(1500, loaded.War.ShuraHoldMs);
         Assert.Equal(FiveBuffs, loaded.War.BuffIcons);
         Assert.Equal(["warbuff2", "warweapon1", "warweapon2"], loaded.War.WeaponBuffIcons);
@@ -160,7 +160,7 @@ public class SettingsMigrationTests : AppPathsScope
             b["WaypointWaitMs"] = 2500;   // proves the file was read, not replaced by defaults
         });
 
-        Assert.Equal(25, loaded.Version);
+        Assert.True(loaded.Version >= 25, $"version {loaded.Version}");
         Assert.Equal(2500, loaded.Blossom.WaypointWaitMs);
         Assert.Equal(BlossomSettings.DefaultWaypoints(), loaded.Blossom.Waypoints);
         Assert.Equal(83, loaded.Blossom.Waypoints.Count);
@@ -199,6 +199,32 @@ public class SettingsMigrationTests : AppPathsScope
         Assert.Equal(BlossomSettings.First17Waypoints(), loaded.Blossom.Waypoints);
         Assert.Equal(6, loaded.Blossom.LoopFrom);
         Assert.False(loaded.Blossom.BackAndForth);
+    }
+
+    // ---------------------------------------------------------------- v26: stages 1-4 back to J + centre clicks
+
+    [Fact]
+    public void V26_HoldBeforeAutohunt_TurnsOff()
+    {
+        // User, 2026-10-31: "revert the old auto hunt > click center upon boss spawn". Every saved file has true.
+        Assert.False(new AppSettings().Dungeon.HoldBeforeAutohunt);
+        var loaded = LoadAfterEdit(version: 25, "Dungeon", d =>
+        {
+            d["HoldBeforeAutohunt"] = true;
+            d["HoldSkillMs"] = 2500;      // proves the file was read, not replaced by defaults
+        });
+
+        Assert.True(loaded.Version >= 26, $"version {loaded.Version}");
+        Assert.Equal(2500, loaded.Dungeon.HoldSkillMs);
+        Assert.False(loaded.Dungeon.HoldBeforeAutohunt);
+    }
+
+    [Fact]
+    public void AfterV26_TheHoldTurnedBackOnByTheUser_Stays()
+    {
+        var loaded = LoadAfterEdit(version: 26, "Dungeon", d => d["HoldBeforeAutohunt"] = true);
+
+        Assert.True(loaded.Dungeon.HoldBeforeAutohunt);
     }
 
     [Fact]
