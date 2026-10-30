@@ -164,13 +164,17 @@ public sealed class PhoneLoopGate
 
     /// <summary>
     /// Phases in which the game's own screen may hide the minimap and the pilot must still tick: before and between
-    /// runs, the loading screen and the zone-name wait after it, the login screens, and the town windows the pilot
-    /// opens itself (☰ panel, Settings, the teleport list).
+    /// runs, the loading screen and the zone-name wait after it, the login screens, the town windows the pilot opens
+    /// itself (☰ panel, Settings, the teleport list) and the Labyrinth's map window, which covers the whole phone screen
+    /// (live MuMu 2026-10-30: paging the list for the stage 4 boss took ~10 s, the pick froze with the map open and the
+    /// stage gate closed - the game sends whoever has not gone through home). The pilot's own zone guard reads the map
+    /// window's title there.
     /// </summary>
     public static bool RunsWithoutTitle(PilotPhase phase) => phase is
         PilotPhase.Idle or PilotPhase.Focus or PilotPhase.WaitForLoad or PilotPhase.ZoomOut or PilotPhase.Reconnect
         or PilotPhase.FontSize or PilotPhase.OpenInventory or PilotPhase.FindScroll or PilotPhase.FindChevron
-        or PilotPhase.FindDestination or PilotPhase.RegularWarOn or PilotPhase.Done or PilotPhase.Failed;
+        or PilotPhase.FindDestination or PilotPhase.RegularWarOn or PilotPhase.Done or PilotPhase.Failed
+        or PilotPhase.ClickMap or PilotPhase.ReadStage or PilotPhase.AdvanceStage;
 
     /// <summary>True when one of the OCR lines of the minimap crop is a zone title ("[Piercing City]").</summary>
     public static bool TitleReads(IEnumerable<string> lines) => lines.Select(WarText.PhoneTitleLine).Any(WarText.IsZoneTitleLine);

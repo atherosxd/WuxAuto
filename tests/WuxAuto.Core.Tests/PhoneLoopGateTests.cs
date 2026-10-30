@@ -133,6 +133,9 @@ public class PhoneLoopGateTests
     [InlineData(PilotPhase.Reconnect)]
     [InlineData(PilotPhase.FontSize)]
     [InlineData(PilotPhase.FindDestination)]
+    [InlineData(PilotPhase.ClickMap)]     // the Labyrinth's map window covers the whole phone screen
+    [InlineData(PilotPhase.ReadStage)]
+    [InlineData(PilotPhase.AdvanceStage)]
     public void PhasesWithoutTheMinimap_TickWithoutTheTitle(PilotPhase phase)
     {
         var gate = new PhoneLoopGate();

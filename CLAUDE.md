@@ -316,7 +316,19 @@ opens 30 s after arriving (alone or a full party), each stays open 60 s, the bos
 opens 5 s after a kill, and after the last boss there are 40 s to loot. Phone: no banner read 3 s past the gate's timer
 (`_gateDueAt`) -> the map anyway, after checking the old boss is gone. Seen live the same night (MuMu, stages 1-3): the
 held press on the hotbar icon, J, the centre-click selection and the gate banner at every stage; a Bohai war dialog
-cancelled mid-fight. Not yet seen live: the resume read, the long north turn, the gate timer.
+cancelled mid-fight. (5) **Stall watchdog on stages 1-4 (phone):** the stage 3 boss stood at 13077973 HP for 26+ min,
+the character inside it and the autohunt on, only "Defense failed" lines; HUNT off, a 3 s held press, HUNT on and a
+centre tap (by adb) had it hitting at once. The stage 5 watchdog (`AutohuntStallMs` 15 s without a new attack line)
+now runs on the phone's stages 1-4 too: J off, then the stage's hold + J + centre clicks again (`stall_s<N>`). (6)
+**The map hides the minimap:** the phone's map window is full screen. Paging for the stage 4 boss (Ragesoul Heathen,
+page 2; the ^ / v above "Spawns" are the page arrows) took ~10 s, the zone guard held ReadStage after 6 s and the loop
+gate waited for the minimap title - the map stayed open, and 74 s after the gate opened the game put the character in
+Piercing City (the gate closes after 60 s; whoever has not gone through is sent home - run 1's kick fits too). Now
+ClickMap / ReadStage / AdvanceStage tick without the title (`PhoneLoopGate.RunsWithoutTitle`), and in them the zone
+guard reads the map window's own title ("The Labyrinth (Adept)", `PhoneMapTitle`) when the minimap's does not read -
+only a destination or home-town name counts. **Keys:** the pilot's restarts teleport in again on their own: that night
+it entered the Labyrinth at 13:58, 14:07, 14:09 and 14:39 (a 16:14 click did not take); stop it before a restart when
+the key budget is spent. Not yet seen live: the resume read, the long north turn, the gate timer, (5) and (6).
 
 ---
 

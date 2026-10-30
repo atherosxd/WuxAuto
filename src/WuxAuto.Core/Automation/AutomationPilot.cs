@@ -716,7 +716,7 @@ public sealed partial class AutomationPilot
             if (now >= _nextZoneCheckAt)
             {
                 _nextZoneCheckAt = now + 2000;
-                string? title = await ReadMinimapTitleAsync(frame);
+                string? title = await ReadZoneTitleAsync(frame);
                 string zone = title == null ? string.Empty : TextMatcher.Normalize(title);
                 string? townSeen = TownIn(title);
 
@@ -5107,7 +5107,10 @@ public sealed partial class AutomationPilot
             // Stage 5 watchdog (user, 2026-10-27: "goes directly below the boss with autohunt on but
             // doesn't target or attack it"): the boss up, the autohunt on, but no new attack line for
             // AutohuntStallMs -> J off, Tab / select / attack by hand again (ArriveAtFinalBoss).
-            if (IsFinalBoss && _autohuntPressed && !string.IsNullOrWhiteSpace(dungeon.AttackConfirmText))
+            // The phone's stages 1-4 too (live MuMu 2026-10-30: the stage 3 boss stood at 13077973 HP for 26+ min with the
+            // character inside it and the autohunt on, only "Defense failed" lines; HUNT off, a 3 s held press, HUNT on
+            // and a centre tap had it hitting again at once) -> J off, the stage's hold + J + centre clicks again.
+            if ((IsFinalBoss || Profile == PlatformProfile.Phone) && _autohuntPressed && !string.IsNullOrWhiteSpace(dungeon.AttackConfirmText))
             {
                 var msgRoi = _settings.Regions.AttackMessage.ToPixels(frame.Width, frame.Height);
                 string log = await ReadAttackLogAsync(frame, msgRoi, dungeon.AttackConfirmText);
@@ -5126,6 +5129,18 @@ public sealed partial class AutomationPilot
                     }
 
                     _autohuntPressed = false;
+                    if (!IsFinalBoss)
+                    {
+                        Log?.Invoke(LogLevel.Warning,
+                            $"Autohunt on but no new '{dungeon.AttackConfirmText}' for {(now - _watchAttackAt) / 1000:0}s with {seen.Text} up - " +
+                            $"'{dungeon.AutohuntKey}' off, the held press, '{dungeon.AutohuntKey}' and the select clicks again (stage {_stageIndex + 1}).");
+                        if (_stuckShots++ < 3)
+                            DebugArtifacts.SaveFrame(frame, _overlays, $"stall_s{_stageIndex + 1}");
+                        ResetBossState();
+                        Advance(PilotPhase.SelectBoss, 300);
+                        return;
+                    }
+
                     Log?.Invoke(LogLevel.Warning,
                         $"Autohunt on but no new '{dungeon.AttackConfirmText}' for {(now - _watchAttackAt) / 1000:0}s with {seen.Text} up - '{dungeon.AutohuntKey}' off, selecting and attacking by hand again.");
                     if (_stuckShots++ < 3)
@@ -5909,6 +5924,29 @@ public sealed partial class AutomationPilot
             or PilotPhase.AimGate or PilotPhase.RunToTarget
             or PilotPhase.LodRun or PilotPhase.LodAttack or PilotPhase.LodApproach or PilotPhase.LodRespawn or PilotPhase.LodLoot
             || IsBlossomPhase(phase);
+
+    /// <summary>
+    /// Where the phone's map window shows the map's name ("The Labyrinth (Adept)", top left of the window; MuMu
+    /// 1920x1080: 310-660 x 85-115).
+    /// </summary>
+    private static readonly NormRect PhoneMapTitle = new(0.10, 0.05, 0.35, 0.08);
+
+    /// <summary>
+    /// The zone guard's title: the minimap's. On the phone in the map phases the map window covers the whole screen,
+    /// minimap included, and its own title counts instead - only when it names the destination or a home town, so a
+    /// misread never reads as another zone.
+    /// </summary>
+    private async Task<string?> ReadZoneTitleAsync(Mat frame)
+    {
+        string? title = await ReadMinimapTitleAsync(frame);
+        if (title != null || Profile != PlatformProfile.Phone
+            || _phase is not (PilotPhase.ClickMap or PilotPhase.ReadStage or PilotPhase.AdvanceStage))
+            return title;
+
+        var roi = PhoneMapTitle.ToPixels(frame.Width, frame.Height);
+        var lines = (await _analyzer.Ocr.RecognizeAsync(frame, roi, 2.0)).Select(w => w.LineText.Trim()).Distinct().ToList();
+        return lines.FirstOrDefault(l => ZoneMatches(l, Destination)) ?? lines.FirstOrDefault(l => TownIn(l) != null);
+    }
 
     /// <summary>
     /// The zone name at the top of the minimap panel, e.g. "[The Labyrinth (Adep", "[Piercing City)",

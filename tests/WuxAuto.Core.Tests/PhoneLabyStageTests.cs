@@ -83,6 +83,34 @@ public class PhoneLabyStageTests : AppPathsScope
         Assert.Equal(1, phone.Shortcuts.AutohuntPresses);
     }
 
+    [Fact]
+    public async Task Stage1_AutohuntOnButNoHits_HuntOff_HoldAndHuntAgain()
+    {
+        // Live 2026-10-30: the stage 3 boss stood at 13077973 HP for 26+ min, the character inside it and the autohunt on,
+        // only "Defense failed" lines. HUNT off, a held press, HUNT on and a centre tap had it hitting again at once.
+        using var phone = Harness(attackIcon: true);
+        phone.Settings.Dungeon.AutohuntStallMs = 3000;
+
+        Assert.Equal(PilotPhase.WatchBoss, await RunToWatchBossAsync(phone, stageIndex: 0, stop: false));
+        int downs = phone.Touch.Calls.Count(c => c.StartsWith("Down ", StringComparison.Ordinal));
+        long deadline = Environment.TickCount64 + 20000;
+        using var frame = PhoneFrames.Grey();
+        // The combat log only moves with a tap: in WatchBoss nothing is tapped, so no new attack line comes.
+        while (!(phone.Lines.Any(l => l.Contains("select clicks again (stage 1)", StringComparison.Ordinal)) && phone.Pilot.Phase == PilotPhase.WatchBoss)
+               && phone.Pilot.IsRunning && Environment.TickCount64 < deadline)
+        {
+            await phone.Pilot.TickAsync(frame, CancellationToken.None);
+            await Task.Delay(15);
+        }
+
+        var phase = phone.Pilot.Phase;
+        phone.Pilot.Stop("test over");
+        Assert.Contains(phone.Lines, l => l.Contains("Autohunt on but no new 'Attack succeeded'", StringComparison.Ordinal));
+        Assert.Equal(PilotPhase.WatchBoss, phase);
+        Assert.True(phone.Touch.Calls.Count(c => c.StartsWith("Down ", StringComparison.Ordinal)) > downs, "the held press again");
+        Assert.Equal(3, phone.Shortcuts.AutohuntPresses); // on, off after the stall, on again
+    }
+
     [Theory]
     [InlineData(false, 1)] // HUNT shows the yellow swords: the resume holds and turns the autohunt on
     [InlineData(true, 0)]  // HUNT shows the "+": it is on, never tapped
@@ -111,6 +139,29 @@ public class PhoneLabyStageTests : AppPathsScope
         Assert.Contains(phone.Lines, l => l.Contains("resuming at stage 1", StringComparison.Ordinal));
         Assert.Equal(huntTaps, phone.Shortcuts.AutohuntPresses);
         Assert.Equal(huntTaps, phone.Touch.Taps.Count(t => Inside(Hunt, t)));
+    }
+
+    [Theory]
+    [InlineData("The Labyrinth (Adept)", false)] // the map window's own title: no hold
+    [InlineData("Some Other Map", true)]         // not the destination: the guard holds as before
+    public async Task ReadStage_MapCoversTheMinimap_TheMapsTitleKeepsTheZoneGuardGoing(string mapTitle, bool holds)
+    {
+        // Live MuMu 2026-10-30: the full-screen phone map hides the minimap; paging for the stage 4 boss took ~10 s, the
+        // zone guard held ReadStage after 6 s, and the stage gate closed with the map still open.
+        using var phone = Harness(attackIcon: true);
+        phone.Ocr.Scene = () => [FakeOcrEngine.Line(mapTitle, 310, 85, 350, 30)]; // no minimap title, no boss name
+
+        phone.Pilot.Start(PilotPhase.ReadStage, stageIndex: 3);
+        using var frame = PhoneFrames.Grey();
+        long deadline = Environment.TickCount64 + 9000;
+        while (phone.Pilot.IsRunning && Environment.TickCount64 < deadline)
+        {
+            await phone.Pilot.TickAsync(frame, CancellationToken.None);
+            await Task.Delay(15);
+        }
+
+        phone.Pilot.Stop("test over");
+        Assert.Equal(holds, phone.Lines.Any(l => l.Contains("The minimap does not show Labyrinth - holding ReadStage", StringComparison.Ordinal)));
     }
 
     [Fact]
@@ -184,7 +235,7 @@ public class PhoneLabyStageTests : AppPathsScope
         return phone;
     }
 
-    private static async Task<PilotPhase> RunToWatchBossAsync(PhonePilot phone, int stageIndex)
+    private static async Task<PilotPhase> RunToWatchBossAsync(PhonePilot phone, int stageIndex, bool stop = true)
     {
         phone.Pilot.Start(PilotPhase.WaitBoss, stageIndex: stageIndex);
         using var frame = PhoneFrames.Grey();
@@ -196,7 +247,8 @@ public class PhoneLabyStageTests : AppPathsScope
         }
 
         var phase = phone.Pilot.Phase;
-        phone.Pilot.Stop("test over");
+        if (stop)
+            phone.Pilot.Stop("test over");
         return phase;
     }
 }
