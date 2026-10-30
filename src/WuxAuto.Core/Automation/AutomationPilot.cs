@@ -271,7 +271,11 @@ public sealed partial class AutomationPilot
     private readonly IShortcutSource? _shortcuts;
     private readonly ShortcutCheck _shortcutCheck;
     private bool _shortcutsChecked;          // phone: the shortcut check ran this Start
-    private bool _phoneSettingsSkipTold;     // phone: the Settings visit's skip was logged this Start
+    private int _scaleTaps;                  // phone: - / + taps on the interface scale this visit
+    private bool _scaleChanged;              // phone: the interface scale was changed this visit (SAVE needed)
+    private string? _settingTapValue;        // phone: the Settings value shown when the last - / + / chevron was tapped
+    private long _settingTapAt;              // phone: when that tap went out
+    private long _phoneMenuTapAt;            // phone: when the menu button or its Settings tile was last tapped
     private long _noTitleSince;              // phone: since when the loop has held the pilot for an unread zone title (0 = it ticks)
 
     /// <summary>The phone's limit for <see cref="TickWithoutTitleAsync"/>: this long without a zone title, the game in front = fail (restart).</summary>
@@ -378,7 +382,6 @@ public sealed partial class AutomationPilot
         _runCount = 0;
         _fontChecked = false;
         _shortcutsChecked = false;
-        _phoneSettingsSkipTold = false;
         _noTitleSince = 0;
         _regularWarOffChecked = false;
         _runKeyPressed = false;
@@ -1242,21 +1245,12 @@ public sealed partial class AutomationPilot
         }
 
         bool tabDefault = _settings.Sequence.TabTargetDefault;
-        bool settingsCheck = _settings.Sequence.FontSizePercent > 0 || tabDefault;
+        // Phone (user, 2026-10-30): its own font size (exact) and the interface scale; the desktop's range is not used.
+        bool settingsCheck = Profile == PlatformProfile.Phone
+            ? _settings.Phone.FontSizePercent > 0 || _settings.Phone.InterfaceScale > 0 || tabDefault
+            : _settings.Sequence.FontSizePercent > 0 || tabDefault;
         if (_fontChecked || !settingsCheck)
             return PilotPhase.OpenInventory;
-
-        // Phone: the Settings visit is not ported yet (its rows are not confirmed on the phone, Task 7 ruling) - skipped.
-        if (Profile == PlatformProfile.Phone)
-        {
-            if (!_phoneSettingsSkipTold)
-            {
-                _phoneSettingsSkipTold = true;
-                Log?.Invoke(LogLevel.Info, "Font size / TAB target: not checked on the phone (the Settings visit is desktop-only for now).");
-            }
-
-            return PilotPhase.OpenInventory;
-        }
 
         // The Laby/LOD visit, from the same read of the TAB target box as the decision above.
         _visitTabTarget = tabDefault ? "Default" : null;
@@ -1633,15 +1627,19 @@ public sealed partial class AutomationPilot
     /// -> SAVE once if anything changed -> Escape -> the visit's next phase (the teleport for
     /// Laby/LOD). Only buttons found by their own text are clicked (the window also has CHARACTER
     /// SELECT and EXIT). Anything unexpected: close the window and carry on with the run - neither
-    /// setting is worth a failure.
+    /// setting is worth a failure. Phone (2026-10-30): the menu button, then its "Settings (ESC)" tile;
+    /// "Interface scale" stepped with - / + to <see cref="PhoneSettings.InterfaceScale"/> before the font
+    /// (it resizes the window); the font set to exactly <see cref="PhoneSettings.FontSizePercent"/>; every
+    /// tap waits for the screen to show it (the capture lags); closed with the window's X.
     /// </summary>
     private async Task TickFontSizeAsync(Mat frame)
     {
-        const int OpenStep = 0, VisualStep = 1, TopStep = 2, FontStep = 3, TabStep = 4, SaveStep = 5, CloseStep = 9;
+        const int OpenStep = 0, VisualStep = 1, TopStep = 2, FontStep = 3, TabStep = 4, SaveStep = 5, ScaleStep = 6, CloseStep = 9;
         const int ListNotches = 10;   // one 10-notch scroll ran the 17-row VISUAL list end to end (1920x1080)
 
-        int low = _settings.Sequence.FontSizePercent;
-        int high = Math.Max(low, _settings.Sequence.FontSizeMaxPercent);
+        bool phone = Profile == PlatformProfile.Phone;
+        int low = phone ? _settings.Phone.FontSizePercent : _settings.Sequence.FontSizePercent;
+        int high = phone ? low : Math.Max(low, _settings.Sequence.FontSizeMaxPercent);
         var full = new PixelRect(0, 0, frame.Width, frame.Height);
         long now = Environment.TickCount64;
 
@@ -1672,7 +1670,7 @@ public sealed partial class AutomationPilot
 
         void AfterTab()
         {
-            if (_fontChanged || _tabChanged)
+            if (_fontChanged || _tabChanged || _scaleChanged)
                 _fontStep = SaveStep;
             else
                 Close();
@@ -1692,15 +1690,42 @@ public sealed partial class AutomationPilot
             return false;
         }
 
+        // Phone: a frame read right after a tap can still be from before it (the capture lags: MuMu 2560x1440 read 1.10 with
+        // 1.09 on screen and stopped one short, then overshot to 1.11 the next visit) - after a tap, wait until the value
+        // read has moved (2.5 s at most, then decide on what shows).
+        bool BeforeLastTap(string value)
+        {
+            if (!phone || _settingTapValue == null)
+                return false;
+            if (value == _settingTapValue && now - _settingTapAt < 2500)
+            {
+                _detail = $"waiting for the screen to show the last tap ({value})";
+                _waitUntil = now + 300;
+                return true;
+            }
+
+            _settingTapValue = null;
+            return false;
+        }
+
+        void NoteTap(string value)
+        {
+            _settingTapValue = value;
+            _settingTapAt = now;
+        }
+
         switch (_fontStep)
         {
             case OpenStep:
+                _settingTapValue = null;
                 _fontClicks = 0;
                 _fontTabClicks = 0;
                 _fontChanged = false;
                 _tabClicks = 0;
                 _tabScrolls = 0;
                 _tabChanged = false;
+                _scaleTaps = 0;
+                _scaleChanged = false;
                 _settingsChanges.Clear();
                 if (!_controls.Press(GameAction.ToggleSettings))
                 {
@@ -1708,13 +1733,58 @@ public sealed partial class AutomationPilot
                     return;
                 }
 
+                _phoneMenuTapAt = now;
                 _fontStep = VisualStep;
                 _waitUntil = now + 900;
                 return;
 
             case VisualStep: // Settings open? then the VISUAL tab
             {
-                if (await Find("SETTINGS") == null)
+                // Phone: ToggleSettings only taps the menu button; the Settings window is its "Settings (ESC)" tile. The frame
+                // can still be from before the last tap (the capture lags; at 5 FPS a second menu-button tap 0.9 s after the
+                // first closed the menu it had just opened, MuMu 2026-10-30): fresh frames for up to 4 s after a tap, and
+                // never the menu button while the MENU window shows.
+                var settingsLines = phone ? await PhoneSettingsLinesAsync(frame) : null;
+                if (settingsLines != null && PhoneSettingsTitle(settingsLines) == null)
+                {
+                    if (_attempts < 3 && settingsLines.FirstOrDefault(l => IsSettingsTileText(l.Text)) is { Text: not null } tile)
+                    {
+                        _attempts++;
+                        if (!Click(tile.Bounds))
+                            return;
+                        _phoneMenuTapAt = now;
+                        _detail = "tapped the menu's Settings tile";
+                        _waitUntil = now + 1200;
+                        return;
+                    }
+
+                    if (now - _phoneMenuTapAt < 4000)
+                    {
+                        _detail = "waiting for the menu / the Settings window to show";
+                        _waitUntil = now + 400;
+                        return;
+                    }
+
+                    bool menuShows = settingsLines.Any(l => TextMatcher.Normalize(l.Text) == "menu");
+                    if (++_attempts < 3)
+                    {
+                        if (menuShows)
+                            _phoneMenuTapAt = now; // open, its tile unread: look again rather than toggle it shut
+                        else
+                            _fontStep = OpenStep;
+                        _waitUntil = now + 400;
+                        return;
+                    }
+
+                    Log?.Invoke(LogLevel.Warning, "The Settings window did not open (menu button, then its Settings tile) - leaving the font size and interface scale alone.");
+                    DebugArtifacts.SaveFrame(frame, _overlays, "settings_unopened");
+                    _fontChecked = true;
+                    _fontStep = OpenStep;
+                    Advance(_visitNext, 300);
+                    return;
+                }
+
+                if (!phone && await Find("SETTINGS") == null)
                 {
                     if (++_attempts < 3)
                     {
@@ -1748,9 +1818,67 @@ public sealed partial class AutomationPilot
             case TopStep: // the list may still be scrolled down from the last visit: back to the top
                 if (!ScrollList(ListNotches))
                     return;
-                _fontStep = FontStep;
+                // Phone: the interface scale first - it resizes the window, so every row moves after it.
+                _fontStep = phone && _settings.Phone.InterfaceScale > 0 ? ScaleStep : FontStep;
                 _waitUntil = now + 700;
                 return;
+
+            case ScaleStep: // phone: "Interface scale" stepped with - / + to the wanted value, one tap per fresh frame
+            {
+                double goal = _settings.Phone.InterfaceScale;
+                var row = await _analyzer.ReadScaleRowAsync(frame);
+                if (row?.Value is not double value)
+                {
+                    if (row == null && ++_fontTabClicks < 3) // still on SOUND: VISUAL again, as for the font row
+                    {
+                        _fontStep = VisualStep;
+                        _attempts = 0;
+                        _waitUntil = now + 500;
+                        return;
+                    }
+
+                    DebugArtifacts.SaveFrame(frame, _overlays, "scale_unread");
+                    Log?.Invoke(LogLevel.Warning, "No 'Interface scale' value was read in the Settings window - leaving it alone.");
+                    if (_scaleChanged)
+                        _settingsChanges.Add("interface scale (changed, then unread)");
+                    _fontStep = FontStep;
+                    return;
+                }
+
+                string shown = row.Auto ? "AUTO (1.00)" : $"{value:0.00}";
+                if (BeforeLastTap($"scale {shown}"))
+                    return;
+                int steps = (int)Math.Round((goal - value) * 100);
+                if (steps == 0)
+                {
+                    if (_scaleChanged)
+                        _settingsChanges.Add($"interface scale {value:0.00}");
+                    else
+                        Log?.Invoke(LogLevel.Info, $"Interface scale is already {shown}.");
+                    _fontStep = FontStep;
+                    return;
+                }
+
+                PixelRect? button = steps > 0 ? row.Plus : row.Minus;
+                if (button == null || _scaleTaps >= 40)
+                {
+                    string why = button == null ? $"no '{(steps > 0 ? "+" : "-")}' button seen" : "40 taps";
+                    Log?.Invoke(LogLevel.Warning, $"Interface scale is {shown} and could not be set to {goal:0.00} ({why}) - leaving it.");
+                    if (_scaleChanged)
+                        _settingsChanges.Add($"interface scale {value:0.00}");
+                    _fontStep = FontStep;
+                    return;
+                }
+
+                if (!Click(button.Value))
+                    return;
+                NoteTap($"scale {shown}");
+                _scaleTaps++;
+                _scaleChanged = true;
+                _detail = $"interface scale {shown} -> {goal:0.00}";
+                _waitUntil = now + 600;
+                return;
+            }
 
             case FontStep: // read the row, step towards the target
             {
@@ -1771,6 +1899,9 @@ public sealed partial class AutomationPilot
                     AfterFont();
                     return;
                 }
+
+                if (row?.Percent is int shownPercent && BeforeLastTap($"font {shownPercent}"))
+                    return;
 
                 if (row?.Percent is not int percent)
                 {
@@ -1807,6 +1938,8 @@ public sealed partial class AutomationPilot
 
                 if (!Click(chevron.Value))
                     return;
+                if (phone)
+                    NoteTap($"font {percent}");
                 _fontChanged = true;
                 _detail = $"font size {percent}% -> {_fontGoal}%";
                 _waitUntil = now + 500;
@@ -1895,6 +2028,38 @@ public sealed partial class AutomationPilot
 
             default: // close the window (Escape toggles it), then the visit's next phase (Laby/LOD: the teleport)
             {
+                // Phone: the menu button would open the menu over it - the window's own X instead (never a blind tap).
+                if (phone)
+                {
+                    var title = PhoneSettingsTitle(await PhoneSettingsLinesAsync(frame));
+                    if (title != null && _attempts >= 3)
+                    {
+                        Log?.Invoke(LogLevel.Warning, "The Settings window is still open after 3 taps on its close button - leaving it open.");
+                        DebugArtifacts.SaveFrame(frame, _overlays, "settings_close_stuck");
+                    }
+                    else if (title != null)
+                    {
+                        _attempts++;
+                        if (_analyzer.FindCloseBlobRightOf(frame, title.Value, reach: 9, minHeights: 0.5) is not { } close)
+                        {
+                            Log?.Invoke(LogLevel.Warning, "The Settings window is open, but no close button shows right of its title - leaving it open.");
+                            DebugArtifacts.SaveFrame(frame, _overlays, "settings_close_stuck");
+                            _fontStep = OpenStep;
+                            Advance(_visitNext, 300);
+                            return;
+                        }
+
+                        if (!Click(close))
+                            return;
+                        _waitUntil = now + 900;
+                        return;
+                    }
+
+                    _fontStep = OpenStep;
+                    Advance(_visitNext, 300);
+                    return;
+                }
+
                 if (_attempts < 3 && await Find("SETTINGS") != null)
                 {
                     _attempts++;
@@ -1908,6 +2073,24 @@ public sealed partial class AutomationPilot
                 return;
             }
         }
+    }
+
+    /// <summary>Phone: the whole frame's OCR lines at x1, for the Settings title, the menu's Settings tile and the MENU title.</summary>
+    private async Task<IReadOnlyList<(string Text, PixelRect Bounds)>> PhoneSettingsLinesAsync(Mat frame) =>
+        ScreenAnalyzer.ToLines(await _analyzer.Ocr.RecognizeAsync(frame, new PixelRect(0, 0, frame.Width, frame.Height), 1.0));
+
+    /// <summary>
+    /// Phone: the Settings window's title - an OCR line that reads exactly "SETTINGS". The menu's own tile reads
+    /// "ettings (ES" at 2560x1440 (cut off), and a fuzzy match on it took the menu for the open window.
+    /// </summary>
+    private static PixelRect? PhoneSettingsTitle(IEnumerable<(string Text, PixelRect Bounds)> lines) =>
+        lines.Where(l => TextMatcher.Normalize(l.Text) == "settings").Select(l => (PixelRect?)l.Bounds).FirstOrDefault();
+
+    /// <summary>A menu tile label for Settings: "Settings (ESC)", cut off as "ettings (ES" - not the "SETTINGS" title.</summary>
+    public static bool IsSettingsTileText(string text)
+    {
+        string n = TextMatcher.Normalize(text);
+        return n.Contains("ettings", StringComparison.Ordinal) && n != "settings" && n.Length <= 14;
     }
 
     /// <summary>

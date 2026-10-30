@@ -757,19 +757,95 @@ public class PhoneLodFlowTests : AppPathsScope
         Assert.Contains(phone.Lines, l => l.StartsWith("The Run skill is on (ring", StringComparison.Ordinal));
     }
 
-    [Fact]
-    public async Task PhoneSettingsVisit_IsSkippedWithOneLine()
+    [Theory]
+    [InlineData(0)]
+    [InlineData(900)]   // the capture lags: MuMu 2560x1440 stopped at 1.09, then overshot to 1.11
+    public async Task PhoneSettingsVisit_MenuTile_ScaleTo110_FontKept_Saved_ClosedByX(int lagMs)
     {
+        // User, 2026-10-30: font 120 % and interface scale 1.10 "using the + sign". MuMu 2560x1440: the menu button, its
+        // "Settings (ESC)" tile (label cut to "ettings (ES"), VISUAL, "Interface scale [AUTO] - (AUTO) +" (one + = 1.01).
         using var phone = new PhonePilot(TempRoot());
-        Assert.True(phone.Settings.Sequence.FontSizePercent > 0);
+        Assert.Equal(120, phone.Settings.Phone.FontSizePercent);
+        Assert.Equal(1.10, phone.Settings.Phone.InterfaceScale);
+        phone.Shortcuts.Menu = Menu;
+        var tile = new PixelRect(1460, 100, 120, 20);
+        var plus = new PixelRect(1170, 200, 24, 24);
+        var minus = new PixelRect(1010, 210, 24, 5);
+        var close = new PixelRect(1160, 62, 24, 24);
+        var save = new PixelRect(760, 800, 100, 30);
         using var frame = PhoneFrames.Grey();
+        foreach (var r in new[] { plus, minus, close })
+            CvInvoke.Rectangle(frame, new Rectangle(r.X, r.Y, r.Width, r.Height), new MCvScalar(255, 255, 255, 255), -1);
 
-        await phone.RunAsync(() => frame, PilotPhase.RunSkill, () => phone.Pilot.Phase == PilotPhase.OpenInventory);
+        int Taps(PixelRect r) => phone.Touch.Taps.Count(t => t == Centre(r));
+        // The screen shows a tap lagMs later (the menu, the window, each + step).
+        var tapsAt = new List<(Point At, long Ticks)>();
+        phone.Touch.OnTap = (x, y) =>
+        {
+            lock (tapsAt)
+                tapsAt.Add((new Point(x, y), Environment.TickCount64));
+        };
+        int Shown(PixelRect r)
+        {
+            long now = Environment.TickCount64;
+            lock (tapsAt)
+                return tapsAt.Count(t => t.At == Centre(r) && now - t.Ticks >= lagMs);
+        }
+
+        phone.Ocr.Scene = () =>
+        {
+            var words = new List<OcrWord> { FakeOcrEngine.Line("[Piercing City]", 1600, 70, 280, 16) };
+            bool settingsOpen = Shown(tile) > 0 && Taps(close) == 0;
+            if (Shown(Menu) % 2 == 1 && Taps(tile) == 0)            // the menu button toggles the menu
+                words.Add(FakeOcrEngine.Line("ettings (ES", tile.X, tile.Y, tile.Width, tile.Height));
+            if (!settingsOpen)
+                return words;
+
+            int steps = Shown(plus);
+            words.Add(FakeOcrEngine.Line("SETTINGS", 870, 60, 180, 28));
+            words.Add(FakeOcrEngine.Line("VISUAL", 880, 110, 100, 24));
+            words.AddRange(FakeOcrEngine.Words("Interface scale", 720, 200, 180, 24));
+            words.Add(FakeOcrEngine.Line("AUTO", 930, 200, 60, 24));
+            words.Add(FakeOcrEngine.Line(steps == 0 ? "(AUTO)" : $"1.{steps:00}", 1060, 200, 80, 24));
+            words.AddRange(FakeOcrEngine.Words("Font size", 720, 260, 120, 24));
+            words.Add(FakeOcrEngine.Line("120%", 1060, 260, 70, 24));
+            words.AddRange(FakeOcrEngine.Words("TAB target", 720, 320, 130, 24));
+            words.Add(FakeOcrEngine.Line("Default", 1040, 320, 100, 24));
+            words.Add(FakeOcrEngine.Line("SAVE", save.X, save.Y, save.Width, save.Height));
+            return words;
+        };
+
+        await phone.RunAsync(() => frame, PilotPhase.RunSkill, () => phone.Pilot.Phase == PilotPhase.OpenInventory, timeoutMs: 60000);
 
         Assert.Equal(PilotPhase.OpenInventory, phone.Pilot.Phase);
-        Assert.DoesNotContain(PilotPhase.FontSize, phone.Phases);
-        Assert.Single(phone.Lines, l => l.StartsWith("Font size / TAB target: not checked on the phone", StringComparison.Ordinal));
+        Assert.Equal(1, Taps(Menu));
+        Assert.Equal(1, Taps(tile));
+        Assert.Equal(10, Taps(plus));                       // AUTO (1.00) -> 1.10
+        Assert.Equal(0, Taps(minus));
+        Assert.Equal(1, Taps(save));
+        Assert.Equal(1, Taps(close));
+        Assert.Contains(phone.Lines, l => l == "Set interface scale 1.10 and saved.");
+        Assert.Contains(phone.Lines, l => l == "Font size is already 120%.");
     }
+
+    [Theory]
+    [InlineData("1.01", 1.01)]
+    [InlineData("(1.10)", 1.10)]
+    [InlineData("1,05", 1.05)]
+    [InlineData("(AUTO)", null)]
+    [InlineData("120%", null)]
+    [InlineData("1.1", null)]
+    public void ParseScale_ReadsTwoDecimals(string text, double? expected) =>
+        Assert.Equal(expected, ScreenAnalyzer.ParseScale(text));
+
+    [Theory]
+    [InlineData("ettings (ES", true)]
+    [InlineData("Settings (ESC)", true)]
+    [InlineData("SETTINGS", false)]
+    [InlineData("Interface scale", false)]
+    [InlineData("WTS settings guide for new players", false)]
+    public void IsSettingsTileText_TheMenuTileNotTheTitle(string text, bool expected) =>
+        Assert.Equal(expected, AutomationPilot.IsSettingsTileText(text));
 
     // ---------------------------------------------------------------- frames without a zone title
 

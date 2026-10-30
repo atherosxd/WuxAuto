@@ -54,6 +54,12 @@ public sealed record WarTargetRead(string? Name, (string Text, PixelRect Bounds)
 /// A Settings window row: label, value box, value text and number (numeric rows), and the chevrons
 /// beside the value.
 /// </summary>
+/// <summary>
+/// The phone's Settings > VISUAL "Interface scale" row: "AUTO  -  1.01  +". <see cref="Value"/> is the number read, 1.00
+/// for "(AUTO)" (<see cref="Auto"/>), null when nothing read; <see cref="Minus"/> / <see cref="Plus"/> the buttons beside it.
+/// </summary>
+public sealed record ScaleRow(PixelRect Label, double? Value, bool Auto, PixelRect? Minus, PixelRect? Plus, string? ValueText);
+
 public sealed record SettingRow(PixelRect Label, PixelRect? Value, int? Percent, PixelRect? Left, PixelRect? Right, string? ValueText = null);
 
 public sealed class ScanReport

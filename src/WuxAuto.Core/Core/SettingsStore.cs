@@ -276,6 +276,8 @@ public static class SettingsStore
         p.HoldRepressMs = Math.Clamp(p.HoldRepressMs, 0, 60000);
         p.LodArrivalWalkMs = Math.Clamp(p.LodArrivalWalkMs, 0, 10000);
         p.LodBossTapAfterTabs = Math.Clamp(p.LodBossTapAfterTabs, 0, 100);
+        p.FontSizePercent = p.FontSizePercent <= 0 ? 0 : Math.Clamp(p.FontSizePercent, 50, 200);
+        p.InterfaceScale = double.IsFinite(p.InterfaceScale) && p.InterfaceScale > 0 ? Math.Round(Math.Clamp(p.InterfaceScale, 0.5, 2.0), 2) : 0;
         p.TapSettleMs = Math.Clamp(p.TapSettleMs, 0, 2000);
         p.JoystickStepMs = Math.Clamp(p.JoystickStepMs, 100, 5000);
         p.SwipePxPerTurnMs = ClampOr(p.SwipePxPerTurnMs, 0.05, 20, 0.5);

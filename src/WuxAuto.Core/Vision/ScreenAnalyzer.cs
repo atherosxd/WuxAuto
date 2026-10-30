@@ -254,6 +254,56 @@ public sealed class ScreenAnalyzer : IDisposable
     }
 
     /// <summary>
+    /// The phone's "Interface scale" row (MuMu 2560x1440, 2026-10-30: "Interface scale [AUTO] -  (AUTO)  +", one + read
+    /// "1.01"): the value is the word that reads as a number with two decimals (<see cref="ParseScale"/>), else the
+    /// rightmost "AUTO" word (the value; the left one is the AUTO button) = 1.00. The - and + are the nearest bright blobs
+    /// either side of the value; the - is a flat dash, so a blob counts when it is tall or wide enough.
+    /// </summary>
+    public async Task<ScaleRow?> ReadScaleRowAsync(Mat frame, string label = "Interface scale")
+    {
+        var full = new PixelRect(0, 0, frame.Width, frame.Height);
+        var (hit, _, _) = await FindTextAsync(frame, full, label);
+        if (hit == null || !(TextMatcher.CoversMost(hit.Text, label) || TextMatcher.CoversMost(hit.LineText, label)))
+            return null;
+
+        var labelBox = hit.LineBounds.Width > 0 ? hit.LineBounds : hit.Bounds;
+        int h = Math.Max(8, labelBox.Height);
+        var band = PixelRect.FromBounds(labelBox.Right + h / 2, labelBox.Y - h, Math.Min(frame.Width, labelBox.Right + h * 30), labelBox.Bottom + h)
+            .Clamp(frame.Width, frame.Height);
+
+        var words = await Ocr.RecognizeAsync(frame, band, 2.0);
+        var number = words.Select(w => (Word: w, Value: ParseScale(w.Text))).FirstOrDefault(x => x.Value != null);
+        OcrWord? valueWord = number.Word;
+        double? value = number.Value;
+        bool auto = false;
+        if (valueWord == null)
+        {
+            valueWord = words.Where(w => TextMatcher.Normalize(w.Text).Contains("auto", StringComparison.Ordinal))
+                .OrderByDescending(w => w.Bounds.CenterX).FirstOrDefault();
+            if (valueWord == null)
+                return new ScaleRow(labelBox, null, false, null, null, null);
+            auto = true;
+            value = 1.00;
+        }
+
+        var box = valueWord.Bounds;
+        var blobs = FindBrightBlobs(frame, band)
+            .Where(b => b.Width <= h * 1.6 && b.Height <= h * 1.6 && (b.Height >= h * 0.5 || b.Width >= h * 0.5))
+            .Where(b => b.CenterY >= box.Y - h / 2 && b.CenterY <= box.Bottom + h / 2)
+            .ToList();
+        PixelRect? minus = blobs.Where(b => b.Right <= box.X - 2).OrderByDescending(b => b.CenterX).Select(b => (PixelRect?)b).FirstOrDefault();
+        PixelRect? plus = blobs.Where(b => b.X >= box.Right + 2).OrderBy(b => b.CenterX).Select(b => (PixelRect?)b).FirstOrDefault();
+        return new ScaleRow(labelBox, value, auto, minus, plus, valueWord.Text);
+    }
+
+    /// <summary>An interface scale as the row shows it ("1.01", "(1.10)", "1,05"); null for anything else.</summary>
+    public static double? ParseScale(string text)
+    {
+        var m = System.Text.RegularExpressions.Regex.Match(text.Trim(), @"^\(?([0-9])[.,]([0-9]{2})\)?$");
+        return m.Success ? int.Parse(m.Groups[1].Value) + int.Parse(m.Groups[2].Value) / 100.0 : null;
+    }
+
+    /// <summary>
     /// Finds the map list's page arrows from the "Spawns" column header: they are the light
     /// glyphs in the band just above that word. Picked as bright blobs, so there is no template
     /// and no fixed offset to go stale when the map window scales differently.
@@ -763,11 +813,18 @@ public sealed class ScreenAnalyzer : IDisposable
     /// click there can land in the world. The TELEPORT SCROLL's X was a blob on all 12 saved frames with the list open
     /// (1024x768 to 2048x1152).
     /// </summary>
-    public PixelRect? FindCloseBlobRightOf(Mat frame, PixelRect title)
+    /// <param name="reach">How far right of the title to look, in title heights (the phone's SETTINGS X sits ~6.2 away at
+    /// 2560x1440, MuMu 2026-10-30).</param>
+    /// <param name="minHeights">The smallest blob side, in title heights (0 = the 3 px floor only). The phone's SETTINGS
+    /// window has specks on its top border left of the X (a 5x4 one at 1648,189 next to the 26x26 X at 1776,227, title 32
+    /// high) - the first live close tapped the speck.</param>
+    public PixelRect? FindCloseBlobRightOf(Mat frame, PixelRect title, int reach = 6, double minHeights = 0)
     {
         int h = Math.Max(6, title.Height);
-        var band = new PixelRect(title.Right + 2, title.Y - h, 6 * h, title.Height + 2 * h).Clamp(frame.Width, frame.Height);
-        return ButtonBlobs(frame, band, h).OrderBy(b => b.X).Select(b => (PixelRect?)b).FirstOrDefault();
+        var band = new PixelRect(title.Right + 2, title.Y - h, reach * h, title.Height + 2 * h).Clamp(frame.Width, frame.Height);
+        return ButtonBlobs(frame, band, h)
+            .Where(b => b.Width >= minHeights * h && b.Height >= minHeights * h)
+            .OrderBy(b => b.X).Select(b => (PixelRect?)b).FirstOrDefault();
     }
 
     /// <summary>

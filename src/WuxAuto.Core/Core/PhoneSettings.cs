@@ -42,6 +42,19 @@ public sealed class PhoneSettings
     /// </summary>
     public int LodBossTapAfterTabs { get; set; } = 3;
 
+    /// <summary>
+    /// The game's Settings > VISUAL "Font size" the phone sets once per Start in town (user, 2026-10-30: "similar to the
+    /// desktop counter part. increase the font size as well? to 120%"). Exact value, not the desktop's range; 0 = leave it.
+    /// </summary>
+    public int FontSizePercent { get; set; } = 120;
+
+    /// <summary>
+    /// Settings > VISUAL "Interface scale" the phone sets with its - / + buttons in the same visit (user, 2026-10-30:
+    /// "change the interface scale to 1.10 using the + sign"). Steps of 0.01; "(AUTO)" counts as 1.00 (MuMu 2560x1440: one
+    /// + from AUTO read 1.01). 0 = leave it.
+    /// </summary>
+    public double InterfaceScale { get; set; } = 1.10;
+
     // Values below marked "measured" come from MuMu on 2026-10-28, see docs/superpowers/notes/2026-10-28-phone-checks.md.
 
     /// <summary>Pause after a joystick step before the next input; a tap right after the release was lost up to 38 ms, delivered from 41 ms (measured; 2x the threshold).</summary>
