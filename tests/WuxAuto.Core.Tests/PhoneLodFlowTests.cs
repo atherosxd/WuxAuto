@@ -139,6 +139,38 @@ public class PhoneLodFlowTests : AppPathsScope
         Assert.Contains(phone.Lines, l => l.StartsWith("Walked up-left with the joystick for 2s", StringComparison.Ordinal));
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task PhoneLod_CoordinateJump_CountsOnlyWhenReadTwice(bool stays)
+    {
+        // Xiaomi 2026-10-30: the minimap's "1218 , 1824" read as "1218 , 824" - six false "killed by the boss" in one run.
+        // One such read is held back; a jump read twice in a row (a real death) still goes to LodRespawn.
+        using var phone = new PhonePilot(TempRoot());
+        phone.Settings.Lod.ApproachBoss = false;
+        phone.Shortcuts.Skills["1"] = Skill1;
+        long start = Environment.TickCount64;
+        phone.Ocr.Scene = () =>
+        {
+            long t = Environment.TickCount64 - start;
+            bool jumped = t >= 800 && (stays || t < 2200);
+            return [Title, Target, FakeOcrEngine.Line(jumped ? "1218 , 824" : "1218 , 1824", 1600, 95, 200, 16)];
+        };
+        using var frame = PhoneFrames.Grey();
+
+        var phase = await phone.RunAsync(() => frame, PilotPhase.LodAttack,
+            () => phone.Pilot.Phase == PilotPhase.LodRespawn || Environment.TickCount64 - start > 5500, timeoutMs: 8000);
+
+        Assert.Contains(phone.Lines, l => l.Contains("a jump only counts when the next read agrees", StringComparison.Ordinal));
+        if (stays)
+            Assert.Equal(PilotPhase.LodRespawn, phase);
+        else
+        {
+            Assert.DoesNotContain(PilotPhase.LodRespawn, phone.Phases);
+            Assert.DoesNotContain(phone.Lines, l => l.Contains("killed by the boss", StringComparison.Ordinal));
+        }
+    }
+
     [Fact]
     public async Task PhoneLod_BossAlreadyTargeted_NoSwordTap()
     {

@@ -23,6 +23,7 @@ public sealed partial class AutomationPilot
     private long _lodBossSeenAt;
     private long _lodCoordsAt;
     private (int X, int Y)? _lodAttackCoords;
+    private (int X, int Y)? _lodJumpPending;
     private int _lodKills;
     private int _lodStill;
     private bool _lodWaitLogged;
@@ -524,6 +525,38 @@ public sealed partial class AutomationPilot
         _lodApproached = false;
         _lodRingWalks = 0;
         _lodBladeTaps = 0;
+        _lodJumpPending = null;
+    }
+
+    private enum LodJump { None, Pending, Death }
+
+    /// <summary>
+    /// A coordinate read against the fight's baseline (<see cref="_lodAttackCoords"/>): within
+    /// <see cref="LodSettings.TeleportJump"/> = None; further = Death on the desktop. The phone needs the jump read twice
+    /// (the next read within 60 of the first): on the Xiaomi (2608x1200, 2026-10-30) the minimap's "1218 , 1824" read as
+    /// "1218 , 824" six times in one run, each a false "killed by the boss" that stopped the fight and sent the sword out.
+    /// Pending = a first, unconfirmed jump; the baseline stays.
+    /// </summary>
+    private LodJump CheckLodJump(GameCoordinates coords)
+    {
+        if (_lodAttackCoords is not (int ax, int ay) || coords.DistanceTo(ax, ay) <= _settings.Lod.TeleportJump)
+        {
+            _lodJumpPending = null;
+            return LodJump.None;
+        }
+
+        if (Profile != PlatformProfile.Phone)
+            return LodJump.Death;
+
+        if (_lodJumpPending is (int px, int py) && coords.DistanceTo(px, py) <= 60)
+        {
+            _lodJumpPending = null;
+            return LodJump.Death;
+        }
+
+        Log?.Invoke(LogLevel.Trace, $"Coordinates read {coords} (from {ax},{ay}) - a jump only counts when the next read agrees.");
+        _lodJumpPending = (coords.X, coords.Y);
+        return LodJump.Pending;
     }
 
     /// <summary>Back to finding the boss: Tab (and the walk with WalkToBossSpot), or the south turn first if the heading is unknown.</summary>
@@ -846,7 +879,8 @@ public sealed partial class AutomationPilot
             var coords = await _analyzer.ReadCoordinatesAsync(frame);
             if (coords != null)
             {
-                if (_lodAttackCoords is (int ax, int ay) && coords.DistanceTo(ax, ay) > lod.TeleportJump)
+                var jump = CheckLodJump(coords);
+                if (jump == LodJump.Death && _lodAttackCoords is (int ax, int ay))
                 {
                     Log?.Invoke(LogLevel.Warning, $"Moved to {coords} (from {ax},{ay}) - killed by the boss? Turning south again from the start.");
                     DebugArtifacts.SaveFrame(frame, _overlays, "lod_died");
@@ -854,7 +888,8 @@ public sealed partial class AutomationPilot
                     return;
                 }
 
-                _lodAttackCoords = (coords.X, coords.Y);
+                if (jump == LodJump.None)
+                    _lodAttackCoords = (coords.X, coords.Y);
             }
         }
 
@@ -1040,7 +1075,8 @@ public sealed partial class AutomationPilot
     {
         var lod = _settings.Lod;
         var coords = await _analyzer.ReadCoordinatesAsync(frame);
-        if (coords != null && _lodAttackCoords is (int ax, int ay) && coords.DistanceTo(ax, ay) > lod.TeleportJump)
+        var jump = coords == null ? LodJump.None : CheckLodJump(coords);
+        if (jump == LodJump.Death && _lodAttackCoords is (int ax, int ay))
         {
             Log?.Invoke(LogLevel.Warning, $"Moved to {coords} (from {ax},{ay}) while walking up to '{lod.BossName}' - killed by the boss? Turning south again from the start.");
             DebugArtifacts.SaveFrame(frame, _overlays, "lod_died");
@@ -1053,7 +1089,9 @@ public sealed partial class AutomationPilot
         _lodBossSeenAt = now;
         _lodSkillAt = 0;
         _lodCoordsAt = now;
-        _lodAttackCoords = coords == null ? null : (coords.X, coords.Y);
+        // A jump still to be confirmed keeps the old baseline: the next read in LodAttack decides.
+        if (jump == LodJump.None)
+            _lodAttackCoords = coords == null ? null : (coords.X, coords.Y);
         _lodRingCheckAt = reached ? now : now + 2L * lod.RingCheckEveryMs;
         Advance(PilotPhase.LodAttack, 0);
     }

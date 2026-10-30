@@ -246,7 +246,13 @@ of the arrival spot; the camera keeps the teleport's heading, there is no south 
 - three sword taps without the boss targeted → a plain tap on its pink ring, else just below its belt (`FindApproachSpot`).
 `HoldRepressMs` 2000 - the held attack is lifted and pressed again every 2 s (the player's own touch can end the held
 finger unseen; user asked 5 s, then 2 s). Open from that test: the sword "unselects the boss" (cause unknown - debug bundle
-pending) and a heads-up notification pausing the pilot.
+pending) and a heads-up notification pausing the pilot. **Debug bundle 08:20 answered the sword one:** the minimap's
+"1218 , 1824" read as "1218 , 824" (leading 1 dropped at 2608x1200) six times in one run → a false "killed by the boss"
+(jump > `TeleportJump`) → fight left, sword tapped. The phone now needs a jump read twice (next read within 60,
+`CheckLodJump`); the desktop is unchanged. Also: the phone's LodRun reads the frame before the sword tap (the sword
+went out on its timer with the boss already targeted). Still open: on the phone the "pink ring" often hits the boss's
+pink weapon trail (second walk-up click 3-5 radii out); the owner asks for font 120 % and interface scale 1.10 (+ button)
+on the phone like the desktop's Settings visit (not ported yet).
 Review round (same day): HUNT is **not** a required shortcut (used where found, never added) and the town autohunt-off
 check does not run on the phone (its log read is unverified there); a hit whose colour cannot be told (dark middle) is
 neither HUNT nor AUTO BUFF; the buff check counts a miss only when timers that read did not go up **and** the first row
