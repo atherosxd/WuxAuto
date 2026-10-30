@@ -305,7 +305,7 @@ public sealed partial class AutomationPilot
     private int PhoneTapEveryMs => Math.Clamp(_settings.Phone.AttackTapEveryMs, 50, 2000);
 
     /// <summary>The phone's word when the LOD entries run out (M4 ruling: Laby and Auto War are not ported yet).</summary>
-    public const string PhoneOutOfKeysText = "No LOD entries left - Laby and Auto War come later on the phone";
+    public const string PhoneOutOfKeysText = "No Temple of Fiends Keys and no Den of Rebirth entries left - the game's Regular War is not on the phone yet; stopping in town";
 
     private int HoldSkillMs => PhoneTaps ? 0 : _settings.Dungeon.HoldSkillMs;
     private int ManualAttackIntervalMs => PhoneTaps ? PhoneTapEveryMs : _settings.Dungeon.ManualAttackIntervalMs;
@@ -1218,6 +1218,14 @@ public sealed partial class AutomationPilot
             // Auto Laby, once per Start (user, 2026-10-29): Regular War off, or the autohunt may take the
             // character to a war mid-boss. LOD has no autohunt.
             _regularWarOffDue = townCheck && !IsLod && !IsBlossom && !_regularWarOffChecked && _settings.Sequence.RegularWarOffForLaby;
+            // Phone (M5): the box sits in ☰ -> Auto-Hunt, not behind a key, and on an account without Premium it is greyed out
+            // and cannot be ticked at all (MuMu 2026-10-30) - not checked on the phone yet.
+            if (_regularWarOffDue && Profile == PlatformProfile.Phone)
+            {
+                _regularWarOffDue = false;
+                _regularWarOffChecked = true;
+                Log?.Invoke(LogLevel.Info, "Regular War off: not checked on the phone yet (☰ -> Auto-Hunt; it needs Premium to be on at all).");
+            }
             // Not on the phone yet: its combat-log read of the autohunt lines is not verified there, and a misread tap of
             // HUNT in town starts a Smart Farm journey.
             if (townCheck && _settings.Sequence.AutohuntOffInTown && Profile != PlatformProfile.Phone
@@ -5700,21 +5708,21 @@ public sealed partial class AutomationPilot
     /// One kind of key used up: switch to the other mode, or - both used up this Start - J in town
     /// (the game's built-in auto war, user) and stop. True when it switched (the run goes on).
     /// </summary>
-    private bool OutOfKeys(bool labyrinth, string why)
+    internal bool OutOfKeys(bool labyrinth, string why)
     {
-        // Phone (M4 ruling, until M5): Laby and Auto War are not ported - no mode switch, no Labyrinth teleport, no
-        // Regular War; stop in town and say so.
-        if (Profile == PlatformProfile.Phone)
-        {
-            Log?.Invoke(LogLevel.Warning, $"{why}. {(labyrinth ? "Laby and Auto War come later on the phone" : PhoneOutOfKeysText)}");
-            Stop(labyrinth ? "out of Temple of Fiends Keys" : "out of Den of Rebirth entries");
-            return false;
-        }
-
         if (labyrinth)
             _labyOut = true;
         else
             _lodOut = true;
+
+        // Phone (M5): LOD <-> Laby as on the PC; with both out it stops in town - the game's Regular War (Auto War) is not
+        // ported to the phone yet.
+        if (Profile == PlatformProfile.Phone && _labyOut && _lodOut)
+        {
+            Log?.Invoke(LogLevel.Warning, $"{why}. {PhoneOutOfKeysText}");
+            Stop("out of Temple of Fiends Keys and Den of Rebirth entries");
+            return false;
+        }
 
         if (!(_labyOut && _lodOut))
         {

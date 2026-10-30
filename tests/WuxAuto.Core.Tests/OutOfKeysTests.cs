@@ -5,8 +5,9 @@ using WuxAuto.Vision;
 namespace WuxAuto.Core.Tests;
 
 /// <summary>
-/// Auto LOD out of Den of Rebirth entries (the LOD entry missing on its teleport-list page): the desktop switches to Auto
-/// Laby as before; the phone (M4 ruling, until M5 ports Laby and Auto War) stops in town with a message instead.
+/// Auto LOD out of Den of Rebirth entries (the LOD entry missing on its teleport-list page): the desktop and, since M5,
+/// the phone switch to Auto Laby and tap the Labyrinth on the same page. Both kinds out: the desktop turns the game's
+/// Regular War on; the phone (no Auto War there yet) stops in town with a message.
 /// </summary>
 public class OutOfKeysTests : AppPathsScope
 {
@@ -18,7 +19,7 @@ public class OutOfKeysTests : AppPathsScope
     ];
 
     [Fact]
-    public async Task Phone_LodEntriesOut_StopsInTown_NoModeSwitch_NoTouch()
+    public async Task Phone_LodEntriesOut_SwitchesToAutoLaby_TapsTheLabyrinth()
     {
         var settings = PhonePilot.PhoneLodSettings();
         settings.Lod.ListPage = 1;                          // this page is where the entry would be
@@ -28,15 +29,31 @@ public class OutOfKeysTests : AppPathsScope
         bool modeChanged = false;
         phone.Pilot.ModeChanged += () => modeChanged = true;
 
-        await phone.RunAsync(() => frame, PilotPhase.FindDestination, () => false, timeoutMs: 5000);
+        await phone.RunAsync(() => frame, PilotPhase.FindDestination, () => phone.Touch.Taps.Count > 0, timeoutMs: 5000);
+
+        Assert.Equal(RunMode.AutoLaby, settings.Sequence.Mode);
+        Assert.True(modeChanged);
+        Assert.Contains(phone.Lines, l => l.EndsWith("out of Den of Rebirth entries - switching to AutoLaby.", StringComparison.Ordinal));
+        var tap = Assert.Single(phone.Touch.Taps);
+        Assert.InRange(tap.Y, 300, 316);                    // the Labyrinth's row
+    }
+
+    [Fact]
+    public void Phone_BothKindsOut_StopsInTown_NoRegularWar()
+    {
+        using var phone = new PhonePilot(TempRoot());
+        phone.Pilot.Start(PilotPhase.FindDestination);
+
+        Assert.True(phone.Pilot.OutOfKeys(labyrinth: false, "LOD: out of Den of Rebirth entries"));   // -> Laby
+        Assert.True(phone.Pilot.IsRunning);
+        Assert.False(phone.Pilot.OutOfKeys(labyrinth: true, "Laby: out of Temple of Fiends Keys"));
 
         Assert.False(phone.Pilot.IsRunning);
-        Assert.Equal(RunMode.AutoLod, settings.Sequence.Mode);
-        Assert.False(modeChanged);
-        Assert.Empty(phone.Touch.Calls);
         Assert.Contains(phone.Lines, l => l.Contains(AutomationPilot.PhoneOutOfKeysText, StringComparison.Ordinal));
-        Assert.Contains(phone.Lines, l => l == "Pilot stopped: out of Den of Rebirth entries.");
-        Assert.DoesNotContain(phone.Lines, l => l.Contains("switching to", StringComparison.Ordinal) || l.Contains("turning the game's auto war on", StringComparison.Ordinal));
+        Assert.Contains(phone.Lines, l => l == "Pilot stopped: out of Temple of Fiends Keys and Den of Rebirth entries.");
+        Assert.DoesNotContain(phone.Lines, l => l.Contains("turning the game's auto war on", StringComparison.Ordinal));
+        Assert.NotEqual(PilotPhase.RegularWarOn, phone.Pilot.Phase);
+        Assert.Empty(phone.Touch.Calls);
     }
 
     [Fact]

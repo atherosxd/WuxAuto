@@ -52,11 +52,12 @@ public partial class MainPage : ContentPage
         try
         {
             ServiceHint.IsVisible = PilotAccessibilityService.Instance == null;
-            // LOD is the only mode on the phone until M5 (the Laby button stays disabled, "coming in M5").
-            ModeLod.IsChecked = true;
-            ModeLaby.IsChecked = false;
+            bool laby = engine.Settings.Sequence.Mode == RunMode.AutoLaby;
+            ModeLod.IsChecked = !laby;
+            ModeLaby.IsChecked = laby;
             bool running = engine.State == EngineState.Running;
             ModeLod.IsEnabled = !running;
+            ModeLaby.IsEnabled = !running;
             DryRun.IsChecked = engine.Settings.Sequence.DryRun;
             DryRun.IsEnabled = !running;
             StartButton.IsEnabled = !running;
@@ -81,10 +82,10 @@ public partial class MainPage : ContentPage
 
     private void OnModeChanged(object? sender, CheckedChangedEventArgs e)
     {
-        if (_syncing || !e.Value || sender != ModeLod)
+        if (_syncing || !e.Value)
             return;
         var engine = Engine;
-        var mode = RunMode.AutoLod;
+        var mode = sender == ModeLaby ? RunMode.AutoLaby : RunMode.AutoLod;
         if (engine.Settings.Sequence.Mode == mode)
             return;
         engine.Settings.Sequence.Mode = mode;

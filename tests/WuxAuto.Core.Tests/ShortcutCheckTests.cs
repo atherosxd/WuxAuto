@@ -15,6 +15,12 @@ namespace WuxAuto.Core.Tests;
 /// </summary>
 public class ShortcutCheckTests : AppPathsScope
 {
+    /// <summary>
+    /// The ring flows wait on the real clock (two misses >= 1.5 s apart, settle waits): 6-10 s alone, past 15 s under the
+    /// whole suite's load (Auto Blossom's tests). A generous limit; each run still ends as soon as its condition holds.
+    /// </summary>
+    private const int RingTimeoutMs = 40000;
+
     // ---------------------------------------------------------------- Review Focus 4
 
     [Fact]
@@ -27,7 +33,7 @@ public class ShortcutCheckTests : AppPathsScope
         ring.Fill(2, "Gold Scroll");
         ring.Fill(3, "Gold Scroll");                     // every slot taken; Pick up is missing
 
-        var phase = await phone.RunAsync(ring.Render, PilotPhase.Focus, () => false);
+        var phase = await phone.RunAsync(ring.Render, PilotPhase.Focus, () => false, timeoutMs: RingTimeoutMs);
 
         Assert.False(phone.Pilot.IsRunning, phone.Log);
         Assert.Equal(PilotPhase.Failed, phase);
@@ -47,7 +53,7 @@ public class ShortcutCheckTests : AppPathsScope
         ring.Fill(0, "Teleport Scroll");
         ring.Fill(1, "Gold Scroll");                     // slots 2 and 3 empty
 
-        await phone.RunAsync(ring.Render, PilotPhase.Focus, () => phone.Pilot.Phase == PilotPhase.CheckZone);
+        await phone.RunAsync(ring.Render, PilotPhase.Focus, () => phone.Pilot.Phase == PilotPhase.CheckZone, timeoutMs: RingTimeoutMs);
 
         Assert.Equal(PilotPhase.CheckZone, phone.Pilot.Phase);
         Assert.Equal(["Pick up"], ring.Picked);
@@ -71,7 +77,7 @@ public class ShortcutCheckTests : AppPathsScope
         ring.Fill(0, "Gold Scroll");
         ring.Fill(2, "Gold Scroll");                     // slots 1 and 3 empty; Teleport Scroll and Pick up missing
 
-        await phone.RunAsync(ring.Render, PilotPhase.Focus, () => phone.Pilot.Phase == PilotPhase.CheckZone);
+        await phone.RunAsync(ring.Render, PilotPhase.Focus, () => phone.Pilot.Phase == PilotPhase.CheckZone, timeoutMs: RingTimeoutMs);
 
         Assert.Equal(PilotPhase.CheckZone, phone.Pilot.Phase);
         Assert.Equal(["Teleport Scroll", "Pick up"], ring.Picked);
@@ -95,7 +101,7 @@ public class ShortcutCheckTests : AppPathsScope
         ring.Fill(2, "Gold Scroll");
         ring.Fill(3, "Gold Scroll");
 
-        var phase = await phone.RunAsync(ring.Render, PilotPhase.Focus, () => false);
+        var phase = await phone.RunAsync(ring.Render, PilotPhase.Focus, () => false, timeoutMs: RingTimeoutMs);
 
         Assert.Equal(PilotPhase.Failed, phase);
         Assert.Contains(phone.Lines, l => l.StartsWith("Add the 'Pick up' shortcut to the ring", StringComparison.Ordinal));
@@ -109,7 +115,7 @@ public class ShortcutCheckTests : AppPathsScope
         var ring = new FakeRing(phone) { Locked = true, PickerWithout = "Pick up" };
         ring.Fill(0, "Teleport Scroll");
 
-        var phase = await phone.RunAsync(ring.Render, PilotPhase.Focus, () => false);
+        var phase = await phone.RunAsync(ring.Render, PilotPhase.Focus, () => false, timeoutMs: RingTimeoutMs);
 
         Assert.Equal(PilotPhase.Failed, phase);
         Assert.Contains(phone.Lines, l => l.StartsWith("Add the 'Pick up' shortcut to the ring - 'Pick up' was not found in the shortcut picker", StringComparison.Ordinal));
@@ -127,7 +133,7 @@ public class ShortcutCheckTests : AppPathsScope
         for (int i = 0; i < FakeRing.Slots.Length; i++)
             ring.Fill(i, "Gold Scroll");
 
-        var phase = await phone.RunAsync(ring.Render, PilotPhase.Focus, () => false);
+        var phase = await phone.RunAsync(ring.Render, PilotPhase.Focus, () => false, timeoutMs: RingTimeoutMs);
 
         Assert.Equal(PilotPhase.Failed, phase);
         Assert.Contains(phone.Lines, l => l.StartsWith("Add the 'Teleport Scroll', 'Pick up' shortcuts to the ring - no free (+) slot", StringComparison.Ordinal));
@@ -141,7 +147,7 @@ public class ShortcutCheckTests : AppPathsScope
         var ring = new FakeRing(phone) { Locked = true, PickerUnmarked = true };
         ring.Fill(0, "Teleport Scroll");
 
-        var phase = await phone.RunAsync(ring.Render, PilotPhase.Focus, () => false);
+        var phase = await phone.RunAsync(ring.Render, PilotPhase.Focus, () => false, timeoutMs: RingTimeoutMs);
 
         Assert.Equal(PilotPhase.Failed, phase);
         Assert.Contains(phone.Lines, l => l.StartsWith("Add the 'Pick up' shortcut to the ring - the shortcut picker did not open", StringComparison.Ordinal));
@@ -174,7 +180,7 @@ public class ShortcutCheckTests : AppPathsScope
             if (behindSince > 0 && !phone.Touch.InFront && Environment.TickCount64 - behindSince > 1500)
                 phone.Touch.InFront = true;
             return false;
-        });
+        }, timeoutMs: RingTimeoutMs);
 
         Assert.Equal(PilotPhase.Failed, phase);
         Assert.True(ring.Locked, phone.Log);
@@ -190,7 +196,7 @@ public class ShortcutCheckTests : AppPathsScope
         var ring = new FakeRing(phone) { Locked = true };
         ring.Fill(0, "Teleport Scroll");
 
-        await phone.RunAsync(ring.Render, PilotPhase.Focus, () => phone.Pilot.Phase == PilotPhase.CheckZone);
+        await phone.RunAsync(ring.Render, PilotPhase.Focus, () => phone.Pilot.Phase == PilotPhase.CheckZone, timeoutMs: RingTimeoutMs);
 
         Assert.Equal(PilotPhase.CheckZone, phone.Pilot.Phase);
         Assert.Contains(PilotPhase.ShortcutCheck, phone.Phases);
@@ -209,7 +215,7 @@ public class ShortcutCheckTests : AppPathsScope
         var ring = new FakeRing(phone) { Locked = true };
         ring.Fill(0, "Teleport Scroll");
 
-        await phone.RunAsync(ring.Render, PilotPhase.Focus, () => phone.Pilot.Phase == PilotPhase.CheckZone);
+        await phone.RunAsync(ring.Render, PilotPhase.Focus, () => phone.Pilot.Phase == PilotPhase.CheckZone, timeoutMs: RingTimeoutMs);
 
         Assert.Equal(PilotPhase.CheckZone, phone.Pilot.Phase);
         Assert.Empty(phone.Touch.Calls);
@@ -223,7 +229,7 @@ public class ShortcutCheckTests : AppPathsScope
         var ring = new FakeRing(phone) { Locked = true };
         ring.Fill(0, "Teleport Scroll");
 
-        await phone.RunAsync(ring.Render, PilotPhase.Focus, () => phone.Pilot.Phase == PilotPhase.CheckZone);
+        await phone.RunAsync(ring.Render, PilotPhase.Focus, () => phone.Pilot.Phase == PilotPhase.CheckZone, timeoutMs: RingTimeoutMs);
 
         Assert.Equal(PilotPhase.CheckZone, phone.Pilot.Phase);
         Assert.Empty(phone.Touch.Calls);
@@ -309,7 +315,7 @@ public class ShortcutCheckTests : AppPathsScope
                 phone.Shortcuts.Icons[a] = box;          // searched again: there
         };
 
-        await phone.RunAsync(ring.Render, PilotPhase.Focus, () => phone.Pilot.Phase == PilotPhase.CheckZone);
+        await phone.RunAsync(ring.Render, PilotPhase.Focus, () => phone.Pilot.Phase == PilotPhase.CheckZone, timeoutMs: RingTimeoutMs);
 
         Assert.Equal(PilotPhase.CheckZone, phone.Pilot.Phase);
         Assert.Empty(phone.Touch.Calls);
@@ -335,7 +341,7 @@ public class ShortcutCheckTests : AppPathsScope
             }
 
             return phone.Pilot.Phase == PilotPhase.CheckZone;
-        });
+        }, timeoutMs: RingTimeoutMs);
 
         Assert.Equal(PilotPhase.CheckZone, phone.Pilot.Phase);
         Assert.Equal(["Pick up"], ring.Picked);
@@ -350,7 +356,7 @@ public class ShortcutCheckTests : AppPathsScope
         var ring = new FakeRing(phone) { Locked = true, TitleReads = false };
         ring.Fill(0, "Teleport Scroll");
 
-        var phase = await phone.RunAsync(ring.Render, PilotPhase.Focus, () => false, timeoutMs: 40000);
+        var phase = await phone.RunAsync(ring.Render, PilotPhase.Focus, () => false, timeoutMs: RingTimeoutMs);
 
         Assert.Equal(PilotPhase.Failed, phase);
         Assert.Empty(phone.Touch.Calls);
@@ -376,7 +382,7 @@ public class ShortcutCheckTests : AppPathsScope
                 decided = Environment.TickCount64;
         };
 
-        await phone.RunAsync(ring.Render, PilotPhase.Focus, () => decided != 0);
+        await phone.RunAsync(ring.Render, PilotPhase.Focus, () => decided != 0, timeoutMs: RingTimeoutMs);
 
         Assert.True(firstLook > 0 && decided - firstLook >= ShortcutCheck.MinLookGapMs - 20, $"first miss {firstLook}, decided {decided}");
     }
@@ -391,7 +397,7 @@ public class ShortcutCheckTests : AppPathsScope
             ring.Fill(i, i == 0 ? "Teleport Scroll" : i == 1 ? "Pick up" : "Gold Scroll");
         phone.Shortcuts.Icons.Remove(GameAction.ToggleAutohunt);
 
-        await phone.RunAsync(ring.Render, PilotPhase.Focus, () => phone.Pilot.Phase == PilotPhase.CheckZone);
+        await phone.RunAsync(ring.Render, PilotPhase.Focus, () => phone.Pilot.Phase == PilotPhase.CheckZone, timeoutMs: RingTimeoutMs);
 
         Assert.Equal(PilotPhase.CheckZone, phone.Pilot.Phase);
         Assert.Empty(phone.Touch.Calls);

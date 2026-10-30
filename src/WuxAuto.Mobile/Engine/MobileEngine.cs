@@ -70,11 +70,15 @@ public sealed class MobileEngine : IDisposable
 
     /// <param name="capture">The running capture, or null (it comes and goes with the consent: one per session).</param>
     /// <param name="ocr">Owned: disposed with the engine (through the analyzer).</param>
+    /// <summary>The modes the phone runs (M5: LOD and Laby; Auto War and Auto Blossom come later).</summary>
+    public static readonly IReadOnlySet<RunMode> PhoneModes = new HashSet<RunMode> { RunMode.AutoLod, RunMode.AutoLaby };
+
     public MobileEngine(AppSettings settings, Func<CaptureService?> capture, ITouchInput touch, IOcrEngine ocr)
     {
         _settings = settings;
-        // Until M5 the phone runs Auto LOD only (Laby and Auto War are not ported): a saved Laby / War mode reads as LOD.
-        if (_settings.Sequence.Mode != RunMode.AutoLod)
+        // The phone runs Auto LOD and Auto Laby (M5); Auto War and Auto Blossom are not ported yet: a saved War / Blossom
+        // mode reads as LOD.
+        if (!PhoneModes.Contains(_settings.Sequence.Mode))
             _settings.Sequence.Mode = RunMode.AutoLod;
         _capture = capture;
         if (touch is AndroidTouchInput android)
@@ -183,9 +187,9 @@ public sealed class MobileEngine : IDisposable
             return;
         }
 
-        if (mode != RunMode.AutoLod)
+        if (!PhoneModes.Contains(mode))
         {
-            Emit(LogLevel.Warning, $"{(mode == RunMode.AutoLaby ? "Laby" : mode.ToString())}: coming in M5 - only LOD runs on the phone for now.");
+            Emit(LogLevel.Warning, $"{mode}: not on the phone yet - LOD and Laby run on the phone for now.");
             return;
         }
 

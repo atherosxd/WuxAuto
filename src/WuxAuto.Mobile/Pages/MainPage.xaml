@@ -12,10 +12,10 @@
             <Label Text="Mode" FontAttributes="Bold" />
             <HorizontalStackLayout Spacing="16" RadioButtonGroup.GroupName="mode">
                 <RadioButton x:Name="ModeLod" Content="LOD" CheckedChanged="OnModeChanged" />
-                <RadioButton x:Name="ModeLaby" Content="Laby: coming in M5" IsEnabled="False" />
+                <RadioButton x:Name="ModeLaby" Content="Laby" CheckedChanged="OnModeChanged" />
             </HorizontalStackLayout>
             <Label FontSize="12" TextColor="Gray"
-                   Text="LOD for now fights where the teleport lands: it does not walk to the boss yet (no picture of the LOD minimap's south beam on the phone). When the LOD entries run out it stops in town." />
+                   Text="LOD walks up-left from the arrival spot, then fights there. Laby clears the four stages and the last boss as on the PC. When one kind of entry runs out it switches to the other; with both out it stops in town." />
 
             <HorizontalStackLayout Spacing="8">
                 <CheckBox x:Name="DryRun" CheckedChanged="OnDryRunChanged" />
