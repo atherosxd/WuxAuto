@@ -134,4 +134,92 @@ public class BeamAngleTests : AppPathsScope
         var parts = drag[5..].Split("->");
         Assert.InRange(Math.Abs(int.Parse(parts[1].Split(',')[0]) - int.Parse(parts[0].Split(',')[0])), 40, 94);
     }
+
+    [Theory]
+    // live MuMu 2026-10-30 at the Labyrinth's entrance, the beam cut by the minimap's bottom edge (true ~100 degrees)
+    [InlineData(new[] { 75, 105, 120 }, new[] { 0.841, 0.780, 0.725 }, 75)]
+    // lined up and 15 degrees off on the open minimap: over the gate
+    [InlineData(new[] { 0, 0, 0 }, new[] { 0.912, 0.969, 0.991 }, 0)]
+    [InlineData(new[] { 15, 15, 15 }, new[] { 0.915, 0.971, 0.992 }, 15)]
+    // under the gate with no clear lead: two far angles score alike
+    [InlineData(new[] { 75, 255 }, new[] { 0.80, 0.78 }, null)]
+    // under the floor
+    [InlineData(new[] { 90 }, new[] { 0.70 }, null)]
+    // a near neighbour (< 30 degrees) is no rival
+    [InlineData(new[] { 90, 105 }, new[] { 0.75, 0.74 }, 90)]
+    public void TrustedBeam_ClearWinnerOnly(int[] angles, double[] scores, int? expected)
+    {
+        var reads = angles.Zip(scores, (a, s) => (a, s)).ToList();
+        Assert.Equal(expected, AutomationPilot.TrustedBeam(reads, 0.85)?.AngleCw);
+    }
+
+    /// <summary>A phone Labyrinth pilot on a grey frame (no beam to read: the turn goes on by taps) with the minimap's title.</summary>
+    PhonePilot TurningPhone(Action<AppSettings>? tweak = null)
+    {
+        var settings = PhonePilot.PhoneLodSettings();
+        settings.Sequence.Mode = RunMode.AutoLaby;
+        tweak?.Invoke(settings);
+        var phone = new PhonePilot(TempRoot(), settings, DesktopAssets);
+        phone.Shortcuts.Icons[GameAction.TargetNearest] = new PixelRect(1595, 755, 120, 120); // the sword (Tab)
+        phone.Ocr.Scene = () => [FakeOcrEngine.Line("[The Labyrinth (Adept)]", 1600, 60), FakeOcrEngine.Line("3595 , 3415", 1656, 107, 110, 15)];
+        return phone;
+    }
+
+    [Fact]
+    public async Task Phone_ArrivalTurn_GivesWayToTheFirstGate_TheMapFirst()
+    {
+        // User, 2026-10-30: "it is so slow to turn, while turning keep track on the timer as per wiki and also keep track
+        // of gate opened ... open the map and click the boss". 1 s here instead of 30.
+        using var phone = TurningPhone();
+        phone.Pilot.LabyFirstGateMs = 1000;
+        using var frame = PhoneFrames.Grey();
+
+        phone.Pilot.Start(PilotPhase.ZoomOut, stageIndex: 0);
+        long deadline = Environment.TickCount64 + 20000;
+        while (phone.Pilot.Phase != PilotPhase.ClickMap && phone.Pilot.IsRunning && Environment.TickCount64 < deadline)
+        {
+            await phone.Pilot.TickAsync(frame, CancellationToken.None);
+            await Task.Delay(15);
+        }
+
+        var phase = phone.Pilot.Phase;
+        phone.Pilot.Stop("test over");
+        Assert.True(phase == PilotPhase.ClickMap, phone.Log);
+        Assert.Contains(phone.Phases, p => p == PilotPhase.FaceNorth); // it was turning
+        Assert.Contains(phone.Lines, l => l.Contains("The stage 1 gate is open (its fixed timer, 30 s after arriving) while turning", StringComparison.Ordinal));
+        Assert.True(phone.Pilot.NorthPending);
+    }
+
+    [Fact]
+    public async Task Phone_PendingTurn_DoneDuringTheBossWait_TheSpawnClockKept()
+    {
+        using var phone = TurningPhone(s =>
+        {
+            s.Dungeon.BossSpawnWaitMs = 20000;
+            s.Sequence.AlignMaxAttempts = 3; // no beam: three taps, then "carrying on"
+        });
+        using var frame = PhoneFrames.Grey();
+
+        phone.Pilot.Start(PilotPhase.WaitBoss, stageIndex: 0);
+        phone.Pilot.NorthPending = true; // as the arrival turn left it (Start clears it)
+        long started = Environment.TickCount64;
+        long backAt = 0;
+        long deadline = started + 40000;
+        while (!phone.Lines.Any(l => l.Contains("Pressed 'Tab'", StringComparison.Ordinal)) && phone.Pilot.IsRunning && Environment.TickCount64 < deadline)
+        {
+            await phone.Pilot.TickAsync(frame, CancellationToken.None);
+            if (backAt == 0 && phone.Phases.Count(p => p == PilotPhase.WaitBoss) >= 2)
+                backAt = Environment.TickCount64;
+            await Task.Delay(15);
+        }
+
+        long tabAt = Environment.TickCount64 - started;
+        phone.Pilot.Stop("test over");
+        Assert.Contains(phone.Lines, l => l.Contains("Lining the searchlight up while the stage 1 boss spawns", StringComparison.Ordinal));
+        Assert.Equal([PilotPhase.WaitBoss, PilotPhase.FaceNorth, PilotPhase.WaitBoss], phone.Phases.Take(3));
+        Assert.True(backAt > 0, phone.Log);
+        Assert.False(phone.Pilot.NorthPending);
+        // The Tab comes 20 s after the wait began, not 20 s after the turn came back.
+        Assert.InRange(tabAt, 19000, 23000);
+    }
 }

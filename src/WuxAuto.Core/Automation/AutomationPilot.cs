@@ -242,6 +242,14 @@ public sealed partial class AutomationPilot
     private bool _compassAnchored;
     private double _bestFlashlightScore;
     private int _northAims;                  // phone: long turns made towards the beam's heading this lining-up (PhoneAimBeam)
+    private bool _northPending;              // phone: the turn on arrival gave way to the first gate; it is finished during the stage 1 boss wait
+
+    /// <summary>The turn on arrival gave way to the first gate and waits for the boss wait (<see cref="_northPending"/>; settable for the tests).</summary>
+    internal bool NorthPending { get => _northPending; set => _northPending = value; }
+
+    private long? _northForWaitBoss;         // phone: that turn runs now; WaitBoss's spawn clock started at this time (restored after it)
+    private long _nextTurnGateLookAt;        // phone: the next look for the gate banner during the turn on arrival
+    private int _turnGatePolls;
     private (int Height, double Scale)? _beamScale; // the scale the searchlight last matched at (>= the gate), per frame height
     private int _bestFlashlightStep;
     private readonly List<int> _tapsSinceBest = new();
@@ -596,6 +604,10 @@ public sealed partial class AutomationPilot
         _refinePending = false;
         _killShotTag = null;
         _gateDueAt = null;
+        _northPending = false;
+        _northForWaitBoss = null;
+        _nextTurnGateLookAt = 0;
+        _turnGatePolls = 0;
         ResetBossState();
     }
 
@@ -2691,6 +2703,11 @@ public sealed partial class AutomationPilot
         if (_faceSouth && IsLod && await LodBossInViewWhileTurningAsync(frame))
             return;
 
+        // Phone, the turn on arrival: the first gate is open 60 s only (user, 2026-10-30: "while turning keep track on the
+        // timer as per wiki and also keep track of gate opened ... open the map and click the boss").
+        if (Profile == PlatformProfile.Phone && _earlyNorth && _northForWaitBoss == null && await PhoneGateOpenWhileTurningAsync(frame))
+            return;
+
         var roi = _analyzer.CompassRegion(frame.Width, frame.Height);
         string template = _analyzer.Library.TryGet(dungeon.FlashlightTemplate, out _) ? dungeon.FlashlightTemplate : "flashlight";
         // Auto LOD: the user's flashlightLOD crop already faces SOUTH - used as is for the south turn
@@ -2721,7 +2738,7 @@ public sealed partial class AutomationPilot
 
         // Phone (user, 2026-10-30: "it is too slow to rotate try to rotate faster" - 27 taps of ~15 degrees, ~1 s each):
         // before the first tap, read which way the beam points and turn most of the way in one long drag.
-        if (Profile == PlatformProfile.Phone && _attempts == 0 && _northAims < MaxNorthAims && PhoneAimBeam(frame, template, roi, match, need))
+        if (Profile == PlatformProfile.Phone && _attempts == 0 && _northAims < MaxNorthAims && PhoneAimBeam(frame, template, roi, need))
             return;
 
         if (score > _bestFlashlightScore + 0.002)
@@ -2815,8 +2832,79 @@ public sealed partial class AutomationPilot
         _waitUntil = Environment.TickCount64 + _settings.Sequence.RotateSettleMs;
     }
 
+    /// <summary>
+    /// Phone, the turn on arrival: the first gate opened (its 30 s timer, or the banner - looked for every 1.5 s, OCR every
+    /// other look) -> the turn stops, the map and the stage 1 boss come first (live 2026-10-30: 32 taps took 60 s and the
+    /// pick came 10 s before the gate closed - the character was sent home), and the turn is finished during the stage 1
+    /// boss wait (<see cref="_northPending"/>). True = the map was started.
+    /// </summary>
+    private async Task<bool> PhoneGateOpenWhileTurningAsync(Mat frame)
+    {
+        long now = Environment.TickCount64;
+        string? how = null;
+        if (_gateDueAt is long due && now >= due)
+            how = "its fixed timer, 30 s after arriving";
+        else if (now >= _nextTurnGateLookAt)
+        {
+            _nextTurnGateLookAt = now + 1500;
+            how = await FindGateBannerAsync(frame, useOcr: ++_turnGatePolls % 2 == 0);
+        }
+
+        if (how == null)
+            return false;
+
+        _northPending = true;
+        _earlyNorth = false;
+        _compassAnchored = false;
+        _bestFlashlightScore = 0;
+        _northAims = 0;
+        _bestFlashlightStep = 0;
+        _tapsSinceBest.Clear();
+        _refineDir = 0;
+        _refinePending = false;
+        Log?.Invoke(LogLevel.Info, $"The stage 1 gate is open ({how}) while turning - the map first; the north turn goes on during the boss wait.");
+        GateOpened(how);
+        return true;
+    }
+
     /// <summary>Phone: long turns towards the beam's wanted heading before the tap-and-look search, per lining-up.</summary>
     private const int MaxNorthAims = 3;
+
+    /// <summary>The sizes (x the frame's scale) the beam's angle is read at, <see cref="PhoneAimBeam"/>.</summary>
+    private static readonly double[] BeamScales = [1.1, 1.3, 1.5];
+
+    /// <summary>A beam read below the gate still counts at this score when it leads every other angle (<see cref="AimMargin"/>).</summary>
+    internal const double AimMinScore = 0.72;
+
+    /// <summary>The lead over the best read pointing at least 30 degrees elsewhere.</summary>
+    internal const double AimMargin = 0.04;
+
+    /// <summary>
+    /// The beam's angle from reads at several sizes: the best read when it scores <paramref name="need"/>, or at least
+    /// <see cref="AimMinScore"/> and <see cref="AimMargin"/> more than the best read pointing 30+ degrees away (a live
+    /// MuMu frame at the entrance, beam at ~100 degrees: 75 degrees 0.841 at x1.1, 105 0.780 at x1.3, 120 0.725 at x1.5 -
+    /// 75 leads by 0.061; the re-read after the first long turn corrects the rest). Null when no read is clear.
+    /// </summary>
+    internal static (int AngleCw, double Score)? TrustedBeam(IReadOnlyList<(int AngleCw, double Score)> reads, double need)
+    {
+        if (reads.Count == 0)
+            return null;
+
+        var best = reads.MaxBy(r => r.Score);
+        if (best.Score >= need)
+            return best;
+        if (best.Score < AimMinScore)
+            return null;
+
+        double other = reads.Where(r => AngleApart(r.AngleCw, best.AngleCw) >= 30).Select(r => r.Score).DefaultIfEmpty(0).Max();
+        return best.Score - other >= AimMargin ? best : null;
+
+        static int AngleApart(int a, int b)
+        {
+            int d = Math.Abs(a - b) % 360;
+            return d > 180 ? 360 - d : d;
+        }
+    }
 
     /// <summary>
     /// Phone: the long turn leaves the beam this far clockwise of the wanted heading - the tap search taps left
@@ -2839,30 +2927,30 @@ public sealed partial class AutomationPilot
     /// (false, the taps take over) once the beam is 0-30 degrees clockwise of the heading, or when no estimate scores
     /// <paramref name="need"/>. True = a turn went out (or was blocked) and the tick is over.
     /// </summary>
-    private bool PhoneAimBeam(Mat frame, string template, PixelRect roi, TemplateMatch? match, double need)
+    private bool PhoneAimBeam(Mat frame, string template, PixelRect roi, double need)
     {
         long now = Environment.TickCount64;
-        // The scale the beam matched at: a good match this lining-up or earlier, else this frame's best, else three
-        // guesses round the phone's measured x1.5 (MuMu 1920x1080, interface scale 1.10).
-        var scales = new List<double>();
-        if (_beamScale is { } known && known.Height == frame.Height)
-            scales.Add(known.Scale);
-        else if (match is { Score: >= 0.60 })
-            scales.Add(match.Scale);
-        else
-            scales.AddRange(new[] { 1.35, 1.5, 1.65 }.Select(s => s * _analyzer.ScaleFor(frame.Height)));
+        // Several sizes: lined up on the open minimap the beam is x1.5 (MuMu 1920x1080, interface scale 1.10), but at the
+        // Labyrinth's entrance the marker sits on the minimap's bottom edge and the beam is cut short - live it matched
+        // best at x1.2 (0.79, the right angle) and wrongly at x1.5 (0.69). The size of a good match this lining-up first.
+        double baseScale = _analyzer.ScaleFor(frame.Height);
+        var scales = BeamScales.Select(s => s * baseScale).ToList();
+        if (_beamScale is { } known && known.Height == frame.Height && scales.All(s => Math.Abs(s - known.Scale) > 0.05))
+            scales.Insert(0, known.Scale);
 
-        (int AngleCw, double Score)? beam = null;
+        var reads = new List<(int AngleCw, double Score)>();
         foreach (double scale in scales)
         {
-            if (_analyzer.BeamAngle(frame, template, roi, scale) is { } b && (beam == null || b.Score > beam.Value.Score))
-                beam = b;
+            if (_analyzer.BeamAngle(frame, template, roi, scale) is { } b)
+                reads.Add(b);
         }
 
-        if (beam is not { } found || found.Score < need)
+        var best = reads.Count == 0 ? ((int, double)?)null : reads.MaxBy(r => r.Score);
+        if (TrustedBeam(reads, need) is not { } found)
         {
             Log?.Invoke(LogLevel.Info,
-                $"Could not tell which way the searchlight points (best {beam?.Score ?? 0:0.00}, {need:0.00} needed) - turning by taps.");
+                $"Could not tell which way the searchlight points (best {best?.Item2 ?? 0:0.00} at {best?.Item1 ?? 0} degrees; " +
+                $"{need:0.00}, or {AimMinScore:0.00} with a {AimMargin:0.00} lead, needed) - turning by taps.");
             _northAims = MaxNorthAims;
             return false;
         }
@@ -3011,7 +3099,7 @@ public sealed partial class AutomationPilot
         }
 
         // The early turn right after loading: back to the stage loop; the check after stage 4 then
-        // only needs a tap or two.
+        // only needs a tap or two. Phone: the one finished during the stage 1 boss wait goes back to that wait.
         if (_earlyNorth)
         {
             _earlyNorth = false;
@@ -3020,7 +3108,7 @@ public sealed partial class AutomationPilot
             _northAims = 0;
             _bestFlashlightStep = 0;
             _tapsSinceBest.Clear();
-            return PilotPhase.WaitForGate;
+            return _northForWaitBoss != null ? PilotPhase.WaitBoss : PilotPhase.WaitForGate;
         }
 
         return _settings.Dungeon.AimGate ? PilotPhase.AimGate : PilotPhase.RunToTarget;
@@ -4295,9 +4383,34 @@ public sealed partial class AutomationPilot
     private async Task TickWaitBossAsync(Mat frame)
     {
         var dungeon = _settings.Dungeon;
+        // Phone: back from the north turn finished during this wait - the spawn clock goes on from where it was.
+        if (_northForWaitBoss is long waitStart)
+        {
+            _phaseStart = waitStart;
+            _northForWaitBoss = null;
+        }
+
         long elapsed = Environment.TickCount64 - _phaseStart;
         // The final boss is already standing there when the run arrives.
         long spawnWait = IsFinalBoss ? 0 : dungeon.BossSpawnWaitMs;
+
+        // Phone: the turn on arrival gave way to the first gate - finish it now, while the boss spawns (at least 15 s left).
+        if (Profile == PlatformProfile.Phone && _northPending && !IsFinalBoss && elapsed < spawnWait - 15000)
+        {
+            _northPending = false;
+            _northForWaitBoss = _phaseStart;
+            _earlyNorth = true;
+            _compassAnchored = false;
+            _bestFlashlightScore = 0;
+            _northAims = 0;
+            _bestFlashlightStep = 0;
+            _tapsSinceBest.Clear();
+            _refineDir = 0;
+            _refinePending = false;
+            Log?.Invoke(LogLevel.Info, $"Lining the searchlight up while the stage {_stageIndex + 1} boss spawns.");
+            Advance(PilotPhase.FaceNorth, 200);
+            return;
+        }
 
         // Stage 5, first thing at the waypoint (user, 2026-10-26: the boss "still manages to get
         // stuck on autohunt but not attacking it" - "when in Waypoint 1, disable auto hunt"): the J

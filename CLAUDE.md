@@ -339,7 +339,17 @@ again, then "gone - opening it again", "not open - clicking the map button" (whi
 Phone now: a boss death goes straight to the map (`NextStageOrFinish` -> `GateOpened`, no WaitForGate between stages,
 no `GateToMapDelayMs`), the timer grace is 0, and every map decision after a map tap waits at least `PhoneUiLagMs` 1.5 s
 (the map button, the window check, the '>'); a map gone after any '>' tap of this pick counts as the pick going through
-(`_chevronTaps`). The first gate after arriving still waits for its banner or its 30 s timer. **Keys:** the pilot's restarts teleport in again on their own: that night
+(`_chevronTaps`). The first gate after arriving still waits for its banner or its 30 s timer. (9) **The turn gives way to
+the first gate** (user: "it is so slow to turn, while turning keep track on the timer as per wiki and also keep track of
+gate opened ... open the map and click the boss"): two entries the same evening were lost at stage 1 - the arrival turn
+fell back to taps (30+ taps, ~60 s), the pick came 10-20 s before the first gate closed, and the walk from the entrance to
+stage 1 takes longer than that. Phone now: during the turn on arrival the pilot watches the 30 s timer and the banner
+(every 1.5 s, OCR every other look, `PhoneGateOpenWhileTurningAsync`); open -> the map and the boss at once, and the turn is
+finished during the stage 1 boss wait (`_northPending` -> FaceNorth -> back to WaitBoss with its spawn clock kept,
+`_northForWaitBoss`). And the angle read: at the entrance the marker sits on the minimap's bottom edge and the beam is cut
+short - it read 95 degrees (right) at x1.2 with 0.79 but a wrong 5 degrees at x1.5 with 0.69, under the 0.85 gate. It now
+reads at x1.1 / 1.3 / 1.5 on a half-size picture (~1.5 s on the PC) and trusts the best read at 0.85, or at 0.72 with a 0.04
+lead over every read 30+ degrees away (`TrustedBeam`); the long turn is re-read after each drag. **Keys:** the pilot's restarts teleport in again on their own: that night
 it entered the Labyrinth at 13:58, 14:07, 14:09 and 14:39 (a 16:14 click did not take); stop it before a restart when
 the key budget is spent. Not yet seen live: the resume read, the long north turn, the gate timer, (5) and (6).
 

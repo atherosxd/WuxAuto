@@ -996,12 +996,15 @@ public sealed class ScreenAnalyzer : IDisposable
         if (area.Width < 8 || area.Height < 8)
             return null;
 
-        // Grey once (the matcher works in grey anyway): a quarter of the work per turned copy.
-        using var gray = TemplateMatcher.ToGray(frame, area);
-        int side = (int)Math.Ceiling(Math.Sqrt((double)area.Width * area.Width + (double)area.Height * area.Height)) + 2;
+        // Grey once (the matcher works in grey anyway) and at half size: a phone reads several sizes per turn, and the angle
+        // needs no full resolution (MuMu frames: the same angles as at full size).
+        using var full = TemplateMatcher.ToGray(frame, area);
+        using var gray = new Mat();
+        CvInvoke.Resize(full, gray, new Size(Math.Max(1, full.Width / 2), Math.Max(1, full.Height / 2)), 0, 0, Inter.Area);
+        int side = (int)Math.Ceiling(Math.Sqrt((double)gray.Width * gray.Width + (double)gray.Height * gray.Height)) + 2;
         using var square = new Mat();
-        CvInvoke.CopyMakeBorder(gray, square, (side - area.Height) / 2, side - area.Height - (side - area.Height) / 2,
-            (side - area.Width) / 2, side - area.Width - (side - area.Width) / 2, BorderType.Constant, new MCvScalar(0));
+        CvInvoke.CopyMakeBorder(gray, square, (side - gray.Height) / 2, side - gray.Height - (side - gray.Height) / 2,
+            (side - gray.Width) / 2, side - gray.Width - (side - gray.Width) / 2, BorderType.Constant, new MCvScalar(0));
         var whole = new PixelRect(0, 0, side, side);
         var centre = new PointF(side / 2f, side / 2f);
 
@@ -1016,7 +1019,7 @@ public sealed class ScreenAnalyzer : IDisposable
             CvInvoke.GetRotationMatrix2D(centre, angle, 1.0, rotation);
             CvInvoke.WarpAffine(square, turned, rotation, new Size(side, side), Inter.Linear, Warp.Default,
                 BorderType.Constant, new MCvScalar(0));
-            var hit = Matcher.FindBest(turned, templateName, whole, scale, 0.0);
+            var hit = Matcher.FindBest(turned, templateName, whole, scale / 2, 0.0);
             if (hit != null && hit.Score > best)
             {
                 best = hit.Score;
