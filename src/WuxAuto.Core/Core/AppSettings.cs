@@ -1224,10 +1224,12 @@ public sealed class DungeonSettings
     /// <summary>
     /// Stages 1-4: with the boss in view, hold the skill key (<see cref="HoldSkillMs"/>) once before
     /// the autohunt goes on, then J and the select clicks (user, 2026-10-27: "on other stages, before
-    /// going autohunt, try to skill hold first"). Off = J right after the spawn wait, as before. UI
-    /// "Hold skill before autohunt (stages 1-4)".
+    /// going autohunt, try to skill hold first"). Off (the default since settings v26, user 2026-10-31:
+    /// "revert the old auto hunt > click center upon boss spawn" - with the hold the autohunt sometimes
+    /// started and did not attack) = J right after the spawn wait, then Tab and the centre clicks, as
+    /// before. UI "Hold skill before autohunt (stages 1-4)".
     /// </summary>
-    public bool HoldBeforeAutohunt { get; set; } = true;
+    public bool HoldBeforeAutohunt { get; set; }
 
     /// <summary>At least this long between two skill presses (user, 2026-10-26: 300 ms or more).</summary>
     public int ManualAttackIntervalMs { get; set; } = 300;

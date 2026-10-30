@@ -73,7 +73,7 @@ public static class AppPaths
 public static class SettingsStore
 {
     /// <summary>Bump when an existing settings.json must be migrated (see <see cref="Migrate"/>).</summary>
-    private const int CurrentVersion = 25;
+    private const int CurrentVersion = 26;
 
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
@@ -255,6 +255,13 @@ public static class SettingsStore
             route.BackAndForth = d.BackAndForth;
             route.WaypointTurns = d.WaypointTurns;
         }
+
+        // v26: stages 1-4 back to the old flow (user, 2026-10-31: "revert the old auto hunt > click center upon boss
+        // spawn"; with the held press first the autohunt sometimes started and did not attack the boss): J after the
+        // spawn wait, then Tab and the centre clicks. Every saved file has the v0.14.0 default true, so all are moved;
+        // the check box still turns the hold back on.
+        if (s.Version < 26 && s.Dungeon != null)
+            s.Dungeon.HoldBeforeAutohunt = false;
 
         s.Version = CurrentVersion;
         return true;
