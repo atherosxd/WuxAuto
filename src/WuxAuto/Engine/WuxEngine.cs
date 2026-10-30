@@ -31,6 +31,7 @@ public sealed class WuxEngine : IAsyncDisposable
     private readonly WindowInput _input;
     private readonly AutomationPilot _pilot;
     private readonly AutoConfirm _autoConfirm;
+    private readonly RouteRecorder _routeRecorder;
 
     private CancellationTokenSource? _loopCts;
     private Task? _loopTask;
@@ -54,6 +55,8 @@ public sealed class WuxEngine : IAsyncDisposable
         _pilot = new AutomationPilot(settings, _analyzer, new KeyboardMouseControls(settings, _input));
         _autoConfirm = new AutoConfirm(settings, _analyzer, _input);
         _autoConfirm.Log += (level, message) => EmitLog(level, message);
+        _routeRecorder = new RouteRecorder(settings, _analyzer, _input);
+        _routeRecorder.Log += (level, message) => EmitLog(level, message);
 
         _input.Log += (level, message) => EmitLog(level, message);
         _pilot.Log += (level, message) => EmitLog(level, message);
@@ -77,6 +80,9 @@ public sealed class WuxEngine : IAsyncDisposable
 
     public TemplateLibrary Templates => _analyzer.Library;
     public AutomationPilot Pilot => _pilot;
+
+    /// <summary>Auto Blossom's Record route; ticked by the vision loop while the pilot is not running.</summary>
+    public RouteRecorder RouteRecorder => _routeRecorder;
 
     /// <summary>Re-read the PNGs and clear every cached template scale.</summary>
     public void ReloadTemplates() => _analyzer.ReloadTemplates();
@@ -264,7 +270,10 @@ public sealed class WuxEngine : IAsyncDisposable
                     if (_pilot.IsRunning)
                         await _pilot.TickAsync(mat, token);
                     else
+                    {
                         await _autoConfirm.TickAsync(mat);
+                        await _routeRecorder.TickAsync(mat);
+                    }
 
                     PublishPreview(mat, frame);
                 }

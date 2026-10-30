@@ -55,6 +55,7 @@ public static class OptionLists
         RunMode.AutoLaby,
         RunMode.AutoLod,
         RunMode.AutoWar,
+        RunMode.AutoBlossom,
     };
 
     public static InputMode[] InputModes { get; } =

@@ -39,6 +39,11 @@ public enum PilotPhase
     LodApproach,
     LodRespawn,
     LodLoot,
+    BlossomTurn,
+    BlossomWalk,
+    BlossomAttack,
+    BlossomLoot,
+    BlossomRespawn,
     WarRemember,
     WarWait,
     WarJoin,
@@ -303,6 +308,11 @@ public sealed partial class AutomationPilot
         PilotPhase.LodApproach => "walking up to the LOD boss (Ctrl+click on its ring)",
         PilotPhase.LodRespawn => "back at the start - settling",
         PilotPhase.LodLoot => "looting the LOD boss",
+        PilotPhase.BlossomTurn => "turning to the Blossom pillars",
+        PilotPhase.BlossomWalk => "walking the Blossom route, pressing Tab",
+        PilotPhase.BlossomAttack => "attacking the Jaso Practitioner",
+        PilotPhase.BlossomLoot => "looting the Jaso Practitioner",
+        PilotPhase.BlossomRespawn => "back after a death - settling",
         PilotPhase.ReturnToTown => "autohunt off, returning to town",
         PilotPhase.Reconnect => "disconnected - logging back in",
         PilotPhase.RegularWarOn => "turning the auto war on",
@@ -339,6 +349,10 @@ public sealed partial class AutomationPilot
         _restartTimes.Clear();
         _homeTown = null;
         _lodKills = 0;
+        _blossomKills = 0;
+        _blossomShots.Clear();
+        _warHasAutoBuff = null;   // Auto Blossom asks once per Start (Auto War asks again on each war's entry)
+        _warBuffedAt = 0;
         _lodBuffAt = 0;
         _lodBuffs = 0;
         _lodApproachSnapshots = 0;
@@ -458,12 +472,13 @@ public sealed partial class AutomationPilot
         _runToTargetPending = false;
         _westDone = false;
         _headingBase = 0;
+        ResetBlossomRunState();
         _jumpCandidate = null;
         _jumpAgreements = 0;
         _returning = false;
         _autohuntOff = false;
         ResetAutohuntCheck();
-        _visitTabTarget = _settings.Sequence.TabTargetDefault ? "Default" : null;
+        _visitTabTarget = TownTabTarget(_settings);
         _visitSkipFont = false;
         _visitNext = PilotPhase.OpenInventory;
         _warListCheck = false;
@@ -549,7 +564,8 @@ public sealed partial class AutomationPilot
                              && _phase is not (PilotPhase.FindChevron or PilotPhase.FindDestination);
         bool watchWarDialog = IsWar && _phase is (PilotPhase.WarWait or PilotPhase.WarRemember) && !_warMonsterConfirmed;
         bool warBehind = IsWar && !_controls.IsGameInFront;
-        if ((_settings.Sequence.AutoReconnect || cancelDialogs || watchWarDialog) && !warBehind && _phase != PilotPhase.Reconnect && now >= _nextDisconnectCheckAt)
+        bool afkWatch = BlossomAfkWatch;
+        if ((_settings.Sequence.AutoReconnect || cancelDialogs || watchWarDialog || afkWatch) && !warBehind && _phase != PilotPhase.Reconnect && now >= _nextDisconnectCheckAt)
         {
             _nextDisconnectCheckAt = now + 5000;
             try
@@ -576,6 +592,10 @@ public sealed partial class AutomationPilot
                     return;
                 }
 
+                // Auto Blossom: the chat's AFK Checker at 1/5 or more -> a short step (user, 2026-10-30).
+                if (afkWatch && TryBlossomAfkStep(frame, screenWords, now))
+                    return;
+
                 // The war dialog while waiting for the war: join now.
                 if (watchWarDialog
                     && ScreenAnalyzer.ToLines(screenWords).Any(l => WarText.IsWarDialogLine(l.Text, _settings.War.Destination)))
@@ -594,7 +614,8 @@ public sealed partial class AutomationPilot
         // "Labyrinth" within the last few seconds. Rotating, map clicks and Tab were sent in town
         // and in Bohai Outpost before. Stage 5 closing puts the character back in town -> next run.
         // Auto War: the same guard over the map pick in the cave (Destination = the cave).
-        if ((_settings.Dungeon.Enabled || IsWar) && !_returning && IsLabyrinthPhase(_phase))
+        if ((_settings.Dungeon.Enabled || IsWar || IsBlossom) && !_returning
+            && (IsLabyrinthPhase(_phase) || (IsBlossom && _phase == PilotPhase.WarBuff)))
         {
             // Auto War's map pick reads the map window: only with the game in front - a second game client's map
             // must never confirm or pick a monster. The minimap is read again as soon as the game is back, and the
@@ -620,6 +641,12 @@ public sealed partial class AutomationPilot
                 string? title = await ReadMinimapTitleAsync(frame);
                 string zone = title == null ? string.Empty : TextMatcher.Normalize(title);
                 string? townSeen = TownIn(title);
+
+                // Auto Blossom's buffs: the autohunt settings or the AUTO BUFF dialog may cover the minimap title for longer
+                // than the 6 s hold - an unread title goes on there, as Auto War's buff steps let it (a town or another zone
+                // still counts below).
+                if (title == null && IsBlossom && _phase == PilotPhase.WarBuff)
+                    _zoneConfirmedAt = now;
 
                 // Auto War: the cave itself, never a sibling sharing its first 10 letters (WarText.SameZone).
                 if (IsWar ? WarText.SameZone(title, Destination) : ZoneMatches(title, Destination))
@@ -667,10 +694,12 @@ public sealed partial class AutomationPilot
 
                     // Auto LOD: the boss respawns, so the map is unlimited until its timer runs out and
                     // the game sends the character to town (user) - teleport in again.
-                    if (IsLod && inTown)
+                    // Auto Blossom: the map's AFK checker kicks an idle character to town (user) - teleport in again.
+                    if ((IsLod || IsBlossom) && inTown)
                     {
-                        Log?.Invoke(LogLevel.Warning,
-                            $"Back in {HomeTown} during {_phase} (the {Destination} timer ran out?) after {_lodKills} kill(s) - teleporting in again.");
+                        Log?.Invoke(LogLevel.Warning, IsBlossom
+                            ? $"Back in {HomeTown} during {_phase} (the AFK checker?) after {_blossomKills} kill(s) - teleporting in again."
+                            : $"Back in {HomeTown} during {_phase} (the {Destination} timer ran out?) after {_lodKills} kill(s) - teleporting in again.");
                         ResetRunState();
                         _runStart = Environment.TickCount64;
                         Advance(PilotPhase.Focus, 1500);
@@ -679,7 +708,7 @@ public sealed partial class AutomationPilot
 
                     Log?.Invoke(LogLevel.Warning, inTown && IsFinalBoss
                         ? $"Back in {HomeTown} during {_phase} - stage 5 closed. Starting the next run."
-                        : $"In '{title}' instead of the Labyrinth during {_phase} (stage {_stageIndex + 1}) - starting the next run.");
+                        : IsBlossom ? $"In '{title}' instead of {Destination} during {_phase} - starting the next run." : $"In '{title}' instead of the Labyrinth during {_phase} (stage {_stageIndex + 1}) - starting the next run.");
                     DebugArtifacts.SaveFrame(frame, _overlays, inTown && IsFinalBoss ? "stage5_closed" : "wrong_zone");
                     ResetRunState();
                     _runStart = Environment.TickCount64;
@@ -704,7 +733,7 @@ public sealed partial class AutomationPilot
 
                 _detail = IsWar
                     ? $"not confirmed in {Destination} (minimap title) - holding all input"
-                    : "not confirmed in the Labyrinth (minimap title) - holding all input";
+                    : $"not confirmed in {Destination} (minimap title) - holding all input";
                 if (!_zoneHoldLogged)
                 {
                     _zoneHoldLogged = true;
@@ -800,6 +829,21 @@ public sealed partial class AutomationPilot
                     break;
                 case PilotPhase.LodLoot:
                     TickLodLoot(frame);
+                    break;
+                case PilotPhase.BlossomTurn:
+                    TickBlossomTurn(frame);
+                    break;
+                case PilotPhase.BlossomWalk:
+                    await TickBlossomWalkAsync(frame);
+                    break;
+                case PilotPhase.BlossomAttack:
+                    await TickBlossomAttackAsync(frame);
+                    break;
+                case PilotPhase.BlossomLoot:
+                    TickBlossomLoot();
+                    break;
+                case PilotPhase.BlossomRespawn:
+                    await TickBlossomRespawnAsync(frame);
                     break;
                 case PilotPhase.RunToTarget:
                     await TickRunToTargetAsync(frame);
@@ -917,6 +961,12 @@ public sealed partial class AutomationPilot
         bool inLabyrinth = ZoneMatches(title, Destination);
         TownIn(title);
 
+        if (IsBlossom && inLabyrinth)
+        {
+            await TickBlossomCheckZoneAsync(frame);
+            return;
+        }
+
         // Auto LOD already on the map: the boss targeted -> attack, otherwise face south and walk.
         if (IsLod && inLabyrinth)
         {
@@ -948,7 +998,7 @@ public sealed partial class AutomationPilot
             return;
         }
 
-        if ((!dungeon.Enabled && !IsLod) || !inLabyrinth)
+        if ((!dungeon.Enabled && !IsLod && !IsBlossom) || !inLabyrinth)
         {
             // An unreadable title gets a few more frames (just after a load) before teleporting.
             if (title == null && ++_attempts < 6)
@@ -969,7 +1019,7 @@ public sealed partial class AutomationPilot
             _runSkillClicks = 0;
             // Auto Laby, once per Start (user, 2026-10-29): Regular War off, or the autohunt may take the
             // character to a war mid-boss. LOD has no autohunt.
-            _regularWarOffDue = townCheck && !IsLod && !_regularWarOffChecked && _settings.Sequence.RegularWarOffForLaby;
+            _regularWarOffDue = townCheck && !IsLod && !IsBlossom && !_regularWarOffChecked && _settings.Sequence.RegularWarOffForLaby;
             if (townCheck && _settings.Sequence.AutohuntOffInTown && _controls.Has(GameAction.ToggleAutohunt))
             {
                 _huntOffPresses = 0;
@@ -1056,7 +1106,7 @@ public sealed partial class AutomationPilot
 
     /// <summary>
     /// In town: the Run skill (every run), then once per Start Regular War off (Auto Laby), the game's font
-    /// size (user: 110 - 120 %) and TAB target (Default); else the teleport.
+    /// size (user: 110 - 120 %) and TAB target (Default; Auto Blossom: its own option); else the teleport.
     /// </summary>
     private PilotPhase AfterTownChecks()
     {
@@ -1072,13 +1122,13 @@ public sealed partial class AutomationPilot
             return PilotPhase.RegularWarOff;
         }
 
-        bool tabDefault = _settings.Sequence.TabTargetDefault;
-        bool settingsCheck = _settings.Sequence.FontSizePercent > 0 || tabDefault;
+        string? tabTarget = TownTabTarget(_settings);
+        bool settingsCheck = _settings.Sequence.FontSizePercent > 0 || tabTarget != null;
         if (_fontChecked || !settingsCheck)
             return PilotPhase.OpenInventory;
 
-        // The Laby/LOD visit, from the same read of the TAB target box as the decision above.
-        _visitTabTarget = tabDefault ? "Default" : null;
+        // The Laby/LOD/Blossom visit, from the same read of the settings as the decision above.
+        _visitTabTarget = tabTarget;
         _visitSkipFont = false;
         _visitNext = PilotPhase.OpenInventory;
         return PilotPhase.FontSize;
@@ -1684,6 +1734,14 @@ public sealed partial class AutomationPilot
     /// Nearest monster) score below 0.2 against it.
     /// </summary>
     public static bool IsDefaultTabTarget(string value) => TextMatcher.Similarity(value, "Default") >= 0.75;
+
+    /// <summary>
+    /// The TAB target the town Settings visit sets: Auto Blossom's own option (user, 2026-10-30: "make sure that the tab
+    /// target is nearest monster"), else Default when "TAB target: Default" is ticked (Laby / LOD), else none.
+    /// </summary>
+    internal static string? TownTabTarget(AppSettings settings) =>
+        settings.Sequence.Mode == RunMode.AutoBlossom ? settings.Blossom.TabTargetOption
+        : settings.Sequence.TabTargetDefault ? "Default" : null;
 
     /// <summary>
     /// The TAB target chevron that moves <paramref name="value"/> towards <paramref name="wanted"/>:
@@ -2450,12 +2508,14 @@ public sealed partial class AutomationPilot
                 _townSeenAfterTeleport = _phaseStart;
 
             // Once the town was seen after this teleport, one missed read must not zoom in town.
-            if (inTown || (_townSeenAfterTeleport == _phaseStart && !IsLod))
+            // Blossom Garden needs no key (user): like LOD, still in town is a closed destination, not out of keys.
+            bool keyless = IsLod || IsBlossom;
+            if (inTown || (_townSeenAfterTeleport == _phaseStart && !keyless))
             {
                 // The teleport is what tells whether a key is left (user; the item list misread it):
                 // Labyrinth - still in town after Sequence.LabyKeyWaitSeconds = out of Temple of
                 // Fiends Keys -> Auto LOD. Waiting covers a lagging server (user: 2 min is enough).
-                long townLimit = IsLod ? limit : Math.Max(limit, _settings.Sequence.LabyKeyWaitSeconds * 1000L);
+                long townLimit = keyless ? limit : Math.Max(limit, _settings.Sequence.LabyKeyWaitSeconds * 1000L);
                 if (waited <= townLimit)
                 {
                     _detail = $"still in {HomeTown} after the teleport - waiting ({waited / 1000}s of {townLimit / 1000}s)";
@@ -2463,7 +2523,7 @@ public sealed partial class AutomationPilot
                     return;
                 }
 
-                if (!IsLod)
+                if (!keyless)
                 {
                     DebugArtifacts.SaveFrame(frame, _overlays, "out_of_keys");
                     OutOfKeys(labyrinth: true, $"still in {HomeTown} {waited / 1000}s after the teleport - out of Temple of Fiends Keys");
@@ -2509,6 +2569,12 @@ public sealed partial class AutomationPilot
         if (IsLod)
         {
             BeginFaceSouth();
+            return;
+        }
+
+        if (IsBlossom)
+        {
+            BeginBlossomArrival();
             return;
         }
 
@@ -5096,7 +5162,8 @@ public sealed partial class AutomationPilot
         => phase is PilotPhase.WaitForGate or PilotPhase.ClickMap or PilotPhase.ReadStage or PilotPhase.AdvanceStage
             or PilotPhase.WaitBoss or PilotPhase.SelectBoss or PilotPhase.WatchBoss or PilotPhase.FaceNorth
             or PilotPhase.AimGate or PilotPhase.RunToTarget
-            or PilotPhase.LodRun or PilotPhase.LodAttack or PilotPhase.LodApproach or PilotPhase.LodRespawn or PilotPhase.LodLoot;
+            or PilotPhase.LodRun or PilotPhase.LodAttack or PilotPhase.LodApproach or PilotPhase.LodRespawn or PilotPhase.LodLoot
+            || IsBlossomPhase(phase);
 
     /// <summary>
     /// The zone name at the top of the minimap panel, e.g. "[The Labyrinth (Adep", "[Piercing City)",
@@ -5107,9 +5174,7 @@ public sealed partial class AutomationPilot
     /// </summary>
     private async Task<string?> ReadMinimapTitleAsync(Mat frame)
     {
-        var band = _settings.Regions.Minimap.ToPixels(frame.Width, frame.Height);
-        var words = await _analyzer.Ocr.RecognizeAsync(frame, band, 2.0);
-        var lines = words.Select(w => w.LineText.Trim()).Distinct().ToList();
+        var lines = await _analyzer.ReadMinimapLinesAsync(frame);
         return lines.FirstOrDefault(l => ZoneMatches(l, Destination))
                ?? lines.FirstOrDefault(l => IsWar
                    ? WarText.IsZoneTitleLine(l)
@@ -5179,9 +5244,7 @@ public sealed partial class AutomationPilot
         if (TextMatcher.Normalize(text).Length == 0)
             return false;
 
-        var band = _settings.Regions.Minimap.ToPixels(frame.Width, frame.Height);
-        var words = await _analyzer.Ocr.RecognizeAsync(frame, band, 2.0);
-        return words.Any(w => ZoneMatches(w.LineText, text));
+        return (await _analyzer.ReadMinimapLinesAsync(frame)).Any(l => ZoneMatches(l, text));
     }
 
     /// <summary>

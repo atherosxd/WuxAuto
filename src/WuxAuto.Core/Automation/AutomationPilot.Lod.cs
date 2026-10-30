@@ -48,7 +48,10 @@ public sealed partial class AutomationPilot
     private bool IsLod => _settings.Sequence.Mode == RunMode.AutoLod;
 
     /// <summary>Teleport list entry and minimap zone for the selected mode (Auto War: the cave).</summary>
-    private string Destination => IsWar ? WarHomeMap : IsLod ? _settings.Lod.Destination : _settings.Sequence.DestinationText;
+    private string Destination => IsWar ? WarHomeMap
+        : IsLod ? _settings.Lod.Destination
+        : IsBlossom ? _settings.Blossom.Destination
+        : _settings.Sequence.DestinationText;
 
     /// <summary>
     /// True when the minimap title (or one OCR line) names <paramref name="destination"/>. The title is
@@ -77,7 +80,17 @@ public sealed partial class AutomationPilot
                 return true;
         }
 
-        return false;
+        // A title cut short with a stray glyph after it (live 2026-10-29, Blossom Garden: "[Blossom X" - the panel's close
+        // button read as a letter): 7+ letters of the destination's start and at most 2 characters besides.
+        int common = 0;
+        while (common < t.Length && common < d.Length && t[common] == d[common])
+            common++;
+        if (common >= 7 && t.Length - common <= 2)
+            return true;
+
+        // One or two letters misread (live run 9: "[B/ossom Garden" - the l read as a slash): the title within two edits
+        // of the destination, for a destination of 8+ letters (shorter names are too easily mistaken for another zone).
+        return d.Length >= 8 && Math.Abs(t.Length - d.Length) <= 2 && TextMatcher.Levenshtein(t, d) <= 2;
     }
 
     /// <summary>
@@ -217,7 +230,7 @@ public sealed partial class AutomationPilot
     /// </summary>
     private async Task<bool> CheckKeysAsync(Mat frame)
     {
-        if (!_settings.Sequence.CheckKeys)
+        if (!_settings.Sequence.CheckKeys || IsBlossom)   // Blossom Garden needs no key (user)
             return false;
 
         var roi = new NormRect(0.62, 0.50, 0.38, 0.50).ToPixels(frame.Width, frame.Height);

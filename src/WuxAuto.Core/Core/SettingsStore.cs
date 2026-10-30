@@ -42,7 +42,7 @@ public static class AppPaths
 public static class SettingsStore
 {
     /// <summary>Bump when an existing settings.json must be migrated (see <see cref="Migrate"/>).</summary>
-    private const int CurrentVersion = 23;
+    private const int CurrentVersion = 24;
 
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
@@ -198,6 +198,19 @@ public static class SettingsStore
         if (s.Version < 23 && s.War?.BuffIcons is { } buffs)
             buffs.RemoveAll(b => string.Equals(b?.Trim(), "warbuff2", StringComparison.OrdinalIgnoreCase));
 
+        // v24: Auto Blossom's kill check 2 s -> 1 s and loot 5 s -> 2 s (user, 2026-10-30: "the check if monster is killed,
+        // set it to 1s, loot for 2s"), the pillar turn 50 taps -> 15 ("reduce the turn to pillars to 15 turns or 10s"; the
+        // 10 s is the new TurnMaxMs). Only the old defaults move; a value set by hand stays.
+        if (s.Version < 24 && s.Blossom is { } blossom)
+        {
+            if (blossom.TargetGoneMs == 2000)
+                blossom.TargetGoneMs = 1000;
+            if (blossom.LootMs == 5000)
+                blossom.LootMs = 2000;
+            if (blossom.TurnMaxTaps == 50)
+                blossom.TurnMaxTaps = 15;
+        }
+
         s.Version = CurrentVersion;
         return true;
     }
@@ -255,6 +268,47 @@ public static class SettingsStore
         w.ListPage = Math.Clamp(w.ListPage, 1, 20);
         w.ArriveWaitMs = Math.Clamp(w.ArriveWaitMs, 5000, 600000);
         w.IconMatchScore = Math.Clamp(w.IconMatchScore, 0.3, 1.0);
+    }
+
+    /// <summary>Auto Blossom: blanks back to the defaults, an empty or unreadable route refilled, every number clamped.</summary>
+    private static void NormalizeBlossom(AppSettings s)
+    {
+        s.Blossom ??= new BlossomSettings();
+        var b = s.Blossom;
+        var d = new BlossomSettings();
+        b.Destination = string.IsNullOrWhiteSpace(b.Destination) ? d.Destination : b.Destination.Trim();
+        b.PillarTemplate = string.IsNullOrWhiteSpace(b.PillarTemplate) ? d.PillarTemplate : b.PillarTemplate.Trim();
+        b.TargetName = string.IsNullOrWhiteSpace(b.TargetName) ? d.TargetName : b.TargetName.Trim();
+        b.AfkCheckerText = (b.AfkCheckerText ?? "").Trim();
+        b.TabTargetOption = Automation.TabTargetOptions.IndexOf((b.TabTargetOption ?? "").Trim()) is int tab
+            ? Automation.TabTargetOptions.All[tab]
+            : d.TabTargetOption;
+        if (Automation.BlossomRoute.Parse(b.Waypoints).Count == 0)
+            b.Waypoints = BlossomSettings.DefaultWaypoints();
+        int count = Automation.BlossomRoute.Parse(b.Waypoints).Count;
+        b.ListPage = Math.Clamp(b.ListPage, 1, 20);
+        b.PillarMatchScore = Math.Clamp(b.PillarMatchScore, 0.30, 0.99);
+        b.PillarCenterTolerance = Math.Clamp(b.PillarCenterTolerance, 0.01, 0.30);
+        b.TurnTapMs = Math.Clamp(b.TurnTapMs, 20, 1000);
+        b.TurnTaps = Math.Clamp(b.TurnTaps, 1, 60);
+        b.TurnMaxTaps = Math.Clamp(b.TurnMaxTaps, b.TurnTaps, 120);
+        b.TurnMaxMs = Math.Clamp(b.TurnMaxMs, 2000, 120000);
+        b.LoopFrom = Math.Clamp(b.LoopFrom, 1, Math.Max(1, count));
+        b.WaypointTolerance = Math.Clamp(b.WaypointTolerance, 10, 500);
+        b.WaypointWaitMs = Math.Clamp(b.WaypointWaitMs, 0, 5000);   // the AFK checker (user: 5 s or less)
+        b.TabEveryMs = Math.Clamp(b.TabEveryMs, 300, 10000);
+        b.TargetGoneMs = Math.Clamp(b.TargetGoneMs, 500, 30000);
+        b.FightMaxMs = Math.Clamp(b.FightMaxMs, 10000, 600000);
+        b.FightStuckMs = b.FightStuckMs <= 0 ? 0 : Math.Clamp(b.FightStuckMs, 1000, 60000);
+        b.RunAheadDistance = Math.Clamp(b.RunAheadDistance, 0, 3000);
+        b.RandomSkipMax = Math.Clamp(b.RandomSkipMax, 0, 20);
+        b.LootDelayMs = Math.Clamp(b.LootDelayMs, 0, 10000);
+        b.LootMs = Math.Clamp(b.LootMs, 0, 60000);
+        b.LootEveryMs = Math.Clamp(b.LootEveryMs, 50, 2000);
+        b.WaypointTurns = (b.WaypointTurns ?? d.WaypointTurns).Select(t => (t ?? "").Trim()).Where(t => t.Length > 0).ToList();
+        b.WalkClickEveryMs = Math.Clamp(b.WalkClickEveryMs, 100, 3000);
+        b.WalkReadEveryMs = Math.Clamp(b.WalkReadEveryMs, 100, 5000);
+        b.WalkClickPx = Math.Clamp(b.WalkClickPx, 60, 600);
     }
 
     internal static void Normalize(AppSettings s)
@@ -321,6 +375,7 @@ public static class SettingsStore
         s.Lod.LootMs = Math.Clamp(s.Lod.LootMs, 10000, 60000);
         s.Lod.ListPage = Math.Clamp(s.Lod.ListPage, 1, 20);
         NormalizeWar(s);
+        NormalizeBlossom(s);
         s.Sequence.RestartDelayMs = Math.Clamp(s.Sequence.RestartDelayMs, 1000, 120000);
         s.Sequence.MaxRestarts = Math.Clamp(s.Sequence.MaxRestarts, 1, 100);
         s.Sequence.LabyKeyWaitSeconds = Math.Clamp(s.Sequence.LabyKeyWaitSeconds, 0, 3600);

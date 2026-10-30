@@ -26,6 +26,7 @@ public enum RunMode
     AutoLaby = 0,
     AutoLod = 1,
     AutoWar = 2,
+    AutoBlossom = 3,
 }
 
 /// <summary>Where the mini mode window opens on the screen (user: default bottom right).</summary>
@@ -80,6 +81,9 @@ public sealed class AppSettings
 
     /// <summary>Auto War: the tribe war in Bohai Outpost (<see cref="RunMode.AutoWar"/>).</summary>
     public WarSettings War { get; set; } = new();
+
+    /// <summary>Auto Blossom: the Jaso Practitioner route in Blossom Garden (<see cref="RunMode.AutoBlossom"/>).</summary>
+    public BlossomSettings Blossom { get; set; } = new();
 
     public UiSettings Ui { get; set; } = new();
 
@@ -274,6 +278,171 @@ public sealed class RegionSettings
     /// band the Laby/LOD key check reads (inline in CheckKeysAsync).
     /// </summary>
     public NormRect ItemList { get; set; } = new(0.62, 0.50, 0.38, 0.50);
+}
+
+/// <summary>
+/// Auto Blossom (user, 2026-10-29) - see AutomationPilot.Blossom.cs and docs/superpowers/specs/2026-10-29-auto-blossom-design.md.
+/// Teleport to Blossom Garden, line up on the two pillars, walk the waypoints, kill and loot every Jaso Practitioner.
+/// </summary>
+public sealed class BlossomSettings
+{
+    /// <summary>Teleport list entry and minimap zone.</summary>
+    public string Destination { get; set; } = "Blossom Garden";
+
+    /// <summary>The teleport list page it is on (user: page 1).</summary>
+    public int ListPage { get; set; } = 1;
+
+    /// <summary>The pillar base template (Assets): two of them side by side = lined up.</summary>
+    public string PillarTemplate { get; set; } = "blossompillar";
+
+    public double PillarMatchScore { get; set; } = 0.70;
+
+    /// <summary>Lined up = the midpoint of the two pillars within this fraction of the client width of its centre.</summary>
+    public double PillarCenterTolerance { get; set; } = 0.06;
+
+    /// <summary>One D tap (user: 100 ms).</summary>
+    public int TurnTapMs { get; set; } = 100;
+
+    /// <summary>The taps the user expects to need (7); past them the turn goes on to <see cref="TurnMaxTaps"/>.</summary>
+    public int TurnTaps { get; set; } = 7;
+
+    /// <summary>Give up turning after this many taps and walk anyway (user, 2026-10-30: "reduce the turn to pillars to 15 turns
+    /// or 10s"; was 50, about a full turn).</summary>
+    public int TurnMaxTaps { get; set; } = 15;
+
+    /// <summary>...or after this long, whichever comes first (user, 2026-10-30: 10 s).</summary>
+    public int TurnMaxMs { get; set; } = 10000;
+
+    /// <summary>The route, "x,y" world coordinates in order (user). From the last one it goes back to <see cref="LoopFrom"/> (or walks back, <see cref="BackAndForth"/>).</summary>
+    public List<string> Waypoints { get; set; } = DefaultWaypoints();
+
+    /// <summary>1-based waypoint the route loops back to after the last one (user: 17 -> 6).</summary>
+    public int LoopFrom { get; set; } = 6;
+
+    /// <summary>
+    /// Walk back the same way instead of looping (user, 2026-10-30: "1 - 83 then 83, 82, 81 to 1 then loop"): forward to the
+    /// last waypoint, back to <see cref="LoopFrom"/>, forward again; camera turns are undone on the way back. Record route
+    /// switches it on when a recording does not end near its start.
+    /// </summary>
+    public bool BackAndForth { get; set; }
+
+    /// <summary>
+    /// The game's TAB target, set in the town Settings visit before the teleport (user, 2026-10-30: "make sure that the tab
+    /// target is nearest monster" - Tab then reaches monsters further off, so the walk between waypoints matters less).
+    /// One of <see cref="Automation.TabTargetOptions.All"/>.
+    /// </summary>
+    public string TabTargetOption { get; set; } = "Nearest monster";
+
+    /// <summary>
+    /// Hold the skill key down through a fight instead of tapping it (user, 2026-10-30: "spam or hold attack skill, currently
+    /// it skills then normal attacks" - one tap casts once, then the character falls back to normal attacks). With
+    /// Dungeon.CtrlSkill the key is let go for a Ctrl + skill tap every Lod.SkillEveryMs, as LOD's hold.
+    /// </summary>
+    public bool HoldSkill { get; set; } = true;
+
+    /// <summary>
+    /// A fight with no move and no new "Attack succeeded" line this long -> a Ctrl+click step to the side (right, left, back,
+    /// ahead in turn) to get round whatever is in the way (user, 2026-10-30: "if a monster is tab, but there is 5s that it
+    /// didn't move and no attack succeeded log, try to click on other direction to reposition"). 0 = off.
+    /// </summary>
+    public int FightStuckMs { get; set; } = 5000;
+
+    /// <summary>
+    /// Tap the loot key through the fight too, and walk on as soon as the kill is seen (the target gone TargetGoneMs) - no
+    /// loot phase after it (user, 2026-10-30: "When attacking a monster, try looting also, so that when killed after 1s, the
+    /// pilot can proceed" / "the 1s delay after killing is enough for the loot, so remove the loot after kill seconds"). Off =
+    /// LootDelayMs, then LootMs of looting after the kill.
+    /// </summary>
+    public bool LootWhileFighting { get; set; } = true;
+
+    /// <summary>
+    /// The chat's "[AFK Checker] : Start 1/5" whisper (user, 2026-10-30: "if 1+/5, try to move a little bit to other
+    /// directions"): the newest such line at 1/5 or more -> a short Ctrl+click step. Empty = off.
+    /// </summary>
+    public string AfkCheckerText { get; set; } = "AFK Checker";
+
+    /// <summary>
+    /// Run, don't stagger (user, 2026-10-30: "dont walk, run far away instead of staggered"): waypoints closer than this are
+    /// run past - the walk aims at the first one at least this far along the route - so a recorded route (a waypoint every
+    /// 120 units) is run in one go instead of homing in and pausing at each. A waypoint with a camera turn is still reached.
+    /// 0 = off (every waypoint reached, with the pause).
+    /// </summary>
+    public int RunAheadDistance { get; set; } = 600;
+
+    /// <summary>
+    /// After a kill, skip 0 to this many waypoints ahead at random (user, 2026-10-30: "randomly try to skip multiple
+    /// waypoints so that it doesn't look like a bot"). 0 = off.
+    /// </summary>
+    public int RandomSkipMax { get; set; } = 4;
+
+    /// <summary>
+    /// Reached within this many units. Live 2026-10-29: the old waypoints 2, 4 and 5 lay just past a railing (stopped 86, 67,
+    /// 71 short at 60), so it went to 100 - which let the walk stop 61 north of waypoint 1 and start every next leg off the
+    /// user's line (run 5). Now 40, with the walk homing in on the last 300 units, and blocked within 150 counts as reached.
+    /// </summary>
+    public int WaypointTolerance { get; set; } = 40;
+
+    /// <summary>
+    /// Camera turns when leaving a waypoint, "N:KC" = after waypoint N tap key K (A = left, D = right) C times
+    /// (<see cref="TurnTapMs"/> each). User, 2026-10-29: "In waypoint 1, do a left turn / 4x A, then on waypoint 2 do right
+    /// turn / D 5x", then 5x A at 1, and with the new waypoints 1:5A, 2:5D, 3:5A, 4:5D. The walk learns its heading again
+    /// from the next step. Edited in the app as <see cref="WaypointTurnsText"/>.
+    /// </summary>
+    public List<string> WaypointTurns { get; set; } = ["1:A5", "2:D5", "3:A5", "4:D5"];
+
+    /// <summary>
+    /// <see cref="WaypointTurns"/> as one line for the settings panel (user: "add a settings in the app ... 1:5A like that"):
+    /// entries split by commas, semicolons or spaces between entries. Not saved itself.
+    /// </summary>
+    [JsonIgnore]
+    public string WaypointTurnsText
+    {
+        get => string.Join(", ", WaypointTurns);
+        set => WaypointTurns = (value ?? "")
+            .Split([',', ';', '\n'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .ToList();
+    }
+
+    /// <summary>
+    /// The walk clicks this often, the same way, so the character keeps running (user, 2026-10-29: "continuously click to
+    /// run instead of staggered"); the coordinates are read every <see cref="WalkReadEveryMs"/>, which steers the clicks.
+    /// </summary>
+    public int WalkClickEveryMs { get; set; } = 350;
+
+    public int WalkReadEveryMs { get; set; } = 900;
+
+    /// <summary>How far from the character a walk click goes (pixels, shortened near a waypoint and to stay clear of the UI).</summary>
+    public int WalkClickPx { get; set; } = 260;
+
+    /// <summary>At most this long standing at a reached waypoint, tabbing (user: 5 s or less - the AFK checker).</summary>
+    public int WaypointWaitMs { get; set; } = 3000;
+
+    /// <summary>Tab while walking and pausing (user: "keep tabbing").</summary>
+    public int TabEveryMs { get; set; } = 1000;
+
+    /// <summary>The monster to kill (the target bar); its chest counts too (user).</summary>
+    public string TargetName { get; set; } = "[S]Jaso Practitioner";
+
+    /// <summary>The target gone this long = dead (user, 2026-10-30: "the check if monster is killed, set it to 1s"; was 2 s).</summary>
+    public int TargetGoneMs { get; set; } = 1000;
+
+    /// <summary>A fight whose target never goes is given up after this long (user: a Jaso dies within 2 min).</summary>
+    public int FightMaxMs { get; set; } = 120000;
+
+    /// <summary>Loot this long after the kill (user: 1 s), every <see cref="LootEveryMs"/> (0.2 s) for <see cref="LootMs"/>.</summary>
+    public int LootDelayMs { get; set; } = 1000;
+
+    /// <summary>How long the loot key is spammed (user, 2026-10-30: "loot for 2s"; was 5 s).</summary>
+    public int LootMs { get; set; } = 2000;
+
+    public int LootEveryMs { get; set; } = 200;
+
+    public static List<string> DefaultWaypoints() =>
+    [
+        "19107,18424", "15917,18388", "15967,15981", "13956,16015", "13953,15038", "13964,14686",
+        "13370,14493", "13085,13906", "12944,13692", "12987,13184", "13557,12775", "14101,12622",
+        "14546,12826", "14837,13243", "14923,13591", "14838,14013", "14359,14565",
+    ];
 }
 
 /// <summary>Auto LOD (user, 2026-10-21) - see AutomationPilot.Lod.cs.</summary>
