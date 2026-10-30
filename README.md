@@ -248,6 +248,55 @@ players in the target box, HP 0 and the revive), the buff icons on a real skill 
 the menu button toggles it shut, the "Regular War" label in the autohunt settings, and the "Arrived:" wording. Every part logs
 what it saw and saves `war_*` pictures to the debug folder the first time, so send the log and those pictures after the first war.
 
+### Auto Blossom (Jaso Practitioners in Blossom Garden)
+
+Pick **Auto Blossom** (**Blossom** in the mini window) and press **Start** in a home town (or inside Blossom Garden).
+Blossom Garden needs no key.
+
+1. In town, the game's Settings: TAB target **Nearest monster** (`Tab` then reaches monsters further away). Then the
+   teleport scroll, page 1, **Blossom Garden**; the zoom-out waits for "Blossom Garden" on the minimap.
+2. Buffs - the Auto War way: autobuff (`O` + the ticked item buffs) when the item list shows "[Auto buff scroll]",
+   else the ticked buff icons (Settings > Auto War > Buffs).
+3. `D` taps (100 ms) until the two pillars stand side by side with their midpoint at the centre of the screen
+   (`Assets\blossompillar.png`, a pillar base; the user's frame scores 0.98 and 0.81, the score gate is 0.70). Not lined up
+   after 15 taps or 10 s: it walks anyway. Started inside Blossom Garden there is no turn: it walks from the nearest waypoint
+   and learns the camera's direction from the first steps.
+4. The walk: the 83 waypoints recorded on the first island (`Blossom > Waypoints` in settings.json) - 1 to 83, then back
+   83, 82 ... 1, over and over (**Walk back the same way**, on) - starting at the nearest one. A copy still on the first
+   17-waypoint route gets this one when it updates; a route you recorded yourself stays. The first click goes straight up the screen; where the character went tells which way the camera
+   looks. It stays on the line between two waypoints (lay them along the road) and clicks every 0.35 s so the character keeps running, and reads the coordinates about once a second. When it
+   leaves a waypoint it can turn the camera - Settings > Auto Blossom > **Camera turns**, empty by default (the route was
+   recorded without camera taps); e.g. `1:A5, 2:D5` (`1:5A` works too: after waypoint 1 tap `A` five times, after waypoint
+   2 `D` five times, ...) - and learns the camera's
+   direction again from the next step. **Walk back the same way** (Settings > Auto Blossom): after the last waypoint the
+   route is walked back to the loop start (83, 82 ... 1), then forward again, with the camera turns undone on the way back.
+   `Tab` every second. At a reached waypoint it stands at most **Waypoint pause** (3 s; at most 5 s - the AFK
+   checker kicks idle characters to town, and from town it teleports back in).
+5. **[S]Jaso Practitioner** in the target bar (or a target showing the chest): the skill key held down (**Hold skill
+   (Blossom)**, on; off = tapped every 0.3 s; Ctrl + skill as LOD) until the target is gone 1 s, looting all the while (**Loot while fighting**; off = 1 s later the loot key every 0.2 s for
+   **Loot time**), then on to the waypoint it was heading for. Only a monster at full health is attacked (one another player
+   is hitting is left alone). No move and no new "Attack succeeded" line for 5 s while a target is selected (something in
+   the way): it zooms out, lets go of the skill and steps aside - right, left, back, then the diagonals - until it moves.
+   The chat's "[AFK Checker] ... 1/5" (or more): a short step another way. Between fights it runs: waypoints closer than
+   600 units are run past instead of stopped at (a recorded route has one every 120), and after a kill it may skip up to 4
+   waypoints ahead at random. A chase that ends far off the waypoint it was heading for, next to another one, carries on
+   from that one. A fight that never ends is given up after 2 minutes (then targets are ignored for 10 s). Blocked (a
+   railing, the bridge): it zooms out again and steps right, left, back, then the diagonals, zooming out again each round,
+   until it moves; a waypoint it gets no closer to in 15 reads is skipped. A waypoint counts as reached within 40 units (it slows down and homes in on the last 300), or when blocked within 150 of it. Started inside Blossom Garden,
+   it first makes sure the autohunt is off.
+6. Rebuff when **Rebuff every** (Auto War) is due - after a loot or at a waypoint, never mid-fight.
+
+**Record your own route** (Settings > Auto Blossom): bind the game, stand at the arrival spot in Blossom Garden lined up on
+the pillars, press **Record route** and walk the road by hand. A waypoint is saved every 120 units, and your own `A` / `D`
+camera taps are saved with the waypoint you are at (the pilot taps the same way when it leaves it). Press **Loop starts
+here** where the endless loop begins, and **Stop recording** at the end of the loop (back near the loop start). The route
+replaces the waypoints, the loop start and the camera turns; a copy goes to `%LOCALAPPDATA%\WuxAuto\blossom-route.txt`.
+A road that does not come back to its start (the end more than 400 from it) gets **Walk back the same way** ticked.
+
+Same upgrade note as Auto War: an older WuxAuto cannot read `"Mode": "AutoBlossom"` and resets the settings - update every copy first.
+Probe: `--pillars <dir>` prints the pillar hits and the lined-up verdict per PNG. **Not tested live yet**: which way `D`
+turns the view, walls between waypoints, the Jaso's name in the target bar.
+
 ### Input safety
 
 By default (`Input ▸ Mode = ForegroundSendInput`, `Only while game is focused`) the pilot sends
@@ -451,6 +500,9 @@ dotnet run --project .\tests\WuxAuto.SelfTest -- --capture
 # run the full Test scan over a saved frame and write frame.scan.png next to it
 dotnet run --project .\tests\WuxAuto.SelfTest -- --frame C:\path\frame.png
 #   add --crop x y w h [zoom] to also write a zoomed crop
+
+# Auto Blossom: the two pillar bases and the lined-up verdict for every PNG in a folder
+dotnet run --project .\tests\WuxAuto.SelfTest -- --pillars C:\path\frames
 
 # focus the game, tap a key and report how much of the frame changed
 dotnet run --project .\tests\WuxAuto.SelfTest -- --input I

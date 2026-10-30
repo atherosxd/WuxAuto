@@ -79,6 +79,7 @@ public partial class MainViewModel : ObservableObject, IAsyncDisposable
         // switches the mode or remembers the cave.
         _engine.ModeChanged += () => Post(() => OnPropertyChanged(nameof(Settings)));
         _engine.BossKilled += what => Post(() => OnBossKilled(what));
+        _engine.RouteRecorder.Changed += () => Post(RaiseRouteState);
         _engine.Faulted += message => Post(() =>
         {
             AppendLog(new LogEntry(LogLevel.Error, $"Capture faulted: {message}"));
@@ -507,8 +508,47 @@ public partial class MainViewModel : ObservableObject, IAsyncDisposable
     [RelayCommand]
     private void Start()
     {
+        // A route being recorded is saved first: the pilot then walks the new one.
+        if (_engine.RouteRecorder.IsRecording)
+            ToggleRecordRoute();
         _engine.Start();
         SyncState();
+    }
+
+    // ---- Auto Blossom: Record route (user, 2026-10-29: "I walk the road once by hand and WuxAuto saves the waypoints")
+
+    public bool IsRecordingRoute => _engine.RouteRecorder.IsRecording;
+
+    public string RecordRouteText => IsRecordingRoute ? "■ Stop recording" : "● Record route";
+
+    public string RouteStatus => IsRecordingRoute
+        ? _engine.RouteRecorder.Status
+        : $"Route: {BlossomRoute.Parse(Settings.Blossom.Waypoints).Count} waypoints, loop from {Settings.Blossom.LoopFrom}";
+
+    [RelayCommand]
+    private void ToggleRecordRoute()
+    {
+        if (_engine.RouteRecorder.IsRecording)
+        {
+            if (_engine.RouteRecorder.Stop())
+                OnPropertyChanged(nameof(Settings));   // the camera turns box and the route line
+        }
+        else
+        {
+            _engine.RouteRecorder.Start();
+        }
+
+        RaiseRouteState();
+    }
+
+    [RelayCommand]
+    private void MarkLoopStart() => _engine.RouteRecorder.MarkLoop();
+
+    private void RaiseRouteState()
+    {
+        OnPropertyChanged(nameof(IsRecordingRoute));
+        OnPropertyChanged(nameof(RecordRouteText));
+        OnPropertyChanged(nameof(RouteStatus));
     }
 
     [RelayCommand]

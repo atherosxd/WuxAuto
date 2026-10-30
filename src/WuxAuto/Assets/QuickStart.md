@@ -26,7 +26,7 @@ Everything it does is drawn on its preview and written to its log.
   through the screens, it never types a password.
 * Start in your **home town** - Piercing City, Molten City or Wandering City (or in the Labyrinth with a boss targeted - it picks up from there).
 
-## Three modes (the Mode buttons above Start)
+## Four modes (the Mode buttons above Start)
 
 * **AutoLaby** - The Labyrinth (Adept): 4 stages + Sacred Sky Lord, back to your home town, repeat.
 * **AutoLod** - Ultimate Den of Rebirth: turns south, walks a little forward to 1199, 1782 and waits there,
@@ -58,6 +58,15 @@ Everything it does is drawn on its preview and written to its log.
   Started in a **home town** it waits there for every war and goes back to waiting in town after it (no cave, no autohunt).
   Update every WuxAuto on the PC before choosing it: an older copy cannot read the Auto War setting and resets all settings
   (and does not know the Buffs check boxes).
+
+* **AutoBlossom** - Jaso Practitioners in Blossom Garden (no key needed). Start it in a home town (or inside Blossom
+  Garden). It teleports there (page 1 of the scroll), zooms out, taps D until the two pillars are centred, buffs (the
+  Auto War buff settings), then walks 83 waypoints - 1 to 83, then back to 1, over and over - pressing Tab. A targeted
+  [S]Jaso Practitioner (or a target with the chest) is attacked until it is gone, then looted for 5 s; then the walk goes on.
+  It stands at most 3 s at a waypoint (the map's AFK checker kicks idle characters to town; from town it teleports back in).
+  Settings > Auto Blossom: target name, waypoint pause, loot time; the waypoints are in `settings.json` (`Blossom`).
+  Update every WuxAuto on the PC before choosing it (an older copy cannot read the Auto Blossom setting and resets all
+  settings). Not tested live yet.
 
 ## Run it
 

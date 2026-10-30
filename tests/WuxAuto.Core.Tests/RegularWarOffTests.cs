@@ -131,6 +131,20 @@ public class RegularWarOffTests
     }
 
     [Fact]
+    public async Task Blossom_NoRegularWarCheck()
+    {
+        // The untick is for the Labyrinth's autohunt (user, 2026-10-29); Auto Blossom never turns the autohunt on.
+        var (settings, input, ocr, scene) = Harness(ticked: true);
+        settings.Sequence.Mode = RunMode.AutoBlossom;
+
+        var run = await RunAsync(settings, input, ocr, scene, timeoutMs: 20000);
+
+        Assert.Equal(PilotPhase.OpenInventory, run.Phase);
+        Assert.DoesNotContain("KeyTap S", input.Calls);
+        Assert.True(scene.Ticked);
+    }
+
+    [Fact]
     public async Task SwitchOff_NoRegularWarCheck()
     {
         var (settings, input, ocr, scene) = Harness(ticked: true);

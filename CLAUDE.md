@@ -22,9 +22,11 @@ The automation goal:
 
 Everything it does is visible: detections are drawn on the live preview and every step is logged.
 
-Two more modes sit beside the Labyrinth (the Mode buttons above Start): **Auto LOD** (§4.5) and
+Three more modes sit beside the Labyrinth (the Mode buttons above Start): **Auto LOD** (§4.5),
 **Auto War** (§4.8, user 2026-10-27: an alt waits in a page-3 cave, joins every Bohai Outpost tribe war,
-fights, comes back to the same cave and monster; one game per WuxAuto, no walking inside Bohai).
+fights, comes back to the same cave and monster; one game per WuxAuto, no walking inside Bohai) and
+**Auto Blossom** (§4.9, user 2026-10-29: Jaso Practitioners on a route in Blossom Garden; since v25 the user's recorded
+83-waypoint route, walked there and back).
 
 The user is non-technical about the internals but precise about the game behaviour — when they
 report "it didn't click X", the fastest path is almost always (a) read the debug snapshot from
@@ -136,6 +138,9 @@ dotnet run --project .\tests\WuxAuto.SelfTest -- --warbar "$env:LOCALAPPDATA\Wux
 dotnet run --project .\tests\WuxAuto.SelfTest -- --menu "$env:LOCALAPPDATA\WuxAuto\debug"    # the menu button and the MENU window
 dotnet run --project .\tests\WuxAuto.SelfTest -- --tribe "$env:LOCALAPPDATA\WuxAuto\war-inputs"  # TRIBE STATUS: the Bohai row's countdown (the user's screenshot lives there, never in git)
 
+# Auto Blossom: the two pillar bases (hits >= 0.30 in ScreenAnalyzer.PillarBand) + the pair / offset verdict per PNG
+dotnet run --project .\tests\WuxAuto.SelfTest -- --pillars <dir>
+
 # M2 parity: the pilot's detectors and x1.5 OCR reads on the frozen legacy vision (tests\...\Legacy,
 # OpenCvSharp 4.13) vs Core's (Emgu CV), per frame; ends with two summary lines (see below)
 dotnet run --project .\tests\WuxAuto.SelfTest -- --parity "$env:LOCALAPPDATA\WuxAuto\parity-frames"
@@ -171,7 +176,7 @@ words and the map scroll-arrow result. `--crop` writes `<frame>.crop.png` next t
 Core tests and the refactor parity gate (M1, 2026-10-27):
 
 ```powershell
-dotnet test tests\WuxAuto.Core.Tests        # xUnit, platform-free Core only (504 tests, ~4.5 min; the pilot tests tick a
+dotnet test tests\WuxAuto.Core.Tests        # xUnit, platform-free Core only (614 tests, ~7.5 min; the pilot tests tick a
                                            # blank Mat with a scripted OCR scene - see tests/ in section 3)
 # probe baseline: runs every SelfTest probe over a frozen, local-only frame set (never committed)
 # and writes normalised output; run it before and after a refactor and diff the two
@@ -293,7 +298,8 @@ press the old hold again after a Halt / ReleaseAll / another hold (generation co
 ```
 src/WuxAuto.Core            net10.0 class library, platform-free (M1, 2026-10-27: move-only split so an Android
                             app can share the pilot). Holds everything that decides what to do:
-  Automation/          AutomationPilot (+ .Lod / .RegularWar / .War / .WarTimer / .WarFight / .KillShots partials) - the whole state machine,
+  Automation/          AutomationPilot (+ .Lod / .RegularWar / .War / .WarTimer / .WarFight / .Blossom / .KillShots partials) - the whole state machine,
+                       BlossomRoute (Auto Blossom's waypoint list, order with its loop, nearest start),
                        WarText (pure text rules of Auto War: countdown, war row, list entries, HP, target name, log lines),
                        TabTargetOptions (the four TAB target values, steps between them),
                        AutohuntLog
@@ -1036,6 +1042,121 @@ resolutions; the X of the TELEPORT SCROLL (closing it costs no scroll, and wheth
 a war dialog during `WarRemember` before the monster is confirmed joins before the spot is saved (the return then stops instead of guessing) - once it is
 confirmed, the dialog watch waits for the save; a war dialog while a timer read has a window open can leave it open.
 Each part logs what it saw and saves `war_*` snapshots (<= 3 per tag per Start) - the first live war gives the frames to tune from.
+
+### 4.9 Auto Blossom (user, 2026-10-29, `Sequence.Mode` = `AutoBlossom`, `AutomationPilot.Blossom.cs`, settings `AppSettings.Blossom`)
+
+Spec: `docs/superpowers/specs/2026-10-29-auto-blossom-design.md`; plan `docs/superpowers/plans/2026-10-29-auto-blossom-mode.md`.
+Blossom Garden needs no key (user). Phases: `BlossomTurn, BlossomWalk, BlossomAttack, BlossomLoot, BlossomRespawn` (+ the
+shared `WarBuff`). The zone guard covers them (and `WarBuff` in this mode); a home town = the AFK checker's kick (user) ->
+teleport in again (LOD's rule); still in town after the teleport = "destination closed?" fail, never out-of-keys.
+
+* **Town -> map:** the shared steps (autohunt off, Run skill, font size), TAB target **`Blossom.TabTargetOption` "Nearest monster"** (user, 2026-10-30: "make sure that the tab target is nearest monster" - Tab then reaches monsters further off; `AutomationPilot.TownTabTarget`, whatever the Laby/LOD "TAB target: Default" box says; once per Start, in town only - a Start inside Blossom Garden leaves the game's value alone), no Regular War untick, scroll page 1
+  "Blossom Garden", zoom out after the minimap title reads -> `BeginBlossomArrival` = buffs (`BeginBlossomBuff(thenTurn: true)`)
+  -> `BlossomTurn`.
+* **Turn:** `ScreenAnalyzer.FindPillarPair` (`Assets/blossompillar.png` = the left pillar's grey base, 96x42, cropped from the
+  user's zoomed-out 2000x1168 frame at 788,270; hits in `PillarBand` (0.15, 0.05, 0.62, 0.45), duplicates per place dropped, a
+  pair = one row, 0.10-0.40 w apart, the most central). User's frame: left 0.979, right (green-tinted) 0.807, offset +0.020.
+  No pair -> `D` (`TurnDirection.Right` = `Input.RotateKey`) `TurnTapMs` 100, 350 ms settle; after `TurnTaps` 7 one Info, after
+  `TurnMaxTaps` **15** or `TurnMaxMs` **10000** (whichever first; user, 2026-10-30: "reduce the turn to pillars to 15 turns or
+  10s"; was 50 taps, ~1 min; v24 moves a saved 50) a warning + `blossom_no_pillars` and the walk. Pair off centre (> `PillarCenterTolerance` 0.06 w) -> 40 ms fine
+  taps, direction flipped when the offset grew (D's direction is not assumed), <= 12. No Tab while turning.
+* **Walk:** `BlossomRoute`, starting at the **nearest** waypoint (arrival 19148,19062 -> waypoint 1). **Default route since
+  settings v25 (user, 2026-10-30: "make it default"):** the 83 waypoints the user recorded on the first island at 09:13
+  (Record route, no camera taps; waypoint 1 = the arrival spot), `LoopFrom` 1, `BackAndForth` **on**, `WaypointTurns` empty.
+  The route lived only in the recording PC's settings.json / `blossom-route.txt`, so a second PC's fresh v0.23.0 install
+  walked the first default instead. v25 moves a file whose waypoints are exactly the first default
+  (`BlossomSettings.First17Waypoints()`: 17 user waypoints, 1-5 then 6-17 looped, `LoopFrom` 6, turns `1:A5, 2:D5, 3:A5,
+  4:D5`) to the whole new route block; a recorded route stays (`SettingsMigrationTests.V25_*`). `BlossomPilotTests.Harness`
+  still runs the walk tests on the first route (their coordinates are written for it). The first step after a turn clicks **straight up**; the movement sets `_headingBase` (the view's
+  world direction is unknown), then `LearnHeadingError`; 3 steps in a row > 0.6 rad off the heading (>= 60 units each) =
+  the first sample was a wall push -> heading re-learnt from the latest step (final review: one bad first sample locked
+  in a wrong heading for the run). **Continuous clicks** (user, live 2026-10-29: "continuously click to run instead of
+  staggered and not every click is checked"): the same walk click goes out every `WalkClickEveryMs` 350, `WalkClickPx`
+  260 from the centre; the coordinates are read every `WalkReadEveryMs` 900 and decide the next click (a "step" = one
+  read); the target bar is read every 700 ms; Tab never holds the tick. **Camera turns** (user: "In waypoint 1, do a
+  left turn / 4x A, then on waypoint 2 do right turn / D 5x"): `WaypointTurns` "1:A5", "2:D5", "3:A5", "4:D5" (user, with the new waypoints 1-6 after the 4th live run; "N:KC" or "N:CK", edited in the app as "Camera turns" = `WaypointTurnsText`) - when leaving that waypoint
+  the walk taps the key (`TurnTapMs`), then learns the heading again from the next step. Game behind another window ->
+  the walk clicks and counts nothing. Tab every `TabEveryMs` 1000. Reached (<= `WaypointTolerance` **40**, or blocked within 150 = "close enough"; within 300 one shorter click per read every 450 ms so it homes in - at 100 the walk stopped 61 north of waypoint 1 and every next leg started off the line, live run 5 (user); before that, live 2026-10-29
+  waypoints 2, 4, 5 lie just past a railing / pond edge and the walk stopped 86, 67, 71 short at the old 60) -> stand + Tab
+  <= `WaypointWaitMs` 3000 (clamped <= 5000, AFK checker; the pause reads no coordinates, so an unreadable minimap cannot
+  stretch it), then the next. **Blocked** (live: wedged against the side of the bridge at ~13900, 15140 between waypoints 5
+  and 6, where the camera had zoomed in): from the 2nd still step a full-length click each read, the ways of
+  `BlossomStepWays` in turn relative to the way (right, left, back, back-right, back-left, ahead-right, ahead-left), the
+  camera zoomed out again at the start of each round of 7 - **until it moves** (user, 2026-10-30: "If the character didn't
+  move for 5s, try to zoom out and move in every direction until it moves"; it used to skip the waypoint on the 5th still
+  step); the 5th still step only warns and saves `blossom_stuck`. The no-progress rule (15 reads without getting 30
+  closer) still skips a waypoint (`blossom_too_long`). 40 unread coordinates -> fail. Snapshots: <= 3 per tag per Start.
+* **Run, don't stagger** (user, 2026-10-30: "dont walk, run far away instead of staggered"): `Blossom.RunAheadDistance` **600**
+  (0 = off): each walk read passes every waypoint closer than that (a recorded route has one every 120 units, so the walk was
+  always homing in and pausing) and aims at the first one at least 600 along the route; a waypoint with a camera turn is still
+  reached. **Random skip** (same day: "randomly try to skip multiple waypoints so that it doesn't look like a bot"):
+  `RandomSkipMax` **4** (0 = off) - after a kill 0-4 waypoints ahead at random (`BlossomRoute.SkipWithin`), only onto ones within
+  1000 of where the fight ended (a typed route's far-apart waypoints never become one long straight line).
+  **Off the route after a fight** (live 11:20: a chase ended 111 from waypoint 20 and the walk tried waypoint 7, 2750 south,
+  straight through the terrain for minutes): the first walk read after a fight (`_blossomRecheckRoute`) - further than
+  600 + `RunAheadDistance` from the waypoint it was heading for and within 300 of another -> on from that one. **Unblock ways**
+  go on round the list (`_blossomUnblockWay`) until the walk gets 30 closer to its waypoint - live, each sidestep moved the
+  character 20+ units, reset the still-step count, and it stepped right, left, right ... for minutes.
+* **AFK Checker** (user, 2026-10-30: the chat whispers "(Whisper) [AFK Checker] : Start 1/5" ... "Reset 0/5" - "if 1+/5, try
+  to move a little bit to other directions"): `Blossom.AfkCheckerText` "AFK Checker" (empty = off). The shared 5 s
+  whole-screen OCR (`BlossomAfkWatch`: Blossom phases or the buff round, game in front) -> `BlossomText.AfkCheckerCount`:
+  the bottom-most chat line (left 45 % w, below 55 % h) naming it with a "k/5" -> k >= 1 -> `TryBlossomAfkStep`: the held
+  skill let go, a Ctrl+click half `WalkClickPx` from the feet, a different way each time; `blossom_afk`. Not yet seen live
+  (the whisper lines are from the 10:20 snapshot).
+* **Walk back** (user, 2026-10-30, with a recorded 83-waypoint first-island route: "1 - 83 then 83, 82, 81 to 1 then loop"): `Blossom.BackAndForth` (check box "Walk back the same way"; on by default since v25, for the recorded default route) -> `BlossomRoute.Next(..., backAndForth, ref forward)`: forward to the last waypoint, back to `LoopFrom`, forward again (`_blossomForward`, reset per run; a log line at each turnaround). On the way back a waypoint's camera turn is undone when leaving it (the key flipped, A <-> D, same taps), so each stretch has the camera it had on the way out; a turnaround taps nothing (the last waypoint's own turn is never made). Record route ticks it when the recording ends > 400 from its loop start (`RouteRecording.WalkBack`, `ClosingGap`): a loop would cross the map in one straight line. Pinned by `BlossomRouteTests` / `BlossomPilotTests.BackAndForth_WalksTheRouteBack_AndUndoesItsCameraTurns` / `RouteRecordingTests`. Not yet seen live.
+* **Following the road** (user, live run 7: "not aligned by the dirt road ... goes straight to the water beside the bridge"): along a leg the walk aims 250 units ahead on the line from the waypoint just left to the next one (`BlossomRoute.LookAhead`, pure pursuit), so drift is pulled back onto the user's line; within 300 of the waypoint it clicks the waypoint's own spot from the character's feet (0.55 h, >= 80 px - a short click just under the feet lands on the character's body and does nothing; 1.8 px per unit). A death mid-fight needs two coordinate reads that agree (run 7: "13521" read as "1352" sent it back to the pillars).
+* **Record route** (user, 2026-10-29: "I walk the road once by hand and WuxAuto saves the waypoints"): Settings > Auto Blossom > **Record route** / **Loop starts here** / **Stop recording**. `Automation/RouteRecorder` (desktop, ticked by `WuxEngine` beside `AutoConfirm` while the pilot is not running) reads the coordinates every 500 ms and polls the turn keys (`GetAsyncKeyState`, game in front) into `RouteRecording` (Core, pinned by `RouteRecordingTests`): a waypoint every 120 units, a jump > 400 only when the next read agrees, A / D presses = the latest waypoint's camera turns (net, "N:5A"), the loop at the latest waypoint (or the spot, >= 60 past it). Stop (>= 2 waypoints) replaces `Waypoints` / `LoopFrom` / `WaypointTurns`, saves, and writes `blossom-route.txt` (a copy - a pre-Blossom WuxAuto drops the block when it saves). Start while recording saves the recording first. Not yet used live.
+* **Minimap title:** `ScreenAnalyzer.ReadMinimapLinesAsync` (all modes): the band read, and without a title-like line the
+  `MinimapTitleStrip` (0.76, 0.03, 0.23, 0.08) x2 then x3 - live 2026-10-29 the whole-band OCR over Blossom Garden's bright
+  yellow map read **no words at all** and the arrival failed "never showed on the minimap" twice.
+* **Start inside:** the autohunt is made off first (`EnsureAutohuntOffAsync`, `trustVisibleLine: true`; skipped in a dry run),
+  then the buffs (or the fight, a Jaso already targeted) and the walk from the nearest waypoint - **no pillar turn** (user,
+  2026-10-30: "it is possible to start it already in the map and no need to look for the pillar"; away from the arrival spot
+  they are not in view, and the turn took 50 taps for nothing). The turn stays for the teleport's arrival and after a death.
+* **Target:** whole-screen OCR line in the target-bar band (y < 13 % h, |x - 50 %| < 22 % w) containing the name after its "[S]"
+  ("jasopractitioner") or >= 0.85 like `TargetName`, else `monstericon` >= 0.80 at the top centre (user: the Jaso shows the chest).
+  Anything else is not attacked. **Full health only** (user, 2026-10-30: "Only Attack monster if full health"): the same read's
+  target-bar numbers (`BlossomText.TargetHp` on `WarText.TargetHpLine`, box (0.25, 0, 0.50, 0.16)) below max -> not fought
+  (Info at most every 5 s), the walk and Tab go on; unread numbers do not stop a fight. Live: a Jaso at 615378/750000 was
+  another player's.
+* **Fight / loot:** the skill key **held** through the fight (`Blossom.HoldSkill`, on; check box "Hold skill (Blossom)"; user,
+  2026-10-30: "spam or hold attack skill, currently it skills then normal attacks" - one tap casts once, then normal attacks;
+  with Ctrl + skill the key is let go for a Ctrl tap every `Lod.SkillEveryMs`, as LOD's hold), off = tapped every
+  `Lod.SkillEveryMs`; the loot key every `LootEveryMs` 200 **through the fight** (`LootWhileFighting`, on; check box "Loot
+  while fighting"; user, 2026-10-30: "When attacking a monster, try looting also, so that when killed after 1s, the pilot can
+  proceed" / "the 1s delay after killing is enough for the loot, so remove the loot after kill") - gone `TargetGoneMs`
+  **1000** = kill -> straight on with the walk (rebuff if due). Off: kill ->
+  `LootDelayMs` 1000 -> loot key every `LootEveryMs` 200 for `LootMs` **2000**, no Tab -> the walk (a fight met during a waypoint
+  pause moves on to the next waypoint, in the walk's direction - with walk-back too). User, 2026-10-30: "the check if monster
+  is killed, set it to 1s, loot for 2s" (were 2000 / 5000; settings **v24** moves those old defaults, a value set by hand
+  stays). **Stuck in a fight** (user, same day: "if a monster is tab, but there is 5s that it didn't move and no attack
+  succeeded log, try to click on other direction to reposition"): every `FightStuckMs` **5000** (0 = off; `BlossomFightStuckAsync`)
+  the fight's latest coordinates and the combat log's `AttackConfirmText` lines (`ReadAttackLogAsync`) are compared with the
+  last check; moved < 40, the log unchanged and the target bar's HP not lower (live 11:19: looting while fighting fills the log
+  with "No items or [Silver] to obtain", so the attack lines scroll away - the HP is the hit signal that survives) -> the skill let go, a **Ctrl+click** (walk, the target stays - LOD's approach)
+  `WalkClickPx` from the feet, the 7 `BlossomStepWays` in turn (a zoom-out at the start of each round), 0.8 s, then the hold
+  again, and the next look 1.5 s later (until it moves or hits; then the ways start over); `blossom_fight_stuck`. An unread
+  spot never counts as still. Live 10:14: fired on a flying Jaso up a slope at 750000/750000 with no hits; killed 9 s after. `FightMaxMs` 120000 -> give up (user: a Jaso dies within 2 min), Tab, and targets are
+  ignored for 10 s so the same one does not start the same fight again. Coordinate jump >
+  `Lod.TeleportJump`, confirmed by the next read, with **no target seen for 1 s** (`BlossomChaseTargetMs`) -> `BlossomRespawn`
+  (settle) -> arrival again. With the target still shown it is a chase and the new spot becomes the baseline (live
+  2026-10-30: TAB target "Nearest monster" + the Run skill ran ~500 units between two reads, alive at full HP, and was taken
+  for a death 6 times in 15 min, each costing a 50-tap pillar search away from the pillars; a misread that read the same
+  twice, "19274, 1901", passed the two-read check too). A death whose target bar stays up is not caught (then
+  `FightMaxMs`); live deaths in Blossom are not seen yet. After the settle, the pillar turn only runs within 500 of the
+  arrival spot 19148, 19062 (`BlossomArrivalX/Y`, where every live teleport landed and a respawn is assumed to); elsewhere it
+  was not a death (live 10:20: alive at full HP, the target lost after a chase while the minimap did not read, 778 units on)
+  -> buffs and the walk from the nearest waypoint.
+* **Rebuff:** the Auto War buff steps (`TickWarBuffAsync`, no Bohai zone check in this mode; `FinishWarBuffAsync` ->
+  `AfterBlossomBuff`), timer `War.BuffEveryMs`; `Start` resets `_warHasAutoBuff` / `_warBuffedAt`. Due -> after a loot or at a
+  waypoint pause; 30 s overdue -> on the walk. Never mid-fight. In `WarBuff` an unread minimap title counts as Blossom Garden
+  (the autohunt settings / AUTO BUFF dialog may cover it for longer than the guard's 6 s); a town or another zone still counts.
+* Pinned by `BlossomRouteTests`, `PillarPairTests`, `BlossomPilotTests` (first click up, nearest start, pause <= wait, Jaso ->
+  attack -> loot -> walk with no click / Tab in between, another target ignored, turn gives up, rebuff after the loot, arrival
+  buffs before the first `D`; final review: a given-up fight walks on, a wrong first heading is re-learnt, Start inside turns
+  the autohunt off, the buff finishes with the title unread, the status names the phase, 5 still steps skip with <= 3
+  snapshots, the pause ends on time with the coordinates unread). **Not seen live:** which way `D` turns, the live pillar scores at other resolutions, walls between
+  waypoints, the Jaso name in the target bar, the AFK kick.
 
 ## 6. Settings and persistence — read this before changing defaults
 

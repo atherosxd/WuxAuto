@@ -360,6 +360,9 @@ public sealed class WindowInput : IGameInput
 
     public bool IsKnownKey(string keyName) => !string.IsNullOrWhiteSpace(keyName) && ResolveKey(keyName) != null;
 
+    /// <summary>The Windows virtual-key code of a key name ("A", "D", "1", "`"); null for an unknown or empty name.</summary>
+    public int? VirtualKeyOf(string keyName) => string.IsNullOrWhiteSpace(keyName) ? null : ResolveKey(keyName)?.VirtualKey;
+
     private (int VirtualKey, int ScanCode)? ResolveKey(string name)
     {
         if (_keyCache.TryGetValue(name, out var cached))

@@ -34,10 +34,8 @@ internal static class FrameProbe
             else
                 CvInvoke.CvtColor(source, frame, ColorConversion.Bgr2Bgra);
 
-            var band = settings.Regions.Minimap.ToPixels(frame.Width, frame.Height);
-            // Same rule as AutomationPilot.ReadMinimapTitleAsync.
-            var lines = (await analyzer.Ocr.RecognizeAsync(frame, band, 2.0))
-                .Select(w => w.LineText.Trim()).Distinct().ToList();
+            // Same reads and rule as AutomationPilot.ReadMinimapTitleAsync (the band, then the title strip).
+            var lines = await analyzer.ReadMinimapLinesAsync(frame);
             string labyrinth = TextMatcher.Normalize(settings.Sequence.DestinationText);
             string title = lines.FirstOrDefault(l => TextMatcher.Normalize(l).Contains(labyrinth, StringComparison.Ordinal))
                            ?? lines.FirstOrDefault(l => l.StartsWith('[') && !l.Any(char.IsDigit) && TextMatcher.Normalize(l).Length >= 4)
@@ -244,6 +242,33 @@ internal static class FrameProbe
             var (hit, ms) = analyzer.FindIconAnyScale(frame, template, roi, 0.30);
             string verdict = hit == null ? "-" : hit.Score >= settings.Lod.ShuraMatchScore ? "click" : "below score";
             Console.WriteLine($"{Path.GetFileName(path)} {frame.Width}x{frame.Height} | {template}: {(hit == null ? "not found" : $"{hit.Score:0.000} at {hit.Bounds.CenterX},{hit.Bounds.CenterY} {hit.Bounds.Width}x{hit.Bounds.Height} scale {hit.Scale:0.00}")} -> {verdict} ({ms:0} ms)");
+        }
+
+        return 0;
+    }
+
+    /// <summary>
+    /// Auto Blossom: the pillar bases in every PNG of a folder - every hit down to 0.30 in the pillar band, then the pair the
+    /// pilot would line up on at the settings' score, with its offset from the centre. Run with: --pillars &lt;dir&gt;
+    /// </summary>
+    public static int Pillars(string dir)
+    {
+        var settings = SettingsStore.Load(persistMigration: false);
+        var b = settings.Blossom;
+        using var analyzer = new ScreenAnalyzer(settings, new OcrService());
+        foreach (string path in Directory.GetFiles(dir, "*.png").Where(p => !p.EndsWith(".scan.png") && !p.EndsWith(".crop.png")).Order())
+        {
+            using var frame = ImageFile.Read(path, ImreadModes.ColorBgr);
+            if (frame.IsEmpty)
+                continue;
+
+            var roi = ScreenAnalyzer.PillarBand.ToPixels(frame.Width, frame.Height);
+            var hits = analyzer.FindIcons(frame, b.PillarTemplate, roi, 0.30, maxResults: 4);
+            var pair = analyzer.FindPillarPair(frame, b.PillarTemplate, b.PillarMatchScore);
+            string verdict = pair == null
+                ? $"no pair at {b.PillarMatchScore:0.00}"
+                : $"pair {pair.Left.Bounds.CenterX},{pair.Left.Bounds.CenterY} + {pair.Right.Bounds.CenterX},{pair.Right.Bounds.CenterY}, offset {pair.OffsetFraction:+0.000;-0.000} -> {(Math.Abs(pair.OffsetFraction) <= b.PillarCenterTolerance ? "lined up" : "off centre")}";
+            Console.WriteLine($"{Path.GetFileName(path)} {frame.Width}x{frame.Height} | hits: {(hits.Count == 0 ? "none" : string.Join("; ", hits.Select(h => $"{h.Score:0.000} at {h.Bounds.CenterX},{h.Bounds.CenterY} x{h.Scale:0.00}")))} | {verdict}");
         }
 
         return 0;

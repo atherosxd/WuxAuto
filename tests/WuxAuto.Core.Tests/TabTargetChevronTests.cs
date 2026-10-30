@@ -33,4 +33,18 @@ public class TabTargetChevronTests
     [Fact]
     public void UnreadValue_OnlyStepsTowardsDefault()
         => Assert.Null(AutomationPilot.TabTargetChevron("Sound", "Enemy worth CP"));
+    // The town Settings visit: Auto Blossom sets its own option (user, 2026-10-30: "make sure that the tab target is
+    // nearest monster"), whatever the Laby/LOD "TAB target: Default" check box says; Laby/LOD as before.
+    [Theory]
+    [InlineData(RunMode.AutoBlossom, true, "Nearest monster")]
+    [InlineData(RunMode.AutoBlossom, false, "Nearest monster")]
+    [InlineData(RunMode.AutoLaby, true, "Default")]
+    [InlineData(RunMode.AutoLod, false, null)]
+    public void TownVisit_WantsTheModesOption(RunMode mode, bool tabDefault, string? wanted)
+    {
+        var s = new AppSettings();
+        s.Sequence.Mode = mode;
+        s.Sequence.TabTargetDefault = tabDefault;
+        Assert.Equal(wanted, AutomationPilot.TownTabTarget(s));
+    }
 }

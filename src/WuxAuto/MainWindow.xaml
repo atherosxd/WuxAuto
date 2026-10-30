@@ -1,4 +1,4 @@
-﻿<Window x:Class="WuxAuto.MainWindow"
+<Window x:Class="WuxAuto.MainWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:vm="clr-namespace:WuxAuto.ViewModels"
@@ -119,9 +119,14 @@
                 <Border Style="{StaticResource CardStyle}">
                     <StackPanel>
                         <TextBlock Text="2. Run the teleport sequence" Style="{StaticResource SectionTitle}" />
-                        <StackPanel Orientation="Horizontal" Margin="0,0,0,8">
-                            <TextBlock Text="Mode" Style="{StaticResource FieldLabel}" VerticalAlignment="Center" />
-                            <StackPanel Orientation="Horizontal" Margin="8,0,0,0"
+                        <!-- Four modes no longer fit one row of the left panel: the buttons wrap (Grid, so the WrapPanel gets a width). -->
+                        <Grid Margin="0,0,0,8">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto" />
+                                <ColumnDefinition Width="*" />
+                            </Grid.ColumnDefinitions>
+                            <TextBlock Text="Mode" Style="{StaticResource FieldLabel}" VerticalAlignment="Top" Margin="0,6,0,0" />
+                            <WrapPanel Grid.Column="1" Orientation="Horizontal" Margin="8,0,0,0"
                                         IsEnabled="{Binding IsRunning, Converter={x:Static vm:BoolConverters.Inverse}}">
                                 <RadioButton GroupName="RunMode" Content="Auto Laby" Style="{StaticResource ModeButton}"
                                              IsChecked="{Binding Settings.Sequence.Mode, Converter={x:Static vm:BoolConverters.EnumEquals}, ConverterParameter=AutoLaby}"
@@ -132,8 +137,11 @@
                                 <RadioButton GroupName="RunMode" Content="Auto War" Style="{StaticResource ModeButton}"
                                              IsChecked="{Binding Settings.Sequence.Mode, Converter={x:Static vm:BoolConverters.EnumEquals}, ConverterParameter=AutoWar}"
                                              ToolTip="Bohai Outpost war: wait in a page-3 cave, join every war, fight, come back to the same cave and monster." />
-                            </StackPanel>
-                        </StackPanel>
+                                <RadioButton GroupName="RunMode" Content="Auto Blossom" Style="{StaticResource ModeButton}"
+                                             IsChecked="{Binding Settings.Sequence.Mode, Converter={x:Static vm:BoolConverters.EnumEquals}, ConverterParameter=AutoBlossom}"
+                                             ToolTip="Blossom Garden: line up on the two pillars, walk the 83-waypoint route there and back, kill and loot every Jaso Practitioner, rebuff on the Auto War timer." />
+                            </WrapPanel>
+                        </Grid>
                         <StackPanel Orientation="Horizontal">
                             <Button Content="▶  Start" Style="{StaticResource PrimaryButton}" Command="{Binding StartCommand}"
                                     IsEnabled="{Binding IsRunning, Converter={x:Static vm:BoolConverters.Inverse}}" />
@@ -496,6 +504,66 @@
                                        Text="Back to: (no cave - waits in town; press Start in a cave to save one)"
                                        Visibility="{Binding Settings.War.HomeMap, Converter={x:Static vm:BoolConverters.EmptyToVisibility}}"
                                        ToolTip="Read from the screen at Start, in the cave you wait in. It is where the pilot goes back to after the war. Start in a home town: the pilot waits in town instead." />
+                        </Grid>
+
+                        <!-- Auto Blossom (user, 2026-10-29). Waypoints, pillar score and the rest: settings.json (Blossom). The buffs are the Auto War ones above. -->
+                        <TextBlock Text="Auto Blossom" Style="{StaticResource SectionTitle}" Margin="0,12,0,6" />
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto" />
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                                <ColumnDefinition Width="*" />
+                            </Grid.ColumnDefinitions>
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
+                            </Grid.RowDefinitions>
+
+                            <!-- User, 2026-10-30: "1 - 83 then 83, 82, 81 to 1 then loop". Record route ticks it when the route does not come back round. -->
+                            <WrapPanel Grid.Row="4" Grid.Column="0" Grid.ColumnSpan="4" Margin="0,6,0,0">
+                                <CheckBox Content="Walk back the same way" Margin="0,0,16,0"
+                                          IsChecked="{Binding Settings.Blossom.BackAndForth}"
+                                          ToolTip="On: after the last waypoint the route is walked back (83, 82 ... to the loop start), then forward again, and the camera turns are undone on the way back. Off: from the last waypoint straight to the loop start. Record route ticks it when the recorded road does not come back to its start." />
+                                <!-- User, 2026-10-30: "spam or hold attack skill, currently it skills then normal attacks". -->
+                                <!-- User, 2026-10-30: "try looting also ... the 1s delay after killing is enough for the loot". -->
+                                <CheckBox Content="Loot while fighting" Margin="0,0,16,0"
+                                          IsChecked="{Binding Settings.Blossom.LootWhileFighting}"
+                                          ToolTip="On: the loot key is tapped all through a fight, and the walk goes on as soon as the kill is seen (the target gone 1 s). Off: after the kill it waits 1 s, then loots for 'Loot time'." />
+                                <CheckBox Content="Hold skill (Blossom)" Margin="0,0,16,0"
+                                          IsChecked="{Binding Settings.Blossom.HoldSkill}"
+                                          ToolTip="On: the skill key stays held down through a fight, so the skill keeps going instead of one cast followed by normal attacks (with 'Ctrl + skill key too' it is let go for a Ctrl + skill tap now and then). Off: the skill is tapped every 0.3 s." />
+                            </WrapPanel>
+
+                            <!-- User, 2026-10-29: "add a settings in the app just like you showed 1:5A". Applied on the next Start. -->
+                            <TextBlock Grid.Row="2" Grid.Column="0" Text="Camera turns" Style="{StaticResource FieldLabel}"
+                                       ToolTip="Camera turns when leaving a waypoint: waypoint:count+key, A = left, D = right, separated by commas. E.g. 1:5A, 2:5D, 3:5A, 4:5D = after waypoint 1 tap A five times, after waypoint 2 tap D five times... Used from the next Start." />
+                            <TextBox Grid.Row="2" Grid.Column="1" Grid.ColumnSpan="3" Style="{StaticResource WideField}"
+                                     Text="{Binding Settings.Blossom.WaypointTurnsText, UpdateSourceTrigger=LostFocus}" />
+
+                            <!-- Record route (user, 2026-10-29): walk the road by hand, WuxAuto saves the waypoints and your A / D turns. -->
+                            <StackPanel Grid.Row="3" Grid.Column="0" Grid.ColumnSpan="4" Margin="0,4,0,0">
+                                <StackPanel Orientation="Horizontal">
+                                    <Button Content="{Binding RecordRouteText}" Command="{Binding ToggleRecordRouteCommand}" Margin="0,0,6,0"
+                                            ToolTip="Bind the game, stand at the start of the route (the arrival spot in Blossom Garden) and press this, then walk the road by hand. A waypoint is saved every 120 units, and your A / D camera taps are saved with the latest waypoint. Press it again to save the route (it replaces the waypoints, the loop start and the camera turns)." />
+                                    <Button Content="Loop starts here" Command="{Binding MarkLoopStartCommand}"
+                                            ToolTip="While recording: the waypoint here is where the route loops back to after the last one (like 17 -> 6). Not pressed: the whole route loops from waypoint 1." />
+                                </StackPanel>
+                                <TextBlock Text="{Binding RouteStatus}" Style="{StaticResource Caption}" Margin="0,4,0,0" TextWrapping="Wrap" />
+                            </StackPanel>
+
+                            <TextBlock Grid.Row="0" Grid.Column="0" Text="Target name" Style="{StaticResource FieldLabel}"
+                                       ToolTip="The monster attacked when Tab selects it (the target bar). A target showing the chest counts too." />
+                            <TextBox Grid.Row="0" Grid.Column="1" Grid.ColumnSpan="3" Style="{StaticResource WideField}" Text="{Binding Settings.Blossom.TargetName}" />
+                            <TextBlock Grid.Row="1" Grid.Column="0" Text="Waypoint pause (ms)" Style="{StaticResource FieldLabel}"
+                                       ToolTip="How long the character stands at a reached waypoint, pressing Tab, before walking on. At most 5000 - the map's AFK checker kicks idle characters to town." />
+                            <TextBox Grid.Row="1" Grid.Column="1" Style="{StaticResource WideField}" Text="{Binding Settings.Blossom.WaypointWaitMs}" />
+                            <TextBlock Grid.Row="1" Grid.Column="2" Text="Loot time (ms)" Style="{StaticResource FieldLabel}"
+                                       ToolTip="Only with 'Loot while fighting' off: how long the loot key is spammed after a kill (every 0.2 s, starting 1 s after the kill). The buffs use the Auto War settings above." />
+                            <TextBox Grid.Row="1" Grid.Column="3" Style="{StaticResource WideField}" Text="{Binding Settings.Blossom.LootMs}" />
                         </Grid>
 
                         <TextBlock Text="Mini mode" Style="{StaticResource SectionTitle}" Margin="0,12,0,6" />

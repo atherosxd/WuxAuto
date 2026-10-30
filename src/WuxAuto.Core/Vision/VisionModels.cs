@@ -19,6 +19,12 @@ public sealed record TemplateMatch(string Template, double Score, PixelRect Boun
     public override string ToString() => $"{Template} {Score:0.000} @ {Bounds} (x{Scale:0.00})";
 }
 
+/// <summary>
+/// Auto Blossom: the two pillar bases side by side. <paramref name="OffsetFraction"/> = (their midpoint x - the frame's
+/// centre x) / frame width; negative = left of centre.
+/// </summary>
+public sealed record PillarPair(TemplateMatch Left, TemplateMatch Right, double OffsetFraction);
+
 public sealed record TextHit(string Text, double Similarity, PixelRect Bounds, string LineText, PixelRect LineBounds, double OcrMs)
 {
     public override string ToString() => $"'{Text}' {Similarity:0.00} @ {Bounds} (line '{LineText}')";

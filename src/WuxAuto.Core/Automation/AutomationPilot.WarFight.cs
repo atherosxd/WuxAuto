@@ -669,7 +669,8 @@ public sealed partial class AutomationPilot
     /// </summary>
     private async Task TickWarBuffAsync(Mat frame)
     {
-        if (!await WarZoneCheckAsync(frame))
+        // Auto Blossom buffs with these steps too; its zone is the general zone guard's (Blossom Garden), not Bohai.
+        if (!IsBlossom && !await WarZoneCheckAsync(frame))
             return;
 
         switch (_warBuffStep)
@@ -985,6 +986,12 @@ public sealed partial class AutomationPilot
         _warBuffRound = null;
         _warBuffIcon = 0;
         _warBuffClicks = 0;
+        if (IsBlossom)
+        {
+            AfterBlossomBuff();
+            return;
+        }
+
         await ReadWarHpAsync(frame);
         BeginWarFight();
     }
