@@ -362,6 +362,20 @@ public sealed class BlossomSettings
     public string AfkCheckerText { get; set; } = "AFK Checker";
 
     /// <summary>
+    /// Run, don't stagger (user, 2026-10-30: "dont walk, run far away instead of staggered"): waypoints closer than this are
+    /// run past - the walk aims at the first one at least this far along the route - so a recorded route (a waypoint every
+    /// 120 units) is run in one go instead of homing in and pausing at each. A waypoint with a camera turn is still reached.
+    /// 0 = off (every waypoint reached, with the pause).
+    /// </summary>
+    public int RunAheadDistance { get; set; } = 600;
+
+    /// <summary>
+    /// After a kill, skip 0 to this many waypoints ahead at random (user, 2026-10-30: "randomly try to skip multiple
+    /// waypoints so that it doesn't look like a bot"). 0 = off.
+    /// </summary>
+    public int RandomSkipMax { get; set; } = 4;
+
+    /// <summary>
     /// Reached within this many units. Live 2026-10-29: the old waypoints 2, 4 and 5 lay just past a railing (stopped 86, 67,
     /// 71 short at 60), so it went to 100 - which let the walk stop 61 north of waypoint 1 and start every next leg off the
     /// user's line (run 5). Now 40, with the walk homing in on the last 300 units, and blocked within 150 counts as reached.

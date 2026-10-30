@@ -414,6 +414,85 @@ public class BlossomPilotTests
         Assert.Contains(input.Calls, c => c.StartsWith("CtrlWheel", StringComparison.Ordinal)); // zoomed out again
     }
 
+    [Fact]
+    public async Task AfterAFight_FarFromTheWaypoint_NextToAnother_WalksOnFromThatOne()
+    {
+        // Live 2026-10-30 11:20: a chase (TAB target "Nearest monster") ended 111 units from waypoint 20, and the walk then
+        // tried to reach waypoint 7, 2750 units south, in a straight line through the terrain - blocked for minutes.
+        FakeGameInput? sent = null;
+        IReadOnlyList<string>? seen = null;
+        bool Paused() => seen?.Any(l => l.StartsWith("Waypoint 1 reached", StringComparison.Ordinal)) == true;
+        var (settings, input, ocr) = Harness(() => SkillTaps(sent!) == 0 ? "10000 , 9980" : "14050 , 9000",
+            target: i => Paused() && SkillTaps(i) < 4 ? "[S]Jaso Practitioner" : null);   // met at waypoint 1, chased far
+        sent = input;
+        settings.Blossom.Waypoints = ["10000,10000", "10000,9000", "14000,9000"];
+        settings.Blossom.LoopFrom = 1;
+        settings.Blossom.WaypointWaitMs = 5000;
+
+        var run = await RunAsync(settings, input, ocr, PilotPhase.BlossomWalk, (_, lines) =>
+        {
+            seen = lines;
+            return lines.Any(l => l.Contains("Off the route", StringComparison.Ordinal)) || lines.Count(l => l.Contains("Blocked", StringComparison.Ordinal)) > 2;
+        }, 20000);
+
+        string log = string.Join("\n", run.Lines);
+        Assert.True(run.Lines.Any(l => l.Contains("Off the route", StringComparison.Ordinal) && l.Contains("waypoint 3", StringComparison.Ordinal)), log);
+    }
+
+    [Fact]
+    public async Task DenseRoute_RunsPastNearWaypoints_NoPauseAtEach()
+    {
+        // User, 2026-10-30: "dont walk, run far away instead of staggered". A recorded route has a waypoint every 120 units:
+        // homing in on each and pausing there made the character stop and go all the way.
+        int reads = 0;
+        var (settings, input, ocr) = Harness(() => $"10000 , {10000 - 40 * (reads++ / 4)}");   // running north
+        settings.Blossom.Waypoints = Enumerable.Range(0, 30).Select(i => $"10000,{10000 - 120 * i}").ToList();
+        settings.Blossom.WaypointTurns = [];   // as a recorded route without A / D taps
+        settings.Blossom.RunAheadDistance = 600;
+        settings.Blossom.LoopFrom = 1;
+        settings.Blossom.WalkReadEveryMs = 200;
+        long start = Environment.TickCount64;
+
+        var run = await RunAsync(settings, input, ocr, PilotPhase.BlossomWalk, (_, _) => Environment.TickCount64 - start > 5000, 10000);
+
+        string log = string.Join("\n", run.Lines);
+        Assert.DoesNotContain(run.Lines, l => l.Contains(" reached at ", StringComparison.Ordinal));
+        Assert.Equal(PilotPhase.BlossomWalk, run.Phase);
+        Assert.True(input.Clicks > 5, log);
+    }
+
+    [Fact]
+    public async Task Blocked_ShortSidestepMoves_DoNotRestartTheWays()
+    {
+        // Live 2026-10-30 11:20-11:24: each sidestep moved the character 20+ units, which reset the still-step count, so it
+        // stepped right, left, right, left ... and never tried back or the diagonals.
+        int y = 15700, clicks = 0;
+        FakeGameInput? sent = null;
+        IReadOnlyList<string>? log = null;
+        var (settings, input, ocr) = Harness(() =>
+        {
+            int now = sent!.Clicks;
+            if (clicks == 0 && now > 0)
+                y -= 150;      // the first step goes north: the heading is learnt
+            clicks = now;
+            int steps = log?.Count(l => l.StartsWith("Blocked at", StringComparison.Ordinal) && l.Contains("stepping", StringComparison.Ordinal)) ?? 0;
+            return $"{13947 + steps % 2 * 40} , {y}";   // each sidestep shuffles it 40 units, never closer
+        });
+        sent = input;
+        settings.Blossom.WalkReadEveryMs = 150;
+        settings.Blossom.WalkClickEveryMs = 100;
+
+        var run = await RunAsync(settings, input, ocr, PilotPhase.BlossomWalk, (_, lines) =>
+        {
+            log = lines;
+            return lines.Count(l => l.StartsWith("Blocked at", StringComparison.Ordinal) && l.Contains("stepping", StringComparison.Ordinal)) >= 4;
+        }, 30000);
+
+        var ways = run.Lines.Where(l => l.StartsWith("Blocked at", StringComparison.Ordinal) && l.Contains("stepping", StringComparison.Ordinal))
+            .Select(l => l[(l.LastIndexOf("stepping ", StringComparison.Ordinal) + 9)..].TrimEnd('.')).Take(4).ToList();
+        Assert.Equal(["right", "left", "back", "back-right"], ways);
+    }
+
     [Theory]
     [InlineData("615378/750000", false)]   // another player is on it
     [InlineData("750000/750000", true)]
@@ -812,6 +891,24 @@ public class BlossomPilotTests
     }
 
     [Fact]
+    public async Task Fight_TargetHpFalling_WithTheLogFullOfLootLines_DoesNotStepAside()
+    {
+        // Live 2026-10-30 11:19: looting while fighting fills the combat log with "No items or [Silver] to obtain", so no
+        // "Attack succeeded" line shows - the Jaso was at 73934/750000 and dying, and the pilot stepped aside for nothing.
+        int reads = 0;
+        var (settings, input, ocr) = Harness(() => "15000 , 15000", target: _ => "[S]Jaso Practitioner",
+            log: _ => ["No items or [Silver] to obtain", "No items or [Silver] to obtain"],
+            hp: i => SkillTaps(i) == 0 ? "750000/750000" : $"{Math.Max(1000, 750000 - 4000 * ++reads)}/750000");   // full until hit
+        settings.Blossom.FightStuckMs = 1500;
+        long start = Environment.TickCount64;
+
+        var run = await RunAsync(settings, input, ocr, PilotPhase.BlossomWalk, (_, _) => Environment.TickCount64 - start > 5000, 10000);
+
+        Assert.Equal(PilotPhase.BlossomAttack, run.Phase);
+        Assert.DoesNotContain(input.Calls, c => c.StartsWith("CtrlClick", StringComparison.Ordinal));
+    }
+
+    [Fact]
     public async Task Fight_NewHits_DoesNotStepAside()
     {
         int n = 0;
@@ -966,6 +1063,8 @@ public class BlossomPilotTests
         settings.Lod.BuffKey = string.Empty;
         settings.Lod.HoldSkill = false;
         settings.Blossom.HoldSkill = false;   // the tests count skill taps; HoldSkill_KeepsTheSkillKeyDown_WhileFighting holds
+        settings.Blossom.RunAheadDistance = 0;   // every waypoint reached; DenseRoute_RunsPastNearWaypoints runs ahead
+        settings.Blossom.RandomSkipMax = 0;      // no random walk after a kill
 
         var input = new FakeGameInput();
         var ocr = new FakeOcrEngine();

@@ -300,6 +300,8 @@ public static class SettingsStore
         b.TargetGoneMs = Math.Clamp(b.TargetGoneMs, 500, 30000);
         b.FightMaxMs = Math.Clamp(b.FightMaxMs, 10000, 600000);
         b.FightStuckMs = b.FightStuckMs <= 0 ? 0 : Math.Clamp(b.FightStuckMs, 1000, 60000);
+        b.RunAheadDistance = Math.Clamp(b.RunAheadDistance, 0, 3000);
+        b.RandomSkipMax = Math.Clamp(b.RandomSkipMax, 0, 20);
         b.LootDelayMs = Math.Clamp(b.LootDelayMs, 0, 10000);
         b.LootMs = Math.Clamp(b.LootMs, 0, 60000);
         b.LootEveryMs = Math.Clamp(b.LootEveryMs, 50, 2000);

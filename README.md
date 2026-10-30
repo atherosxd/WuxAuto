@@ -275,7 +275,10 @@ Blossom Garden needs no key.
    **Loot time**), then on to the waypoint it was heading for. Only a monster at full health is attacked (one another player
    is hitting is left alone). No move and no new "Attack succeeded" line for 5 s while a target is selected (something in
    the way): it zooms out, lets go of the skill and steps aside - right, left, back, then the diagonals - until it moves.
-   The chat's "[AFK Checker] ... 1/5" (or more): a short step another way. A fight that never ends is given up after 2 minutes (then targets are ignored for 10 s). Blocked (a
+   The chat's "[AFK Checker] ... 1/5" (or more): a short step another way. Between fights it runs: waypoints closer than
+   600 units are run past instead of stopped at (a recorded route has one every 120), and after a kill it may skip up to 4
+   waypoints ahead at random. A chase that ends far off the waypoint it was heading for, next to another one, carries on
+   from that one. A fight that never ends is given up after 2 minutes (then targets are ignored for 10 s). Blocked (a
    railing, the bridge): it zooms out again and steps right, left, back, then the diagonals, zooming out again each round,
    until it moves; a waypoint it gets no closer to in 15 reads is skipped. A waypoint counts as reached within 40 units (it slows down and homes in on the last 300), or when blocked within 150 of it. Started inside Blossom Garden,
    it first makes sure the autohunt is off.

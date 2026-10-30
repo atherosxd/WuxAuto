@@ -110,6 +110,28 @@ public static class BlossomRoute
         return Math.Clamp(forward ? index + 1 : index - 1, 0, count - 1);
     }
 
+    /// <summary>
+    /// Up to <paramref name="n"/> steps along the route, but never onto a waypoint further than <paramref name="reach"/> from
+    /// <paramref name="from"/> (user, 2026-10-30: random skips "so that it doesn't look like a bot" - on a route with far-apart
+    /// waypoints a skip would be a long straight line through whatever is in the way).
+    /// </summary>
+    public static int SkipWithin(IReadOnlyList<(int X, int Y)> route, int index, int loopFrom, bool backAndForth, ref bool forward,
+        int n, (int X, int Y) from, double reach)
+    {
+        for (int i = 0; i < n; i++)
+        {
+            bool f = forward;
+            int next = Next(index, route.Count, loopFrom, backAndForth, ref f);
+            double dx = route[next].X - from.X, dy = route[next].Y - from.Y;
+            if (Math.Sqrt(dx * dx + dy * dy) > reach)
+                break;
+            index = next;
+            forward = f;
+        }
+
+        return index;
+    }
+
     /// <summary>The index of the point closest to (x, y); the first wins a tie, 0 for an empty route.</summary>
     public static int Nearest(IReadOnlyList<(int X, int Y)> route, int x, int y)
     {

@@ -36,6 +36,9 @@ public sealed partial class AutomationPilot
     ];
     private const int BlossomArrivalX = 19148, BlossomArrivalY = 19062;   // where the teleport lands (every live arrival)
     private const int BlossomArrivalRadius = 500;    // a respawn closer than this lines up on the pillars again
+    private const int BlossomOffRouteDistance = 600; // after a fight: this far from the waypoint it was heading for ...
+    private const int BlossomRejoinDistance = 300;   // ... and this close to another = walk on from that one
+    private const int BlossomSkipReach = 1000;       // a random skip lands only on waypoints this close to the fight's end
     private const double BlossomHeadingMissRad = 0.6;
     private const int BlossomHeadingMissesToRelearn = 3;
     private const int BlossomRelearnWindow = 6;   // steps after the heading was set in which it may be re-learnt
@@ -69,6 +72,9 @@ public sealed partial class AutomationPilot
     private long _blossomStuckCheckAt;           // fight: next "no move, no hit" check (FightStuckMs)
     private (int X, int Y)? _blossomStuckCoords; // fight: the spot and the combat log at the last check
     private string? _blossomStuckLog;
+    private int? _blossomStuckHp;
+    private bool _blossomRecheckRoute;           // a fight happened: the next walk read checks it is still near its waypoint
+    private int _blossomUnblockWay;              // walk: the next way of BlossomStepWays to try; back to 0 on progress
     private int _blossomSteps;                   // fight: side steps so far (the direction turns each time)
     private (int Cur, int Max)? _blossomTargetHp; // the target bar's numbers at the latest target read
     private long _blossomNotFullToldAt;
@@ -400,8 +406,10 @@ public sealed partial class AutomationPilot
         _blossomStuckCheckAt = 0;   // the first attack tick takes the baseline
         _blossomStuckCoords = null;
         _blossomStuckLog = null;
+        _blossomStuckHp = null;
         _blossomSteps = 0;
         _blossomFightLootAt = 0;
+        _blossomRecheckRoute = true;
         Log?.Invoke(LogLevel.Success, $"Jaso Practitioner targeted ('{target}') - {(_settings.Blossom.HoldSkill ? "holding" : "attacking with")} {SkillText(_settings.Dungeon.SkillKey)} ({_blossomKills} kill(s) so far).");
         Advance(PilotPhase.BlossomAttack, 0);
     }
@@ -581,6 +589,48 @@ public sealed partial class AutomationPilot
             var start = _blossomRoute[_blossomWaypoint];
             Log?.Invoke(LogLevel.Info, $"Walking the route from waypoint {_blossomWaypoint + 1} ({start.X},{start.Y}), at {coords}.");
         }
+        else if (_blossomRecheckRoute)
+        {
+            // The first read after a fight (live 2026-10-30 11:20: a chase ended 111 units from waypoint 20, and the walk
+            // then tried to reach waypoint 7, 2750 units south, straight through the terrain): far from the waypoint it was
+            // heading for, but next to another one -> on from that one, along the route as before.
+            var heading = _blossomRoute[_blossomWaypoint];
+            int nearest = BlossomRoute.Nearest(_blossomRoute, coords.X, coords.Y);
+            var near = _blossomRoute[nearest];
+            if (nearest != _blossomWaypoint && coords.DistanceTo(heading.X, heading.Y) > BlossomOffRouteDistance + b.RunAheadDistance
+                && coords.DistanceTo(near.X, near.Y) <= BlossomRejoinDistance)
+            {
+                Log?.Invoke(LogLevel.Info, $"Off the route after the fight ({coords.DistanceTo(heading.X, heading.Y):0} from waypoint " +
+                                           $"{_blossomWaypoint + 1}) - walking on from waypoint {nearest + 1} ({near.X},{near.Y}), the nearest.");
+                _blossomWaypoint = nearest;
+                _blossomLegFrom = (coords.X, coords.Y);
+                _blossomWaypointSteps = 0;
+                _blossomBestDistance = double.MaxValue;
+                _blossomStalls = 0;
+            }
+        }
+
+        _blossomRecheckRoute = false;
+
+        // Run, don't stagger (user, 2026-10-30: "dont walk, run far away instead of staggered"): waypoints closer than
+        // RunAheadDistance are run past - the walk aims at the first one at least that far along the route, so a recorded
+        // route (a waypoint every 120 units) is not homed in on and paused at every 120 units. One with a camera turn is
+        // still reached, so its turn is made there.
+        if (b.RunAheadDistance > 0)
+        {
+            for (int n = 0; n < _blossomRoute.Count; n++)
+            {
+                var wp = _blossomRoute[_blossomWaypoint];
+                if (coords.DistanceTo(wp.X, wp.Y) >= b.RunAheadDistance || _blossomTurns.ContainsKey(_blossomWaypoint + 1))
+                    break;
+                bool wasForward = _blossomForward;
+                _blossomLegFrom = wp;
+                _blossomWaypoint = BlossomRoute.Next(_blossomWaypoint, _blossomRoute.Count, b.LoopFrom, b.BackAndForth, ref _blossomForward);
+                LogBlossomTurnaround(wasForward);
+                _blossomWaypointSteps = 0;
+                _blossomBestDistance = double.MaxValue;
+            }
+        }
 
         var goal = _blossomRoute[_blossomWaypoint];
         double needX = goal.X - coords.X, needY = goal.Y - coords.Y;
@@ -663,6 +713,8 @@ public sealed partial class AutomationPilot
         // while it was still closing in.
         if (distance < _blossomBestDistance - 30)
         {
+            if (_blossomBestDistance < double.MaxValue)
+                _blossomUnblockWay = 0;   // closer: the next block starts with the first way again
             _blossomBestDistance = distance;
             _blossomWaypointSteps = 0;
         }
@@ -722,7 +774,9 @@ public sealed partial class AutomationPilot
     {
         double len = Math.Max(1, Math.Sqrt(ox * ox + oy * oy));
         double fx = ox / len * _settings.Blossom.WalkClickPx, fy = oy / len * _settings.Blossom.WalkClickPx;   // ahead
-        int index = Math.Max(0, _blossomStalls - 2) % BlossomStepWays.Length;
+        // The way to try goes on round the list until the walk gets closer to its waypoint (live 2026-10-30 11:20: each
+        // sidestep moved the character 20+ units, which reset the still-step count, so it stepped right, left, right ...).
+        int index = _blossomUnblockWay++ % BlossomStepWays.Length;
         if (index == 0 && _settings.Dungeon.ZoomOutNotches > 0
             && _controls.ZoomOut(frame.Width / 2, (int)(frame.Height * 0.40), _settings.Dungeon.ZoomOutNotches))
             Log?.Invoke(LogLevel.Info, $"Blocked at {coords} - zoomed out again.");
@@ -785,6 +839,31 @@ public sealed partial class AutomationPilot
             string key = turn.Direction == TurnDirection.Left ? _settings.Dungeon.RotateLeftKey : _settings.Input.RotateKey;
             Log?.Invoke(LogLevel.Info, $"Leaving waypoint {left}: turning the camera {(turn.Direction == TurnDirection.Left ? "left" : "right")} ('{key}' x{turn.Taps}).");
         }
+    }
+
+    /// <summary>
+    /// After a kill, 0 to RandomSkipMax waypoints ahead at random (user, 2026-10-30: "randomly try to skip multiple waypoints so
+    /// that it doesn't look like a bot"), only onto waypoints within BlossomSkipReach of where the fight ended.
+    /// </summary>
+    private void BlossomRandomSkip()
+    {
+        var b = _settings.Blossom;
+        if (b.RandomSkipMax <= 0 || _blossomWaypoint < 0 || _blossomAttackCoords is not (int x, int y))
+            return;
+
+        int n = Random.Shared.Next(0, b.RandomSkipMax + 1);
+        bool wasForward = _blossomForward;
+        int from = _blossomWaypoint;
+        _blossomWaypoint = BlossomRoute.SkipWithin(_blossomRoute, _blossomWaypoint, b.LoopFrom, b.BackAndForth, ref _blossomForward,
+            n, (x, y), BlossomSkipReach);
+        if (_blossomWaypoint == from)
+            return;
+
+        LogBlossomTurnaround(wasForward);
+        _blossomLegFrom = null;
+        _blossomWaypointSteps = 0;
+        _blossomBestDistance = double.MaxValue;
+        Log?.Invoke(LogLevel.Info, $"Skipping ahead at random - on to waypoint {_blossomWaypoint + 1} instead of {from + 1}.");
     }
 
     /// <summary>Walk-back (BackAndForth): one log line when the walk's direction just turned. True when it did.</summary>
@@ -893,6 +972,7 @@ public sealed partial class AutomationPilot
             if (b.LootWhileFighting)
             {
                 Log?.Invoke(LogLevel.Success, $"Jaso Practitioner down (kill {_blossomKills}) - looted while fighting, walking on.");
+                BlossomRandomSkip();
                 ResumeBlossomWalkOrRebuff("after the kill");
                 return;
             }
@@ -939,9 +1019,14 @@ public sealed partial class AutomationPilot
         bool first = _blossomStuckCheckAt == 0;
         bool still = !first && at is (int x, int y) && _blossomStuckCoords is (int sx, int sy)
                      && Math.Sqrt((double)(x - sx) * (x - sx) + (double)(y - sy) * (y - sy)) < BlossomStuckMoveUnits;
-        bool noHit = !first && log == _blossomStuckLog;
+        // A hit = a new "Attack succeeded" line, or the target bar's HP lower than at the last look (live 2026-10-30 11:19:
+        // looting while fighting fills the log with "No items or [Silver] to obtain", so the attack lines scroll away).
+        int? hp = _blossomTargetHp?.Cur;
+        bool hpFell = hp is int now0 && _blossomStuckHp is int then0 && now0 < then0;
+        bool noHit = !first && log == _blossomStuckLog && !hpFell;
         _blossomStuckCoords = at;
         _blossomStuckLog = log;
+        _blossomStuckHp = hp;
         _blossomStuckCheckAt = now + b.FightStuckMs;
         if (!still || !noHit)
         {
@@ -988,6 +1073,7 @@ public sealed partial class AutomationPilot
         {
             Log?.Invoke(LogLevel.Info, $"Looted for {b.LootMs / 1000.0:0.#}s - " +
                                        (_blossomWaypoint >= 0 ? $"on to waypoint {_blossomWaypoint + 1}." : "back to the route."));
+            BlossomRandomSkip();
             ResumeBlossomWalkOrRebuff("after the loot");
             return;
         }

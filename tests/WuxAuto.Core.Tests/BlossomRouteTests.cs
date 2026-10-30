@@ -67,6 +67,35 @@ public class BlossomRouteTests
     }
 
     [Fact]
+    public void SkipWithin_TurnsBackAtTheEndOfAWalkBackRoute()
+    {
+        // User, 2026-10-30: "randomly try to skip multiple waypoints so that it doesn't look like a bot".
+        List<(int X, int Y)> route = [.. Enumerable.Range(0, 10).Select(i => (0, 100 * i))];
+        bool forward = true;
+        Assert.Equal(7, BlossomRoute.SkipWithin(route, 8, loopFrom: 1, backAndForth: true, ref forward, n: 3, from: (0, 800), reach: 1000));
+        Assert.False(forward);   // 9, then back to 8, 7
+    }
+
+    [Fact]
+    public void SkipWithin_StopsAtTheFirstWaypointOutOfReach()
+    {
+        // A random skip must not turn into a long straight line across the map (a typed route's waypoints are far apart).
+        List<(int X, int Y)> route = [(0, 0), (0, 120), (0, 240), (0, 360), (0, 2000), (0, 2120)];
+        bool forward = true;
+        Assert.Equal(3, BlossomRoute.SkipWithin(route, 1, loopFrom: 1, backAndForth: true, ref forward, n: 4, from: (0, 100), reach: 1000));
+        Assert.Equal(2, BlossomRoute.SkipWithin(route, 1, loopFrom: 1, backAndForth: true, ref forward, n: 1, from: (0, 100), reach: 1000));
+        Assert.Equal(4, BlossomRoute.SkipWithin(route, 4, loopFrom: 1, backAndForth: true, ref forward, n: 3, from: (0, 100), reach: 1000));
+    }
+
+    [Fact]
+    public void RunAheadAndRandomSkip_Defaults()
+    {
+        var b = new AppSettings().Blossom;
+        Assert.Equal(600, b.RunAheadDistance);
+        Assert.Equal(4, b.RandomSkipMax);
+    }
+
+    [Fact]
     public void BackAndForth_OneWaypoint_StaysPut()
     {
         bool forward = true;

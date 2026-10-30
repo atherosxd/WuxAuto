@@ -988,6 +988,17 @@ teleport in again (LOD's rule); still in town after the teleport = "destination 
   move for 5s, try to zoom out and move in every direction until it moves"; it used to skip the waypoint on the 5th still
   step); the 5th still step only warns and saves `blossom_stuck`. The no-progress rule (15 reads without getting 30
   closer) still skips a waypoint (`blossom_too_long`). 40 unread coordinates -> fail. Snapshots: <= 3 per tag per Start.
+* **Run, don't stagger** (user, 2026-10-30: "dont walk, run far away instead of staggered"): `Blossom.RunAheadDistance` **600**
+  (0 = off): each walk read passes every waypoint closer than that (a recorded route has one every 120 units, so the walk was
+  always homing in and pausing) and aims at the first one at least 600 along the route; a waypoint with a camera turn is still
+  reached. **Random skip** (same day: "randomly try to skip multiple waypoints so that it doesn't look like a bot"):
+  `RandomSkipMax` **4** (0 = off) - after a kill 0-4 waypoints ahead at random (`BlossomRoute.SkipWithin`), only onto ones within
+  1000 of where the fight ended (a typed route's far-apart waypoints never become one long straight line).
+  **Off the route after a fight** (live 11:20: a chase ended 111 from waypoint 20 and the walk tried waypoint 7, 2750 south,
+  straight through the terrain for minutes): the first walk read after a fight (`_blossomRecheckRoute`) - further than
+  600 + `RunAheadDistance` from the waypoint it was heading for and within 300 of another -> on from that one. **Unblock ways**
+  go on round the list (`_blossomUnblockWay`) until the walk gets 30 closer to its waypoint - live, each sidestep moved the
+  character 20+ units, reset the still-step count, and it stepped right, left, right ... for minutes.
 * **AFK Checker** (user, 2026-10-30: the chat whispers "(Whisper) [AFK Checker] : Start 1/5" ... "Reset 0/5" - "if 1+/5, try
   to move a little bit to other directions"): `Blossom.AfkCheckerText` "AFK Checker" (empty = off). The shared 5 s
   whole-screen OCR (`BlossomAfkWatch`: Blossom phases or the buff round, game in front) -> `BlossomText.AfkCheckerCount`:
@@ -1023,7 +1034,8 @@ teleport in again (LOD's rule); still in town after the teleport = "destination 
   stays). **Stuck in a fight** (user, same day: "if a monster is tab, but there is 5s that it didn't move and no attack
   succeeded log, try to click on other direction to reposition"): every `FightStuckMs` **5000** (0 = off; `BlossomFightStuckAsync`)
   the fight's latest coordinates and the combat log's `AttackConfirmText` lines (`ReadAttackLogAsync`) are compared with the
-  last check; moved < 40 and the log unchanged -> the skill let go, a **Ctrl+click** (walk, the target stays - LOD's approach)
+  last check; moved < 40, the log unchanged and the target bar's HP not lower (live 11:19: looting while fighting fills the log
+  with "No items or [Silver] to obtain", so the attack lines scroll away - the HP is the hit signal that survives) -> the skill let go, a **Ctrl+click** (walk, the target stays - LOD's approach)
   `WalkClickPx` from the feet, the 7 `BlossomStepWays` in turn (a zoom-out at the start of each round), 0.8 s, then the hold
   again, and the next look 1.5 s later (until it moves or hits; then the ways start over); `blossom_fight_stuck`. An unread
   spot never counts as still. Live 10:14: fired on a flying Jaso up a slope at 750000/750000 with no hits; killed 9 s after. `FightMaxMs` 120000 -> give up (user: a Jaso dies within 2 min), Tab, and targets are
