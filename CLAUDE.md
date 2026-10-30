@@ -326,7 +326,13 @@ gate waited for the minimap title - the map stayed open, and 74 s after the gate
 Piercing City (the gate closes after 60 s; whoever has not gone through is sent home - run 1's kick fits too). Now
 ClickMap / ReadStage / AdvanceStage tick without the title (`PhoneLoopGate.RunsWithoutTitle`), and in them the zone
 guard reads the map window's own title ("The Labyrinth (Adept)", `PhoneMapTitle`) when the minimap's does not read -
-only a destination or home-town name counts. **Keys:** the pilot's restarts teleport in again on their own: that night
+only a destination or home-town name counts. (7) **Teleport list paged one page too far** (user: "it is going to page 3
+instead of page 2"): the captured frame lags the game by up to ~1 s. The first read came before the list had opened and
+paged blind, the next read still showed page 1 and paged again, and the "Labyrinth" tap (aimed from a page 2 frame) hit
+page 3. No teleport, and 2 minutes later "out of Temple of Fiends Keys" with 4 left. ML Kit reads the list's "n/N" counter:
+`PhoneListPageReady` lets a read count only when the counter shows the page the pilot is on (`_pages` + 1), else it waits
+400 ms (<= 8 reads, then the counter read, if any, is taken as the page). The Durations window (☰ -> Durations) shows the
+real count: "[Temple of Fiends Key] 4 (time(s))" that evening. **Keys:** the pilot's restarts teleport in again on their own: that night
 it entered the Labyrinth at 13:58, 14:07, 14:09 and 14:39 (a 16:14 click did not take); stop it before a restart when
 the key budget is spent. Not yet seen live: the resume read, the long north turn, the gate timer, (5) and (6).
 

@@ -24,7 +24,8 @@ public class OutOfKeysTests : AppPathsScope
         var settings = PhonePilot.PhoneLodSettings();
         settings.Lod.ListPage = 1;                          // this page is where the entry would be
         using var phone = new PhonePilot(TempRoot(), settings);
-        phone.Ocr.Scene = () => ListWithoutLod(PhoneFrames.Width);
+        // The phone's list shows its page counter (ML Kit reads it; the pilot waits for the page it expects).
+        phone.Ocr.Scene = () => [.. ListWithoutLod(PhoneFrames.Width), FakeOcrEngine.Line("1/3", PhoneFrames.Width / 2 - 20, 260, 40, 16)];
         using var frame = PhoneFrames.Grey();
         bool modeChanged = false;
         phone.Pilot.ModeChanged += () => modeChanged = true;

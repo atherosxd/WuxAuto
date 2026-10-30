@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Text.RegularExpressions;
 using Emgu.CV;
 using WuxAuto.Core;
 using WuxAuto.Phone;
@@ -88,6 +89,7 @@ public sealed partial class AutomationPilot
     private int _stableSamples;
 
     private int _pages;
+    private int _listWaits;                  // phone: reads of the teleport list that did not show the expected page (PhoneListPageReady)
     private bool _chevronMissing;
     private bool _pagingBack;
 
@@ -497,6 +499,7 @@ public sealed partial class AutomationPilot
         _lastHash = 0;
         _stableSamples = 0;
         _pages = 0;
+        _listWaits = 0;
         _chevronMissing = false;
         _pagingBack = false;
         _backPages = 0;
@@ -2445,6 +2448,9 @@ public sealed partial class AutomationPilot
             _anchor?.X,
             _anchor?.Y);
 
+        if (!PhoneListPageReady(words))
+            return;
+
         // The fuzzy match takes pieces: "[Den of Rebirth]" must not pass for "Ultimate Den of
         // Rebirth" (Auto LOD) - the start of the name has to be there.
         if (hit != null && !ZoneMatches(hit.LineText, CurrentDestination) && !ZoneMatches(hit.Text, CurrentDestination))
@@ -2535,6 +2541,64 @@ public sealed partial class AutomationPilot
 
         _preLoadHash = FrameSignature.Compute(frame, new PixelRect(0, 0, frame.Width, frame.Height));
         Advance(PilotPhase.WaitForLoad, _settings.Input.AfterClickMs);
+    }
+
+    /// <summary>
+    /// Phone: the captured frame lags the game - a page tap shows up to a second later. Live MuMu 2026-10-30: the first
+    /// read came before the list had opened and paged blind (1 -> 2), the next read still showed page 1 and paged again
+    /// (2 -> 3), and the "Labyrinth" tap, aimed from a frame of page 2, landed on page 3: no teleport, and 2 minutes later
+    /// the pilot called it "out of Temple of Fiends Keys" with 4 left (user: "it is going to page 3 instead of page 2").
+    /// ML Kit reads the list's "n/N" counter, so a read counts only when it shows the page the pilot is on
+    /// (<c>_pages</c> + 1); a read without the counter (the list not up yet) or with another page waits 400 ms, up to
+    /// <see cref="PhoneListWaits"/> times - then the counter, when read, is taken as the page. Always true on the
+    /// desktop (Windows OCR does not read the counter, and the frame is current there).
+    /// </summary>
+    private bool PhoneListPageReady(IReadOnlyList<OcrWord> words)
+    {
+        if (Profile != PlatformProfile.Phone || _pagingBack)
+            return true;
+
+        int? page = TeleportListPage(words);
+        int want = _pages + 1;
+        if (page == want)
+        {
+            _listWaits = 0;
+            return true;
+        }
+
+        if (++_listWaits <= PhoneListWaits)
+        {
+            _detail = page == null
+                ? $"waiting for the teleport list to show ({_listWaits}/{PhoneListWaits})"
+                : $"the teleport list still shows page {page}, waiting for page {want} ({_listWaits}/{PhoneListWaits})";
+            _waitUntil = Environment.TickCount64 + 400;
+            return false;
+        }
+
+        if (page is int shown)
+        {
+            Log?.Invoke(LogLevel.Warning, $"The teleport list shows page {shown}, not page {want} - going on from page {shown}.");
+            _pages = shown - 1;
+        }
+
+        _listWaits = 0;
+        return true;
+    }
+
+    /// <summary>Phone: reads of the teleport list (400 ms apart) that may wait for the expected page.</summary>
+    private const int PhoneListWaits = 8;
+
+    /// <summary>The teleport list's page counter ("2/3", "2 / 3") among the OCR lines; null when none reads.</summary>
+    internal static int? TeleportListPage(IEnumerable<OcrWord> words)
+    {
+        foreach (string line in words.Select(w => w.LineText).Distinct())
+        {
+            var m = Regex.Match(line, @"^\s*(\d)\s*/\s*(\d)\s*$");
+            if (m.Success && int.Parse(m.Groups[1].Value) is int page and >= 1 && page <= int.Parse(m.Groups[2].Value))
+                return page;
+        }
+
+        return null;
     }
 
     private void TickWaitForLoad(Mat frame)
@@ -5849,6 +5913,7 @@ public sealed partial class AutomationPilot
 
         _returning = true;
         _pages = 0;
+        _listWaits = 0;
         _anchor = null;
         _chevronMissing = false;
         Log?.Invoke(LogLevel.Info, $"Teleporting back to '{HomeTown}'.");
