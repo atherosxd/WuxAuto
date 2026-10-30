@@ -316,15 +316,16 @@ public sealed class BlossomSettings
     /// <summary>The route, "x,y" world coordinates in order (user). From the last one it goes back to <see cref="LoopFrom"/> (or walks back, <see cref="BackAndForth"/>).</summary>
     public List<string> Waypoints { get; set; } = DefaultWaypoints();
 
-    /// <summary>1-based waypoint the route loops back to after the last one (user: 17 -> 6).</summary>
-    public int LoopFrom { get; set; } = 6;
+    /// <summary>1-based waypoint the route loops back to after the last one (first route: 17 -> 6), or walks back to
+    /// (<see cref="BackAndForth"/>; the recorded default route: 83 -> 1).</summary>
+    public int LoopFrom { get; set; } = 1;
 
     /// <summary>
     /// Walk back the same way instead of looping (user, 2026-10-30: "1 - 83 then 83, 82, 81 to 1 then loop"): forward to the
     /// last waypoint, back to <see cref="LoopFrom"/>, forward again; camera turns are undone on the way back. Record route
-    /// switches it on when a recording does not end near its start.
+    /// switches it on when a recording does not end near its start. On for the default route (its end is ~5000 from its start).
     /// </summary>
-    public bool BackAndForth { get; set; }
+    public bool BackAndForth { get; set; } = true;
 
     /// <summary>
     /// The game's TAB target, set in the town Settings visit before the teleport (user, 2026-10-30: "make sure that the tab
@@ -385,10 +386,11 @@ public sealed class BlossomSettings
     /// <summary>
     /// Camera turns when leaving a waypoint, "N:KC" = after waypoint N tap key K (A = left, D = right) C times
     /// (<see cref="TurnTapMs"/> each). User, 2026-10-29: "In waypoint 1, do a left turn / 4x A, then on waypoint 2 do right
-    /// turn / D 5x", then 5x A at 1, and with the new waypoints 1:5A, 2:5D, 3:5A, 4:5D. The walk learns its heading again
-    /// from the next step. Edited in the app as <see cref="WaypointTurnsText"/>.
+    /// turn / D 5x", then 5x A at 1, and with the new waypoints 1:5A, 2:5D, 3:5A, 4:5D (the first 17-waypoint route). The
+    /// walk learns its heading again from the next step. Edited in the app as <see cref="WaypointTurnsText"/>. None for the
+    /// default route: it was recorded without A / D taps.
     /// </summary>
-    public List<string> WaypointTurns { get; set; } = ["1:A5", "2:D5", "3:A5", "4:D5"];
+    public List<string> WaypointTurns { get; set; } = [];
 
     /// <summary>
     /// <see cref="WaypointTurns"/> as one line for the settings panel (user: "add a settings in the app ... 1:5A like that"):
@@ -437,7 +439,33 @@ public sealed class BlossomSettings
 
     public int LootEveryMs { get; set; } = 200;
 
+    /// <summary>
+    /// The route the user recorded on the first island (2026-10-30 09:13, Record route, no camera taps): 83 waypoints from
+    /// the arrival spot, walked 1 - 83 and back (<see cref="BackAndForth"/>, "1 - 83 then 83, 82, 81 to 1 then loop").
+    /// </summary>
     public static List<string> DefaultWaypoints() =>
+    [
+        "19148,19062", "19145,18906", "19151,18738", "19240,18594", "19323,18450", "19402,18325",
+        "19426,18185", "19372,17893", "19343,17755", "19388,17446", "19396,17265", "19407,17005",
+        "19351,16849", "19322,16695", "19346,16527", "19384,16368", "19491,15806", "19525,15509",
+        "19537,15337", "19410,15422", "19277,15842", "19124,16416", "19012,16771", "18958,16928",
+        "18840,17172", "18709,17397", "18654,17539", "18634,17697", "18487,17795", "18349,17882",
+        "18198,17954", "18108,18101", "18035,18244", "17962,18399", "17886,18511", "17032,17812",
+        "16872,17851", "16784,17954", "16772,18114", "16768,18281", "16744,18440", "16701,18601",
+        "16642,18746", "16520,18713", "16416,18597", "16395,18436", "16389,18267", "16376,18098",
+        "16351,17927", "16273,17774", "16183,17633", "16060,17521", "15903,17472", "15770,17557",
+        "15689,17710", "15585,17844", "15658,18227", "15677,18393", "15692,18563", "15727,18720",
+        "15843,18839", "16007,18887", "16177,18954", "16048,19103", "15882,19154", "15709,19207",
+        "15547,19269", "15150,18780", "15081,18634", "15007,18501", "14919,18338", "14772,18347",
+        "14698,18462", "14657,18711", "14629,18888", "14461,19022", "13829,19017", "14089,18923",
+        "14231,18920", "14228,18775", "14198,18624", "14184,18491", "14150,18323",
+    ];
+
+    /// <summary>
+    /// The first default route (user, 2026-10-29: 17 waypoints, 1-5 once, then 6-17 looped, camera turns at 1-4). v25 of the
+    /// settings migration recognises it; the walk tests still run on it.
+    /// </summary>
+    public static List<string> First17Waypoints() =>
     [
         "19107,18424", "15917,18388", "15967,15981", "13956,16015", "13953,15038", "13964,14686",
         "13370,14493", "13085,13906", "12944,13692", "12987,13184", "13557,12775", "14101,12622",

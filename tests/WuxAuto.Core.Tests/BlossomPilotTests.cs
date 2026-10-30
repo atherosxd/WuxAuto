@@ -1065,6 +1065,11 @@ public class BlossomPilotTests
         settings.Blossom.HoldSkill = false;   // the tests count skill taps; HoldSkill_KeepsTheSkillKeyDown_WhileFighting holds
         settings.Blossom.RunAheadDistance = 0;   // every waypoint reached; DenseRoute_RunsPastNearWaypoints runs ahead
         settings.Blossom.RandomSkipMax = 0;      // no random walk after a kill
+        // The first default route (17 waypoints, 1-5 then 6-17 looped, camera turns at 1-4): the walk tests were written on it.
+        settings.Blossom.Waypoints = BlossomSettings.First17Waypoints();
+        settings.Blossom.LoopFrom = 6;
+        settings.Blossom.BackAndForth = false;
+        settings.Blossom.WaypointTurns = ["1:A5", "2:D5", "3:A5", "4:D5"];
 
         var input = new FakeGameInput();
         var ocr = new FakeOcrEngine();

@@ -61,7 +61,7 @@ Everything it does is drawn on its preview and written to its log.
 
 * **AutoBlossom** - Jaso Practitioners in Blossom Garden (no key needed). Start it in a home town (or inside Blossom
   Garden). It teleports there (page 1 of the scroll), zooms out, taps D until the two pillars are centred, buffs (the
-  Auto War buff settings), then walks 17 waypoints - 1 to 5 once, then 6 to 17 over and over - pressing Tab. A targeted
+  Auto War buff settings), then walks 83 waypoints - 1 to 83, then back to 1, over and over - pressing Tab. A targeted
   [S]Jaso Practitioner (or a target with the chest) is attacked until it is gone, then looted for 5 s; then the walk goes on.
   It stands at most 3 s at a waypoint (the map's AFK checker kicks idle characters to town; from town it teleports back in).
   Settings > Auto Blossom: target name, waypoint pause, loot time; the waypoints are in `settings.json` (`Blossom`).
