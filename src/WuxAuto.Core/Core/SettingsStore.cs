@@ -42,7 +42,7 @@ public static class AppPaths
 public static class SettingsStore
 {
     /// <summary>Bump when an existing settings.json must be migrated (see <see cref="Migrate"/>).</summary>
-    private const int CurrentVersion = 24;
+    private const int CurrentVersion = 25;
 
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
@@ -209,6 +209,20 @@ public static class SettingsStore
                 blossom.LootMs = 2000;
             if (blossom.TurnMaxTaps == 50)
                 blossom.TurnMaxTaps = 15;
+        }
+
+        // v25: the route the user recorded on the first island (2026-10-30, 83 waypoints, walked 1 - 83 and back, no camera
+        // taps) replaces the first 17-waypoint default. Only a file still on that first route moves, and then the whole route
+        // does - waypoints, loop start, walk back and camera turns belong together (the old turns were made for the old
+        // waypoints); a recorded route stays.
+        if (s.Version < 25 && s.Blossom is { } route
+            && Automation.BlossomRoute.Parse(route.Waypoints).SequenceEqual(Automation.BlossomRoute.Parse(BlossomSettings.First17Waypoints())))
+        {
+            var d = new BlossomSettings();
+            route.Waypoints = d.Waypoints;
+            route.LoopFrom = d.LoopFrom;
+            route.BackAndForth = d.BackAndForth;
+            route.WaypointTurns = d.WaypointTurns;
         }
 
         s.Version = CurrentVersion;

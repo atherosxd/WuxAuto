@@ -3,19 +3,22 @@ using WuxAuto.Core;
 
 namespace WuxAuto.Core.Tests;
 
-/// <summary>Auto Blossom's settings and route rules (user, 2026-10-29: waypoints 1-5 once, then 6-17 in a loop).</summary>
+/// <summary>Auto Blossom's settings and route rules (user, 2026-10-30: the recorded 83-waypoint route, 1 - 83 and back).</summary>
 public class BlossomRouteTests
 {
     [Fact]
     public void Defaults_AreTheUsersRoute()
     {
+        // User, 2026-10-30: the route recorded on the first island at 09:13 ("1 - 83 then 83, 82, 81 to 1 then loop").
         var b = new AppSettings().Blossom;
         var route = BlossomRoute.Parse(b.Waypoints);
-        Assert.Equal(17, route.Count);
-        Assert.Equal((19107, 18424), route[0]);
-        Assert.Equal((13964, 14686), route[5]);
-        Assert.Equal((14359, 14565), route[16]);
-        Assert.Equal(6, b.LoopFrom);
+        Assert.Equal(83, route.Count);
+        Assert.Equal((19148, 19062), route[0]);   // the arrival spot
+        Assert.Equal((17886, 18511), route[34]);
+        Assert.Equal((14150, 18323), route[82]);
+        Assert.Equal(1, b.LoopFrom);
+        Assert.True(b.BackAndForth);   // the end lies ~5000 from the start: a loop would cross the map in one line
+        Assert.Empty(b.WaypointTurns); // recorded without A / D taps
         Assert.Equal("Blossom Garden", b.Destination);
         Assert.Equal(1, b.ListPage);
         Assert.Equal(3000, b.WaypointWaitMs);
@@ -107,14 +110,18 @@ public class BlossomRouteTests
     {
         var route = BlossomRoute.Parse(new AppSettings().Blossom.Waypoints);
         Assert.Equal(0, BlossomRoute.Nearest(route, 19148, 19062)); // the arrival point (user's frame)
-        Assert.Equal(9, BlossomRoute.Nearest(route, 12990, 13190));
+        Assert.Equal(76, BlossomRoute.Nearest(route, 13820, 19030));
+        var first = BlossomRoute.Parse(BlossomSettings.First17Waypoints());
+        Assert.Equal(0, BlossomRoute.Nearest(first, 19148, 19062));
+        Assert.Equal(9, BlossomRoute.Nearest(first, 12990, 13190));
     }
 
     [Fact]
-    public void Turns_DefaultsAreTheUsers()
+    public void Turns_TheFirstRoutesTurns()
     {
-        // User, 2026-10-29: "In waypoint 1, do a left turn / 4x A, then on waypoint 2 do right turn / D 5x".
-        var turns = BlossomRoute.ParseTurns(new AppSettings().Blossom.WaypointTurns);
+        // User, 2026-10-29: "In waypoint 1, do a left turn / 4x A, then on waypoint 2 do right turn / D 5x" - the first
+        // 17-waypoint route's turns (the recorded default route has none).
+        var turns = BlossomRoute.ParseTurns(["1:A5", "2:D5", "3:A5", "4:D5"]);
         Assert.Equal(4, turns.Count);
         Assert.Equal((TurnDirection.Left, 5), turns[1]); // after the 4th live run: "try 5A instead of 4A"
         Assert.Equal((TurnDirection.Right, 5), turns[2]);
@@ -157,6 +164,8 @@ public class BlossomRouteTests
     public void TurnsText_RoundTrips()
     {
         var b = new AppSettings().Blossom;
+        Assert.Equal("", b.WaypointTurnsText);
+        b.WaypointTurns = ["1:A5", "2:D5", "3:A5", "4:D5"];
         Assert.Equal("1:A5, 2:D5, 3:A5, 4:D5", b.WaypointTurnsText);
         b.WaypointTurnsText = "1:5A; 2:5D,  7:2a";
         Assert.Equal(["1:5A", "2:5D", "7:2a"], b.WaypointTurns);
@@ -171,12 +180,12 @@ public class BlossomRouteTests
     {
         var s = new AppSettings();
         s.Blossom.WaypointWaitMs = 9000;
-        s.Blossom.LoopFrom = 40;
+        s.Blossom.LoopFrom = 100;
         s.Blossom.Waypoints = [];
         SettingsStore.Normalize(s);
         Assert.Equal(5000, s.Blossom.WaypointWaitMs);
-        Assert.Equal(17, BlossomRoute.Parse(s.Blossom.Waypoints).Count);
-        Assert.Equal(17, s.Blossom.LoopFrom);
+        Assert.Equal(83, BlossomRoute.Parse(s.Blossom.Waypoints).Count);
+        Assert.Equal(83, s.Blossom.LoopFrom);
     }
 
     [Fact]

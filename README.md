@@ -261,11 +261,13 @@ Blossom Garden needs no key.
    (`Assets\blossompillar.png`, a pillar base; the user's frame scores 0.98 and 0.81, the score gate is 0.70). Not lined up
    after 15 taps or 10 s: it walks anyway. Started inside Blossom Garden there is no turn: it walks from the nearest waypoint
    and learns the camera's direction from the first steps.
-4. The walk: 17 waypoints (`Blossom > Waypoints` in settings.json) - 1 to 5 once, then 6 to 17 over and over - starting at
-   the nearest one. The first click goes straight up the screen; where the character went tells which way the camera
+4. The walk: the 83 waypoints recorded on the first island (`Blossom > Waypoints` in settings.json) - 1 to 83, then back
+   83, 82 ... 1, over and over (**Walk back the same way**, on) - starting at the nearest one. A copy still on the first
+   17-waypoint route gets this one when it updates; a route you recorded yourself stays. The first click goes straight up the screen; where the character went tells which way the camera
    looks. It stays on the line between two waypoints (lay them along the road) and clicks every 0.35 s so the character keeps running, and reads the coordinates about once a second. When it
-   leaves a waypoint it can turn the camera - Settings > Auto Blossom > **Camera turns**, default `1:A5, 2:D5, 3:A5, 4:D5`
-   (`1:5A` works too: after waypoint 1 tap `A` five times, after waypoint 2 `D` five times, ...) - and learns the camera's
+   leaves a waypoint it can turn the camera - Settings > Auto Blossom > **Camera turns**, empty by default (the route was
+   recorded without camera taps); e.g. `1:A5, 2:D5` (`1:5A` works too: after waypoint 1 tap `A` five times, after waypoint
+   2 `D` five times, ...) - and learns the camera's
    direction again from the next step. **Walk back the same way** (Settings > Auto Blossom): after the last waypoint the
    route is walked back to the loop start (83, 82 ... 1), then forward again, with the camera turns undone on the way back.
    `Tab` every second. At a reached waypoint it stands at most **Waypoint pause** (3 s; at most 5 s - the AFK

@@ -25,7 +25,8 @@ Everything it does is visible: detections are drawn on the live preview and ever
 Three more modes sit beside the Labyrinth (the Mode buttons above Start): **Auto LOD** (§4.5),
 **Auto War** (§4.8, user 2026-10-27: an alt waits in a page-3 cave, joins every Bohai Outpost tribe war,
 fights, comes back to the same cave and monster; one game per WuxAuto, no walking inside Bohai) and
-**Auto Blossom** (§4.9, user 2026-10-29: Jaso Practitioners on a 17-waypoint route in Blossom Garden).
+**Auto Blossom** (§4.9, user 2026-10-29: Jaso Practitioners on a route in Blossom Garden; since v25 the user's recorded
+83-waypoint route, walked there and back).
 
 The user is non-technical about the internals but precise about the game behaviour — when they
 report "it didn't click X", the fastest path is almost always (a) read the debug snapshot from
@@ -175,7 +176,7 @@ words and the map scroll-arrow result. `--crop` writes `<frame>.crop.png` next t
 Core tests and the refactor parity gate (M1, 2026-10-27):
 
 ```powershell
-dotnet test tests\WuxAuto.Core.Tests        # xUnit, platform-free Core only (611 tests, ~7.5 min; the pilot tests tick a
+dotnet test tests\WuxAuto.Core.Tests        # xUnit, platform-free Core only (614 tests, ~7.5 min; the pilot tests tick a
                                            # blank Mat with a scripted OCR scene - see tests/ in section 3)
 # probe baseline: runs every SelfTest probe over a frozen, local-only frame set (never committed)
 # and writes normalised output; run it before and after a refactor and diff the two
@@ -968,8 +969,14 @@ teleport in again (LOD's rule); still in town after the teleport = "destination 
   `TurnMaxTaps` **15** or `TurnMaxMs` **10000** (whichever first; user, 2026-10-30: "reduce the turn to pillars to 15 turns or
   10s"; was 50 taps, ~1 min; v24 moves a saved 50) a warning + `blossom_no_pillars` and the walk. Pair off centre (> `PillarCenterTolerance` 0.06 w) -> 40 ms fine
   taps, direction flipped when the offset grew (D's direction is not assumed), <= 12. No Tab while turning.
-* **Walk:** `BlossomRoute` (17 user waypoints, 1-5 then 6-17 looped, `LoopFrom` 6), starting at the **nearest** waypoint (arrival
-  19148,19062 -> waypoint 1). The first step after a turn clicks **straight up**; the movement sets `_headingBase` (the view's
+* **Walk:** `BlossomRoute`, starting at the **nearest** waypoint (arrival 19148,19062 -> waypoint 1). **Default route since
+  settings v25 (user, 2026-10-30: "make it default"):** the 83 waypoints the user recorded on the first island at 09:13
+  (Record route, no camera taps; waypoint 1 = the arrival spot), `LoopFrom` 1, `BackAndForth` **on**, `WaypointTurns` empty.
+  The route lived only in the recording PC's settings.json / `blossom-route.txt`, so a second PC's fresh v0.23.0 install
+  walked the first default instead. v25 moves a file whose waypoints are exactly the first default
+  (`BlossomSettings.First17Waypoints()`: 17 user waypoints, 1-5 then 6-17 looped, `LoopFrom` 6, turns `1:A5, 2:D5, 3:A5,
+  4:D5`) to the whole new route block; a recorded route stays (`SettingsMigrationTests.V25_*`). `BlossomPilotTests.Harness`
+  still runs the walk tests on the first route (their coordinates are written for it). The first step after a turn clicks **straight up**; the movement sets `_headingBase` (the view's
   world direction is unknown), then `LearnHeadingError`; 3 steps in a row > 0.6 rad off the heading (>= 60 units each) =
   the first sample was a wall push -> heading re-learnt from the latest step (final review: one bad first sample locked
   in a wrong heading for the run). **Continuous clicks** (user, live 2026-10-29: "continuously click to run instead of
@@ -1005,7 +1012,7 @@ teleport in again (LOD's rule); still in town after the teleport = "destination 
   the bottom-most chat line (left 45 % w, below 55 % h) naming it with a "k/5" -> k >= 1 -> `TryBlossomAfkStep`: the held
   skill let go, a Ctrl+click half `WalkClickPx` from the feet, a different way each time; `blossom_afk`. Not yet seen live
   (the whisper lines are from the 10:20 snapshot).
-* **Walk back** (user, 2026-10-30, with a recorded 83-waypoint first-island route: "1 - 83 then 83, 82, 81 to 1 then loop"): `Blossom.BackAndForth` (check box "Walk back the same way"; off by default) -> `BlossomRoute.Next(..., backAndForth, ref forward)`: forward to the last waypoint, back to `LoopFrom`, forward again (`_blossomForward`, reset per run; a log line at each turnaround). On the way back a waypoint's camera turn is undone when leaving it (the key flipped, A <-> D, same taps), so each stretch has the camera it had on the way out; a turnaround taps nothing (the last waypoint's own turn is never made). Record route ticks it when the recording ends > 400 from its loop start (`RouteRecording.WalkBack`, `ClosingGap`): a loop would cross the map in one straight line. Pinned by `BlossomRouteTests` / `BlossomPilotTests.BackAndForth_WalksTheRouteBack_AndUndoesItsCameraTurns` / `RouteRecordingTests`. Not yet seen live.
+* **Walk back** (user, 2026-10-30, with a recorded 83-waypoint first-island route: "1 - 83 then 83, 82, 81 to 1 then loop"): `Blossom.BackAndForth` (check box "Walk back the same way"; on by default since v25, for the recorded default route) -> `BlossomRoute.Next(..., backAndForth, ref forward)`: forward to the last waypoint, back to `LoopFrom`, forward again (`_blossomForward`, reset per run; a log line at each turnaround). On the way back a waypoint's camera turn is undone when leaving it (the key flipped, A <-> D, same taps), so each stretch has the camera it had on the way out; a turnaround taps nothing (the last waypoint's own turn is never made). Record route ticks it when the recording ends > 400 from its loop start (`RouteRecording.WalkBack`, `ClosingGap`): a loop would cross the map in one straight line. Pinned by `BlossomRouteTests` / `BlossomPilotTests.BackAndForth_WalksTheRouteBack_AndUndoesItsCameraTurns` / `RouteRecordingTests`. Not yet seen live.
 * **Following the road** (user, live run 7: "not aligned by the dirt road ... goes straight to the water beside the bridge"): along a leg the walk aims 250 units ahead on the line from the waypoint just left to the next one (`BlossomRoute.LookAhead`, pure pursuit), so drift is pulled back onto the user's line; within 300 of the waypoint it clicks the waypoint's own spot from the character's feet (0.55 h, >= 80 px - a short click just under the feet lands on the character's body and does nothing; 1.8 px per unit). A death mid-fight needs two coordinate reads that agree (run 7: "13521" read as "1352" sent it back to the pillars).
 * **Record route** (user, 2026-10-29: "I walk the road once by hand and WuxAuto saves the waypoints"): Settings > Auto Blossom > **Record route** / **Loop starts here** / **Stop recording**. `Automation/RouteRecorder` (desktop, ticked by `WuxEngine` beside `AutoConfirm` while the pilot is not running) reads the coordinates every 500 ms and polls the turn keys (`GetAsyncKeyState`, game in front) into `RouteRecording` (Core, pinned by `RouteRecordingTests`): a waypoint every 120 units, a jump > 400 only when the next read agrees, A / D presses = the latest waypoint's camera turns (net, "N:5A"), the loop at the latest waypoint (or the spot, >= 60 past it). Stop (>= 2 waypoints) replaces `Waypoints` / `LoopFrom` / `WaypointTurns`, saves, and writes `blossom-route.txt` (a copy - a pre-Blossom WuxAuto drops the block when it saves). Start while recording saves the recording first. Not yet used live.
 * **Minimap title:** `ScreenAnalyzer.ReadMinimapLinesAsync` (all modes): the band read, and without a title-like line the

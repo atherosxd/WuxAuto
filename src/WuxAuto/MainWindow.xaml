@@ -139,7 +139,7 @@
                                              ToolTip="Bohai Outpost war: wait in a page-3 cave, join every war, fight, come back to the same cave and monster." />
                                 <RadioButton GroupName="RunMode" Content="Auto Blossom" Style="{StaticResource ModeButton}"
                                              IsChecked="{Binding Settings.Sequence.Mode, Converter={x:Static vm:BoolConverters.EnumEquals}, ConverterParameter=AutoBlossom}"
-                                             ToolTip="Blossom Garden: line up on the two pillars, walk the 17-waypoint route, kill and loot every Jaso Practitioner, rebuff on the Auto War timer." />
+                                             ToolTip="Blossom Garden: line up on the two pillars, walk the 83-waypoint route there and back, kill and loot every Jaso Practitioner, rebuff on the Auto War timer." />
                             </WrapPanel>
                         </Grid>
                         <StackPanel Orientation="Horizontal">

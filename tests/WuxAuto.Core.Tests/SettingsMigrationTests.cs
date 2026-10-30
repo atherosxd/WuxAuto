@@ -70,7 +70,7 @@ public class SettingsMigrationTests
             war["ShuraHoldMs"] = 1500;     // proves the file was read, not replaced by defaults
         });
 
-        Assert.Equal(24, loaded.Version);
+        Assert.Equal(25, loaded.Version);
         Assert.Equal(1500, loaded.War.ShuraHoldMs);
         Assert.Equal(FiveBuffs, loaded.War.BuffIcons);
         Assert.Equal(["warbuff2", "warweapon1", "warweapon2"], loaded.War.WeaponBuffIcons);
@@ -144,6 +144,62 @@ public class SettingsMigrationTests
         });
 
         Assert.Equal((2000, 5000), (loaded.Blossom.TargetGoneMs, loaded.Blossom.LootMs));
+    }
+
+    [Fact]
+    public void V25_TheFirst17WaypointRoute_BecomesTheRecorded83WaypointRoute()
+    {
+        // User, 2026-10-30: the route recorded on the first island (83 waypoints, no camera taps), walked 1 - 83 and back,
+        // is the default. A file still holding the first default route (v0.23.0) gets all of it: waypoints, loop start,
+        // walk back and camera turns belong together - the old turns were made for the old waypoints.
+        var loaded = LoadAfterEdit(version: 24, "Blossom", b =>
+        {
+            b["Waypoints"] = JsonList([.. BlossomSettings.First17Waypoints()]);
+            b["LoopFrom"] = 6;
+            b["BackAndForth"] = false;
+            b["WaypointTurns"] = JsonList("1:A5", "2:D5", "3:A5", "4:D5");
+            b["WaypointWaitMs"] = 2500;   // proves the file was read, not replaced by defaults
+        });
+
+        Assert.Equal(25, loaded.Version);
+        Assert.Equal(2500, loaded.Blossom.WaypointWaitMs);
+        Assert.Equal(BlossomSettings.DefaultWaypoints(), loaded.Blossom.Waypoints);
+        Assert.Equal(83, loaded.Blossom.Waypoints.Count);
+        Assert.Equal(1, loaded.Blossom.LoopFrom);
+        Assert.True(loaded.Blossom.BackAndForth);
+        Assert.Empty(loaded.Blossom.WaypointTurns);
+    }
+
+    [Fact]
+    public void V25_ARecordedRoute_Stays()
+    {
+        var loaded = LoadAfterEdit(version: 24, "Blossom", b =>
+        {
+            b["Waypoints"] = JsonList("10000,10000", "10000,9000", "11000,9000");
+            b["LoopFrom"] = 2;
+            b["BackAndForth"] = false;
+            b["WaypointTurns"] = JsonList("2:A3");
+        });
+
+        Assert.Equal(["10000,10000", "10000,9000", "11000,9000"], loaded.Blossom.Waypoints);
+        Assert.Equal(2, loaded.Blossom.LoopFrom);
+        Assert.False(loaded.Blossom.BackAndForth);
+        Assert.Equal(["2:A3"], loaded.Blossom.WaypointTurns);
+    }
+
+    [Fact]
+    public void AfterV25_TheFirstRoutePutBackByTheUser_Stays()
+    {
+        var loaded = LoadAfterEdit(version: 25, "Blossom", b =>
+        {
+            b["Waypoints"] = JsonList([.. BlossomSettings.First17Waypoints()]);
+            b["LoopFrom"] = 6;
+            b["BackAndForth"] = false;
+        });
+
+        Assert.Equal(BlossomSettings.First17Waypoints(), loaded.Blossom.Waypoints);
+        Assert.Equal(6, loaded.Blossom.LoopFrom);
+        Assert.False(loaded.Blossom.BackAndForth);
     }
 
     [Fact]
