@@ -165,11 +165,10 @@ public class PhoneLabyStageTests : AppPathsScope
     }
 
     [Fact]
-    public async Task BossGone_NoBannerRead_MapOpenedByTheGatesFixedTimer()
+    public async Task BossGone_StraightToTheMap_NoGateWait()
     {
-        // The Labyrinth's next gate opens 5 s after the kill and stays open 60 s (Wuxen wiki, user 2026-10-30): with no
-        // banner read, the phone opens the map once that time (+3 s) has passed. The old 15 s fallback is switched off
-        // here, so only the timer can open it.
+        // User, 2026-10-30: "when the boss dies, already try to open the map and select the next boss" / "don't wait for
+        // 3s" - the stage gate opens 5 s after the kill and stays open only 60 s. The old 15 s fallback is switched off.
         using var phone = Harness(attackIcon: true);
         phone.Settings.Dungeon.BossGoneMs = 500;
         phone.Settings.Dungeon.BossPollMs = 200;
@@ -178,20 +177,50 @@ public class PhoneLabyStageTests : AppPathsScope
 
         phone.Pilot.Start(PilotPhase.WatchBoss, stageIndex: 0);
         using var frame = PhoneFrames.Grey();
-        long started = Environment.TickCount64;
-        long deadline = started + 30000;
+        long deadline = Environment.TickCount64 + 20000;
+        long goneAt = 0;
+        while (phone.Pilot.Phase != PilotPhase.ClickMap && phone.Pilot.IsRunning && Environment.TickCount64 < deadline)
+        {
+            await phone.Pilot.TickAsync(frame, CancellationToken.None);
+            if (goneAt == 0 && phone.Lines.Any(l => l.Contains("Boss for stage 1 is gone", StringComparison.Ordinal)))
+                goneAt = Environment.TickCount64;
+            await Task.Delay(15);
+        }
+
+        var phase = phone.Pilot.Phase;
+        long took = Environment.TickCount64 - goneAt;
+        phone.Pilot.Stop("test over");
+        Assert.Equal(PilotPhase.ClickMap, phase);
+        Assert.Contains(phone.Lines, l => l.Contains("the stage 1 boss is dead - its gate opens 5 s after the kill", StringComparison.Ordinal));
+        Assert.DoesNotContain(phone.Lines, l => l.Contains("Waiting for the stage 2 gate", StringComparison.Ordinal));
+        Assert.DoesNotContain(phone.Lines, l => l.Contains("before opening the map", StringComparison.Ordinal));
+        Assert.True(took < 1500, $"the map after {took} ms");
+    }
+
+    [Fact]
+    public async Task Arrival_NoBannerRead_MapOpenedByTheFirstGatesTimer()
+    {
+        // The first gate opens 30 s after arriving (Wuxen wiki, user): with no banner read the phone opens the map then.
+        // 1 s here instead of 30.
+        using var phone = Harness(attackIcon: true);
+        phone.Settings.Dungeon.NorthOnArrival = false;
+        phone.Settings.Dungeon.GateFallbackMs = 0;
+        phone.Pilot.LabyFirstGateMs = 1000;
+        phone.Ocr.Scene = () => [FakeOcrEngine.Line("[The Labyrinth (Adept)]", 1600, 80)];
+
+        phone.Pilot.Start(PilotPhase.ZoomOut, stageIndex: 0);
+        using var frame = PhoneFrames.Grey();
+        long deadline = Environment.TickCount64 + 20000;
         while (phone.Pilot.Phase != PilotPhase.ClickMap && phone.Pilot.IsRunning && Environment.TickCount64 < deadline)
         {
             await phone.Pilot.TickAsync(frame, CancellationToken.None);
             await Task.Delay(15);
         }
 
-        long took = Environment.TickCount64 - started;
         var phase = phone.Pilot.Phase;
         phone.Pilot.Stop("test over");
-        Assert.Equal(PilotPhase.ClickMap, phase);
-        Assert.Contains(phone.Lines, l => l.Contains("stage 2 gate is open by its fixed timer (5 s after the kill)", StringComparison.Ordinal));
-        Assert.True(took >= 7000, $"opened after {took} ms - before the gate's 5 s + 3 s");
+        Assert.True(phase == PilotPhase.ClickMap, phone.Log);
+        Assert.True(phone.Lines.Any(l => l.Contains("stage 1 gate is open by its fixed timer (30 s after arriving)", StringComparison.Ordinal)), phone.Log);
     }
 
     [Fact]

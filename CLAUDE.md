@@ -332,7 +332,14 @@ paged blind, the next read still showed page 1 and paged again, and the "Labyrin
 page 3. No teleport, and 2 minutes later "out of Temple of Fiends Keys" with 4 left. ML Kit reads the list's "n/N" counter:
 `PhoneListPageReady` lets a read count only when the counter shows the page the pilot is on (`_pages` + 1), else it waits
 400 ms (<= 8 reads, then the counter read, if any, is taken as the page). The Durations window (☰ -> Durations) shows the
-real count: "[Temple of Fiends Key] 4 (time(s))" that evening. **Keys:** the pilot's restarts teleport in again on their own: that night
+real count: "[Temple of Fiends Key] 4 (time(s))" that evening. (8) **Map right after the kill** (user: "when the boss dies,
+already try to open the map and select the next boss", "don't wait for 3s"): stage 3 was lost the same way as stage 4 -
+the boss gone (13 s), +3 s timer grace, then the map read "still open" 5 s after the '>' tap on a stale frame, was tapped
+again, then "gone - opening it again", "not open - clicking the map button" (which toggled it shut) until the gate closed.
+Phone now: a boss death goes straight to the map (`NextStageOrFinish` -> `GateOpened`, no WaitForGate between stages,
+no `GateToMapDelayMs`), the timer grace is 0, and every map decision after a map tap waits at least `PhoneUiLagMs` 1.5 s
+(the map button, the window check, the '>'); a map gone after any '>' tap of this pick counts as the pick going through
+(`_chevronTaps`). The first gate after arriving still waits for its banner or its 30 s timer. **Keys:** the pilot's restarts teleport in again on their own: that night
 it entered the Labyrinth at 13:58, 14:07, 14:09 and 14:39 (a 16:14 click did not take); stop it before a restart when
 the key budget is spent. Not yet seen live: the resume read, the long north turn, the gate timer, (5) and (6).
 

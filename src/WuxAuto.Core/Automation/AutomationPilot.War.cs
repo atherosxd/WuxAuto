@@ -925,6 +925,7 @@ public sealed partial class AutomationPilot
         _mapReopens = 0;
         _mapVisibleMisses = 0;
         _chevronClicked = false;
+        _chevronTaps = 0;
         _rowNameMisses = 0;
         _warMapClosing = false;
         _warMapCloseClicked = false;

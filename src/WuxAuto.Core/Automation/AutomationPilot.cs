@@ -110,6 +110,14 @@ public sealed partial class AutomationPilot
     private bool _noPathLogged;
     private int _rowSnapshots;
     private bool _chevronClicked;
+    private int _chevronTaps;                // phone: '>' taps on this map pick (a map gone after one = the pick went through)
+
+    /// <summary>
+    /// Phone: the captured frame shows a tap's effect only this long after it (MuMu 2026-10-30: a teleport-list page
+    /// tap was not on a frame read 1.4 s later; the map read "still open" after its '>' and was toggled shut and open
+    /// until the stage gate closed). Map decisions after a map tap wait at least this long.
+    /// </summary>
+    private const int PhoneUiLagMs = 1500;
     private int _rowNameMisses;              // AdvanceStage: ticks with the map open but the row name unread
     private int _gatePolls;
     private bool _gateWarned;
@@ -176,11 +184,14 @@ public sealed partial class AutomationPilot
 
     // The Labyrinth's fixed timers (Wuxen wiki, from the user 2026-10-30): the first gate opens 30 s after arriving (alone or
     // with a full party), the next one 5 s after the stage boss dies, and each stays open 60 s.
-    private const int LabyFirstGateMs = 30000;
+    internal int LabyFirstGateMs { get; set; } = 30000; // settable for the tests
     private const int LabyNextGateAfterKillMs = 5000;
 
-    /// <summary>Phone: no gate banner read this long after the gate's timer -> the map is opened anyway (the gate stays open 60 s).</summary>
-    private const int PhoneGateGraceMs = 3000;
+    /// <summary>
+    /// Phone: no gate banner read this long after the gate's timer -> the map is opened anyway (the gate stays open 60 s).
+    /// None (user, 2026-10-30: "don't wait for 3s"): arrival is counted from the zone title's read, after the real arrival.
+    /// </summary>
+    private const int PhoneGateGraceMs = 0;
 
     /// <summary>Phone: this many refused held presses (~300 ms apart) before the autohunt goes on without the hold.</summary>
     private const int PhoneHoldTries = 10;
@@ -510,6 +521,7 @@ public sealed partial class AutomationPilot
         _mapVisibleMisses = 0;
         _sweepDone = false;
         _chevronClicked = false;
+        _chevronTaps = 0;
         _sweepStartedAt = 0;
         _gatePolls = 0;
         _gateWarned = false;
@@ -2588,6 +2600,9 @@ public sealed partial class AutomationPilot
     /// <summary>Phone: reads of the teleport list (400 ms apart) that may wait for the expected page.</summary>
     private const int PhoneListWaits = 8;
 
+    /// <summary>Phone: at least <see cref="PhoneUiLagMs"/> (the frame lag after a tap); the desktop: <paramref name="ms"/>.</summary>
+    private int PhoneLag(int ms) => Profile == PlatformProfile.Phone ? Math.Max(ms, PhoneUiLagMs) : ms;
+
     /// <summary>The teleport list's page counter ("2/3", "2 / 3") among the OCR lines; null when none reads.</summary>
     internal static int? TeleportListPage(IEnumerable<OcrWord> words)
     {
@@ -3488,7 +3503,9 @@ public sealed partial class AutomationPilot
 
         // Let the kill animation / walk to the gate finish before opening the map: clicking too
         // early leaves the character with "no walkable path" and the row click does nothing.
-        int delay = _settings.Dungeon.GateToMapDelayMs;
+        // Phone (user, 2026-10-30: "when the boss dies, already try to open the map and select the next boss" - the stage
+        // gate stays open only 60 s, and the phone's map pick is slower): no wait.
+        int delay = Profile == PlatformProfile.Phone ? 0 : _settings.Dungeon.GateToMapDelayMs;
         if (delay > 0)
             Log?.Invoke(LogLevel.Info, $"Waiting {delay / 1000.0:0.#}s before opening the map.");
 
@@ -3556,7 +3573,7 @@ public sealed partial class AutomationPilot
         _mapScrolls = 0;
         bool pick = IsWar || _settings.Dungeon.Enabled;
         Advance(pick ? PilotPhase.ReadStage : PilotPhase.Done,
-            pick ? _settings.Dungeon.MapOpenDelayMs : _settings.Input.AfterClickMs);
+            pick ? PhoneLag(_settings.Dungeon.MapOpenDelayMs) : _settings.Input.AfterClickMs);
     }
 
     /// <summary>
@@ -3637,7 +3654,7 @@ public sealed partial class AutomationPilot
             if (++_mapVisibleMisses < 2)
             {
                 _detail = "waiting for the map window to appear";
-                _waitUntil = Environment.TickCount64 + 700;
+                _waitUntil = Environment.TickCount64 + PhoneLag(700);
                 return;
             }
 
@@ -3930,6 +3947,7 @@ public sealed partial class AutomationPilot
 
             _lastClick = (x, y, Environment.TickCount64);
             _chevronClicked = false;
+            _chevronTaps = 0;
             _rowNameMisses = 0;
             Log?.Invoke(LogLevel.Success, $"Selected the '{text}' row at {x},{y} - clicking its highlighted '>' next.");
             Advance(PilotPhase.AdvanceStage, _settings.Dungeon.BossNameClickDelayMs);
@@ -4168,7 +4186,8 @@ public sealed partial class AutomationPilot
 
         if (stillThere == null)
         {
-            if (_chevronClicked)
+            // Phone: a "still open" read after the '>' may have been a frame from before it; the map gone now is that tap.
+            if (_chevronClicked || (Profile == PlatformProfile.Phone && _chevronTaps > 0))
             {
                 Log?.Invoke(LogLevel.Info, IsWar
                     ? $"The map closed after the '>' click; walking to '{expected}'."
@@ -4222,6 +4241,7 @@ public sealed partial class AutomationPilot
                     return;
 
                 _chevronClicked = true;
+                _chevronTaps++;
                 Log?.Invoke(LogLevel.Success,
                     $"Clicked the highlighted '>' of '{stillThere.Text}' at {chevron.Bounds.CenterX},{chevron.Bounds.CenterY} ({chevron.Score:0.00}).");
 
@@ -4235,7 +4255,7 @@ public sealed partial class AutomationPilot
                         Log?.Invoke(LogLevel.Info, $"Saved a snapshot of the chevron click: {file}");
                 }
 
-                _waitUntil = Environment.TickCount64 + dungeon.BossNameClickDelayMs;
+                _waitUntil = Environment.TickCount64 + PhoneLag(dungeon.BossNameClickDelayMs);
                 return;
             }
 
@@ -5309,6 +5329,14 @@ public sealed partial class AutomationPilot
         if (gateSeen != null)
         {
             GateOpened(gateSeen);
+            return;
+        }
+
+        // Phone (user, 2026-10-30: "when the boss dies, already try to open the map and select the next boss"): the gate
+        // opens 5 s after the kill on a fixed timer, and the boss was seen gone for longer than that - straight to the map.
+        if (Profile == PlatformProfile.Phone)
+        {
+            GateOpened($"the stage {_stageIndex} boss is dead - its gate opens 5 s after the kill");
             return;
         }
 
