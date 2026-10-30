@@ -220,6 +220,9 @@ if (($cur -split ':') -notcontains $svc) { & $adb -s $dev shell settings put sec
 & $adb -s $dev logcat -s WuxAuto                                           # every log line also goes to logcat
 ```
 
+MuMu display (owner, 2026-10-30): with MuMu's default display the MuMu *window* on the PC turned portrait when
+WuxAuto opened, though the app and the game inside stayed landscape (both activities are `SensorLandscape`). MuMu
+settings → device **Phone**, display **portrait** keeps the window and both apps landscape - a MuMu setting, not code.
 On a real phone the service is switched on by hand (Setup page; Android 13+: App info → ⋮ → Allow restricted
 settings first). Data (settings.json, logs, debug, templates) lives in `/sdcard/Android/data/io.github.atherosxd.wuxauto/files`.
 The round **W** button (accessibility overlay, default spot top strip 0.40/0.03) is the in-game control: tap =
