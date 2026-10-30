@@ -256,6 +256,21 @@ pending) and a heads-up notification pausing the pilot. **Debug bundle 08:20 ans
 went out on its timer with the boss already targeted). Still open: on the phone the "pink ring" often hits the boss's
 pink weapon trail (second walk-up click 3-5 radii out); the owner asks for font 120 % and interface scale 1.10 (+ button)
 on the phone like the desktop's Settings visit (not ported yet).
+**Phone Settings visit + reconnect (2026-10-30, MuMu 2560x1440, verified live):** the phone runs the shared FontSize
+phase: ☰ → the "Settings (ESC)" tile (label read cut off as "ettings (ES"; the window counts as open only on a line that
+is exactly "SETTINGS") → VISUAL → **Interface scale** to `PhoneSettings.InterfaceScale` 1.10 with its − / + (AUTO = 1.00,
+steps of 0.01; first, because it resizes the window; the − is a ~2 px dash under `FindBrightBlobs`' 3 px floor, found by
+its own flat-blob search - the AUTO button's border was tapped once) → Font size to exactly `FontSizePercent` 120 → TAB
+target → **no SAVE** (the phone game keeps every change at once: scale and font survived a full game restart without
+it, and the chat box's text field lies over SAVE and opens the keyboard at every tap height at scale 1.10) → the
+window's X (`FindCloseBlobRightOf` reach 9, blobs ≥ 0.5 title heights - a 5x4 border speck was tapped once). Every
+tap waits until the value read moves (`BeforeLastTap`, ≤ 2.5 s: the capture lags; it stopped at 1.09 and overshot to
+1.11 before), and after a ☰ / tile tap fresh frames are read for 4 s before ☰ is tapped again (a second tap closed
+a menu that had just opened). Minimap title: ML Kit read "[" as "(" after a MuMu restart → on the phone a leading
+"(" / "{" counts as "[" (`WarText.PhoneTitleLine`). Reconnect: the pilot alone went server list → Online → CONNECT →
+LOG IN → OK → START GAME → town in 15 s; while "Login OK" reads it taps OK again (≥ 3 s apart), never START GAME behind
+the dialog. Two earlier "reconnect loops" were a hung game (gestures delivered, MuMu restarted itself after). Debug
+builds take START / STOP adb probes. Not yet tried at 1920x1080.
 Review round (same day): HUNT is **not** a required shortcut (used where found, never added) and the town autohunt-off
 check does not run on the phone (its log read is unverified there); a hit whose colour cannot be told (dark middle) is
 neither HUNT nor AUTO BUFF; the buff check counts a miss only when timers that read did not go up **and** the first row

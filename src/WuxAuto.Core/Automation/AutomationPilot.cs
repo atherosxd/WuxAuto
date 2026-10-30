@@ -276,7 +276,6 @@ public sealed partial class AutomationPilot
     private string? _settingTapValue;        // phone: the Settings value shown when the last - / + / chevron was tapped
     private long _settingTapAt;              // phone: when that tap went out
     private long _phoneMenuTapAt;            // phone: when the menu button or its Settings tile was last tapped
-    private int _saveRetries;                // phone: SAVE taps that opened the keyboard this visit
     private long _noTitleSince;              // phone: since when the loop has held the pilot for an unread zone title (0 = it ticks)
 
     /// <summary>The phone's limit for <see cref="TickWithoutTitleAsync"/>: this long without a zone title, the game in front = fail (restart).</summary>
@@ -1631,11 +1630,12 @@ public sealed partial class AutomationPilot
     /// setting is worth a failure. Phone (2026-10-30): the menu button, then its "Settings (ESC)" tile;
     /// "Interface scale" stepped with - / + to <see cref="PhoneSettings.InterfaceScale"/> before the font
     /// (it resizes the window); the font set to exactly <see cref="PhoneSettings.FontSizePercent"/>; every
-    /// tap waits for the screen to show it (the capture lags); closed with the window's X.
+    /// tap waits for the screen to show it (the capture lags); no SAVE (the phone game keeps changes as they are made,
+    /// and the chat box's text field lies over SAVE); closed with the window's X.
     /// </summary>
     private async Task TickFontSizeAsync(Mat frame)
     {
-        const int OpenStep = 0, VisualStep = 1, TopStep = 2, FontStep = 3, TabStep = 4, SaveStep = 5, ScaleStep = 6, SaveCheckStep = 7, CloseStep = 9;
+        const int OpenStep = 0, VisualStep = 1, TopStep = 2, FontStep = 3, TabStep = 4, SaveStep = 5, ScaleStep = 6, CloseStep = 9;
         const int ListNotches = 10;   // one 10-notch scroll ran the 17-row VISUAL list end to end (1920x1080)
 
         bool phone = Profile == PlatformProfile.Phone;
@@ -1727,7 +1727,6 @@ public sealed partial class AutomationPilot
                 _tabChanged = false;
                 _scaleTaps = 0;
                 _scaleChanged = false;
-                _saveRetries = 0;
                 _settingsChanges.Clear();
                 if (!_controls.Press(GameAction.ToggleSettings))
                 {
@@ -2013,6 +2012,18 @@ public sealed partial class AutomationPilot
             case SaveStep: // SAVE - the exact word only
             {
                 string changes = _settingsChanges.Count > 0 ? string.Join(", ", _settingsChanges) : "settings changed";
+
+                // Phone: no SAVE. The phone game keeps a Settings change the moment it is made - interface scale 1.11 and
+                // font 110 % both survived closing with the X and a full restart of the game (MuMu 2560x1440, 2026-10-30) -
+                // and the chat box's text field lies over SAVE and takes the tap (it opened the keyboard at every height
+                // tried at scale 1.10).
+                if (phone)
+                {
+                    Log?.Invoke(LogLevel.Success, $"Set {changes} (the phone game keeps it without SAVE).");
+                    Close();
+                    return;
+                }
+
                 var save = await Find("SAVE");
                 if (save == null || TextMatcher.Normalize(save.Text) != "save")
                 {
@@ -2021,59 +2032,11 @@ public sealed partial class AutomationPilot
                     return;
                 }
 
-                if (!phone)
-                {
-                    if (!Click(save.Bounds))
-                        return;
-                    Log?.Invoke(LogLevel.Success, $"Set {changes} and saved.");
-                    Close();
-                    _waitUntil = now + 800;
+                if (!Click(save.Bounds))
                     return;
-                }
-
-                // Phone: the chat box's text field lies over the lower half of the screen and takes a tap even under the
-                // Settings window - SAVE's middle at 2560x1440 opened the keyboard instead (MuMu 2026-10-30). The button
-                // reaches below the field: tap just under the word (further down on the retry).
-                int y = save.Bounds.Bottom + save.Bounds.Height * (_saveRetries == 0 ? 2 : 3) / 5;
-                if (!_controls.Tap(save.Bounds.CenterX, y))
-                {
-                    _detail = "SAVE tap blocked - waiting for the game to be in front";
-                    _waitUntil = now + 300;
-                    return;
-                }
-
-                Log?.Invoke(LogLevel.Trace, $"Tapped SAVE at {save.Bounds.CenterX},{y}.");
-                _fontStep = SaveCheckStep;
-                _waitUntil = now + 1200;
-                return;
-            }
-
-            case SaveCheckStep: // phone: did the SAVE tap open the keyboard (the chat box) instead?
-            {
-                string changes = _settingsChanges.Count > 0 ? string.Join(", ", _settingsChanges) : "settings changed";
-                var ok = KeyboardOkLine(await PhoneSettingsLinesAsync(frame), frame.Width, frame.Height);
-                if (ok == null)
-                {
-                    Log?.Invoke(LogLevel.Success, $"Set {changes} and saved.");
-                    Close();
-                    return;
-                }
-
-                // The keyboard's own OK closes it (the chat line is empty - nothing is sent).
-                if (!Click(ok.Value))
-                    return;
-                if (_saveRetries++ == 0)
-                {
-                    Log?.Invoke(LogLevel.Warning, "The SAVE tap opened the keyboard (the chat box lies behind it) - closed it, tapping SAVE lower.");
-                    _fontStep = SaveStep;
-                    _waitUntil = now + 900;
-                    return;
-                }
-
-                DebugArtifacts.SaveFrame(frame, _overlays, "settings_save_keyboard");
-                Log?.Invoke(LogLevel.Warning, $"Set {changes}, but SAVE kept opening the keyboard (the chat box behind it) - it may not stick.");
+                Log?.Invoke(LogLevel.Success, $"Set {changes} and saved.");
                 Close();
-                _waitUntil = now + 900;
+                _waitUntil = now + 800;
                 return;
             }
 
@@ -2136,14 +2099,6 @@ public sealed partial class AutomationPilot
     /// </summary>
     private static PixelRect? PhoneSettingsTitle(IEnumerable<(string Text, PixelRect Bounds)> lines) =>
         lines.Where(l => TextMatcher.Normalize(l.Text) == "settings").Select(l => (PixelRect?)l.Bounds).FirstOrDefault();
-
-    /// <summary>
-    /// Phone: the on-screen keyboard's "OK" (its done key on the white bar along the bottom edge when a text field takes
-    /// focus in landscape; MuMu 2560x1440: at 2412,1352) - a line reading exactly "OK" in the bottom 12 %, right fifth.
-    /// </summary>
-    public static PixelRect? KeyboardOkLine(IEnumerable<(string Text, PixelRect Bounds)> lines, int width, int height) =>
-        lines.Where(l => TextMatcher.Normalize(l.Text) == "ok" && l.Bounds.CenterY >= height * 0.88 && l.Bounds.CenterX >= width * 0.8)
-            .Select(l => (PixelRect?)l.Bounds).FirstOrDefault();
 
     /// <summary>A menu tile label for Settings: "Settings (ESC)", cut off as "ettings (ES" - not the "SETTINGS" title.</summary>
     public static bool IsSettingsTileText(string text)

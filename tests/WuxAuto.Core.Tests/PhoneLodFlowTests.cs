@@ -758,10 +758,9 @@ public class PhoneLodFlowTests : AppPathsScope
     }
 
     [Theory]
-    [InlineData(0, false)]
-    [InlineData(900, false)]   // the capture lags: MuMu 2560x1440 stopped at 1.09, then overshot to 1.11
-    [InlineData(0, true)]      // the chat box behind SAVE takes the first tap: the keyboard comes up
-    public async Task PhoneSettingsVisit_MenuTile_ScaleTo110_FontKept_Saved_ClosedByX(int lagMs, bool keyboardOnFirstSave)
+    [InlineData(0)]
+    [InlineData(900)]   // the capture lags: MuMu 2560x1440 stopped at 1.09, then overshot to 1.11
+    public async Task PhoneSettingsVisit_MenuTile_ScaleTo110_FontKept_NoSave_ClosedByX(int lagMs)
     {
         // User, 2026-10-30: font 120 % and interface scale 1.10 "using the + sign". MuMu 2560x1440: the menu button, its
         // "Settings (ESC)" tile (label cut to "ettings (ES"), VISUAL, "Interface scale [AUTO] - (AUTO) +" (one + = 1.01).
@@ -774,10 +773,6 @@ public class PhoneLodFlowTests : AppPathsScope
         var minus = new PixelRect(1010, 210, 24, 5);
         var close = new PixelRect(1160, 62, 24, 24);
         var save = new PixelRect(760, 800, 100, 30);
-        // SAVE is tapped just under its word (the chat box's text field covers its middle), lower on the retry.
-        var saveTap = new Point(save.CenterX, save.Bottom + save.Height * 2 / 5);
-        var saveRetap = new Point(save.CenterX, save.Bottom + save.Height * 3 / 5);
-        var keyboardOk = new PixelRect(1800, 1010, 40, 24);
         using var frame = PhoneFrames.Grey();
         foreach (var r in new[] { plus, minus, close })
             CvInvoke.Rectangle(frame, new Rectangle(r.X, r.Y, r.Width, r.Height), new MCvScalar(255, 255, 255, 255), -1);
@@ -817,9 +812,6 @@ public class PhoneLodFlowTests : AppPathsScope
             words.AddRange(FakeOcrEngine.Words("TAB target", 720, 320, 130, 24));
             words.Add(FakeOcrEngine.Line("Default", 1040, 320, 100, 24));
             words.Add(FakeOcrEngine.Line("SAVE", save.X, save.Y, save.Width, save.Height));
-            bool keyboardUp = keyboardOnFirstSave && phone.Touch.Taps.Contains(saveTap) && Taps(keyboardOk) == 0;
-            if (keyboardUp)
-                words.Add(FakeOcrEngine.Line("OK", keyboardOk.X, keyboardOk.Y, keyboardOk.Width, keyboardOk.Height));
             return words;
         };
 
@@ -830,13 +822,10 @@ public class PhoneLodFlowTests : AppPathsScope
         Assert.Equal(1, Taps(tile));
         Assert.Equal(10, Taps(plus));                       // AUTO (1.00) -> 1.10
         Assert.Equal(0, Taps(minus));
-        Assert.Equal(1, phone.Touch.Taps.Count(t => t == saveTap));
-        Assert.Equal(keyboardOnFirstSave ? 1 : 0, Taps(keyboardOk));
-        Assert.Equal(keyboardOnFirstSave ? 1 : 0, phone.Touch.Taps.Count(t => t == saveRetap));
-        Assert.Equal(0, Taps(save));                        // never the middle of SAVE
+        // No SAVE on the phone: the game keeps the change, and the chat box's text field lies over SAVE.
+        Assert.DoesNotContain(phone.Touch.Taps, t => t.X >= save.X - 20 && t.X <= save.Right + 20 && t.Y >= save.Y - 20 && t.Y <= save.Bottom + 40);
         Assert.Equal(1, Taps(close));
-        Assert.Contains(phone.Lines, l => l == "Set interface scale 1.10 and saved.");
-        Assert.Equal(keyboardOnFirstSave, phone.Lines.Any(l => l.StartsWith("The SAVE tap opened the keyboard", StringComparison.Ordinal)));
+        Assert.Contains(phone.Lines, l => l == "Set interface scale 1.10 (the phone game keeps it without SAVE).");
         Assert.Contains(phone.Lines, l => l == "Font size is already 120%.");
     }
 
