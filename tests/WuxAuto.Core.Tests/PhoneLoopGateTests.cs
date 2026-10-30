@@ -342,6 +342,11 @@ public class PhoneLoopGateTests
     [InlineData("[Piercing City]", true)]
     [InlineData("[Piercing Cityl", true)]
     [InlineData("[The Labyrinth (Adep", true)]
+    [InlineData("(Piercing City]", true)]      // ML Kit, MuMu 2560x1440 at scale 1.11: '[' read as '('
+    [InlineData("{Piercing City]", true)]
+    [InlineData("(Piercing ityl", true)]
+    [InlineData("(10] minute(s) to opening", false)]
+    [InlineData("(", false)]
     [InlineData("3592 , 7297", false)]
     [InlineData("", false)]
     [InlineData("Piercing", false)]

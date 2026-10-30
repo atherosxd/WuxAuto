@@ -342,6 +342,17 @@ public static class WarText
     /// band), at least 4 letters, and is not the coordinates line ("3592 , 7297"). Digits are allowed - page 3 has
     /// "[Dark Soul Cave 2F (WD)]".
     /// </summary>
+    /// <summary>
+    /// Phone: ML Kit reads the minimap title's opening '[' as '(' or '{' at times (MuMu 2560x1440, interface scale 1.11:
+    /// "(Piercing City]" at x2, "(Piercing ityl" at x1, 2026-10-30) - such a line is taken as starting with '['. The rest
+    /// of the line is left as read.
+    /// </summary>
+    public static string PhoneTitleLine(string line)
+    {
+        string t = line.TrimStart();
+        return t.Length > 1 && (t[0] == '(' || t[0] == '{') ? "[" + t[1..] : line;
+    }
+
     public static bool IsZoneTitleLine(string line)
     {
         string t = line.Trim();

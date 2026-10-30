@@ -173,7 +173,7 @@ public sealed class PhoneLoopGate
         or PilotPhase.FindDestination or PilotPhase.RegularWarOn or PilotPhase.Done or PilotPhase.Failed;
 
     /// <summary>True when one of the OCR lines of the minimap crop is a zone title ("[Piercing City]").</summary>
-    public static bool TitleReads(IEnumerable<string> lines) => lines.Any(WarText.IsZoneTitleLine);
+    public static bool TitleReads(IEnumerable<string> lines) => lines.Select(WarText.PhoneTitleLine).Any(WarText.IsZoneTitleLine);
 
     private static long Ms(int ms) => ms * TimeSpan.TicksPerMillisecond;
 }

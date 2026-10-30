@@ -5613,7 +5613,9 @@ public sealed partial class AutomationPilot
     {
         var band = _settings.Regions.Minimap.ToPixels(frame.Width, frame.Height);
         var words = await _analyzer.Ocr.RecognizeAsync(frame, band, 2.0);
-        var lines = words.Select(w => w.LineText.Trim()).Distinct().ToList();
+        var lines = words.Select(w => w.LineText.Trim()).Distinct()
+            .Select(l => Profile == PlatformProfile.Phone ? WarText.PhoneTitleLine(l) : l)
+            .ToList();
         return lines.FirstOrDefault(l => ZoneMatches(l, Destination))
                ?? lines.FirstOrDefault(l => IsWar
                    ? WarText.IsZoneTitleLine(l)
