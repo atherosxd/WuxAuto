@@ -85,6 +85,31 @@ public static class BlossomRoute
         return Math.Clamp(loopFrom - 1, 0, count - 1);
     }
 
+    /// <summary>
+    /// The next 0-based index, with <paramref name="backAndForth"/> (user, 2026-10-30: "1 - 83 then 83, 82, 81 to 1 then
+    /// loop"): forward to the last waypoint, then back to <paramref name="loopFrom"/> (1-based, clamped), then forward again;
+    /// <paramref name="forward"/> carries the direction between calls. Without it: <see cref="Next(int, int, int)"/>.
+    /// </summary>
+    public static int Next(int index, int count, int loopFrom, bool backAndForth, ref bool forward)
+    {
+        if (!backAndForth)
+        {
+            forward = true;
+            return Next(index, count, loopFrom);
+        }
+
+        if (count <= 1)
+            return 0;
+
+        int turnBack = Math.Clamp(loopFrom - 1, 0, count - 2);
+        if (forward && index + 1 >= count)
+            forward = false;
+        else if (!forward && index - 1 < turnBack)
+            forward = true;
+
+        return Math.Clamp(forward ? index + 1 : index - 1, 0, count - 1);
+    }
+
     /// <summary>The index of the point closest to (x, y); the first wins a tie, 0 for an empty route.</summary>
     public static int Nearest(IReadOnlyList<(int X, int Y)> route, int x, int y)
     {

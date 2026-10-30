@@ -23,6 +23,19 @@ public sealed partial class AutomationPilot
     private const int BlossomMaxUnread = 40;
     private const int BlossomRebuffOverdueMs = 30000;
     private const int BlossomGiveUpIgnoreMs = 10000;
+    private const int BlossomChaseTargetMs = 1000;   // a big move with the target seen this recently = a chase, not a death
+    private const int BlossomStuckMoveUnits = 40;    // fight: moved less than this between two checks = still
+    private const int BlossomStepWalkMs = 800;       // fight: the side step's walk before the skill is held again
+    private const int BlossomStepRecheckMs = 1500;   // fight: the next "still?" look after a step
+
+    /// <summary>The ways a stuck character tries in turn, screen-relative (x right, y down): right, left, back, then the diagonals.</summary>
+    private static readonly (double X, double Y, string Name)[] BlossomStepWays =
+    [
+        (1, 0, "right"), (-1, 0, "left"), (0, 1, "back"),
+        (0.71, 0.71, "back-right"), (-0.71, 0.71, "back-left"), (0.71, -0.71, "ahead-right"), (-0.71, -0.71, "ahead-left"),
+    ];
+    private const int BlossomArrivalX = 19148, BlossomArrivalY = 19062;   // where the teleport lands (every live arrival)
+    private const int BlossomArrivalRadius = 500;    // a respawn closer than this lines up on the pillars again
     private const double BlossomHeadingMissRad = 0.6;
     private const int BlossomHeadingMissesToRelearn = 3;
     private const int BlossomRelearnWindow = 6;   // steps after the heading was set in which it may be re-learnt
@@ -42,7 +55,6 @@ public sealed partial class AutomationPilot
     private int _blossomStalls;
     private int _blossomUnread;
     private bool _blossomHeadingKnown;
-    private bool _blossomHeadingUnknown;   // a fight began before any turn (Start inside the map): turn after it
     private bool _blossomBuffThenTurn;
     private bool _blossomHuntOffChecked;
     private int _blossomHeadingMisses;
@@ -53,6 +65,15 @@ public sealed partial class AutomationPilot
     private bool _blossomFocusTold;
     private (double X, double Y)? _blossomDir;   // the walk click (screen offset) until the next coordinate read
     private bool _blossomNear;                   // within BlossomNearDistance of the waypoint: one click per read
+    private bool _blossomForward = true;         // BackAndForth: walking towards the last waypoint (false: back)
+    private long _blossomStuckCheckAt;           // fight: next "no move, no hit" check (FightStuckMs)
+    private (int X, int Y)? _blossomStuckCoords; // fight: the spot and the combat log at the last check
+    private string? _blossomStuckLog;
+    private int _blossomSteps;                   // fight: side steps so far (the direction turns each time)
+    private (int Cur, int Max)? _blossomTargetHp; // the target bar's numbers at the latest target read
+    private long _blossomNotFullToldAt;
+    private long _blossomFightLootAt;            // LootWhileFighting: the last loot tap
+    private int _blossomAfkSteps;
     private (int X, int Y)? _blossomLegFrom;     // where the current leg starts: the waypoint just left
     private (int X, int Y)? _blossomJumpCandidate;
     private long _blossomClickAt;
@@ -61,7 +82,6 @@ public sealed partial class AutomationPilot
     private int _blossomCamTaps;                 // the camera turn when leaving a waypoint (WaypointTurns), taps left
     private TurnDirection _blossomCamKey;
     private IReadOnlyDictionary<int, (TurnDirection Direction, int Taps)> _blossomTurns = new Dictionary<int, (TurnDirection, int)>();
-    private bool _blossomZoomedOutAgain;
     private readonly Dictionary<string, int> _blossomShots = [];
 
     private int _blossomTurnTaps;
@@ -93,6 +113,10 @@ public sealed partial class AutomationPilot
         _blossomRoute = BlossomRoute.Parse(_settings.Blossom.Waypoints);
         _blossomTurns = BlossomRoute.ParseTurns(_settings.Blossom.WaypointTurns);
         _blossomCamTaps = 0;
+        _blossomForward = true;
+        _blossomTargetHp = null;
+        _blossomNotFullToldAt = 0;
+        _blossomAfkSteps = 0;
         _blossomLegFrom = null;
         _blossomJumpCandidate = null;
         _blossomDir = null;
@@ -105,7 +129,6 @@ public sealed partial class AutomationPilot
         _blossomStalls = 0;
         _blossomUnread = 0;
         _blossomHeadingKnown = false;
-        _blossomHeadingUnknown = false;
         _blossomHeadingMisses = 0;
         _blossomHuntOffChecked = false;
         _blossomIgnoreTargetsUntil = 0;
@@ -171,7 +194,6 @@ public sealed partial class AutomationPilot
     private void StartBlossomWalk()
     {
         _blossomHeadingKnown = false;
-        _blossomHeadingUnknown = false;
         _blossomWaypoint = -1;
         ResumeBlossomWalk();
     }
@@ -187,12 +209,6 @@ public sealed partial class AutomationPilot
         _blossomTargetAt = 0;
         _blossomStalls = 0;
         _blossomPauseSince = 0;
-        if (_blossomHeadingUnknown)
-        {
-            BeginBlossomTurn();
-            return;
-        }
-
         Advance(PilotPhase.BlossomWalk, 0);
     }
 
@@ -233,9 +249,9 @@ public sealed partial class AutomationPilot
         }
 
         _blossomLastOffset = null;
-        if (_blossomTurnTaps >= b.TurnMaxTaps)
+        if (_blossomTurnTaps >= b.TurnMaxTaps || now - _phaseStart >= b.TurnMaxMs)
         {
-            Log?.Invoke(LogLevel.Warning, $"Turned {_blossomTurnTaps} taps and no pillars lined up - walking anyway; the heading is learnt from the walk.");
+            Log?.Invoke(LogLevel.Warning, $"Turned {_blossomTurnTaps} taps ({(now - _phaseStart) / 1000.0:0.#}s) and no pillars lined up - walking anyway; the heading is learnt from the walk.");
             BlossomShot(frame, "blossom_no_pillars");
             StartBlossomWalk();
             return;
@@ -281,6 +297,8 @@ public sealed partial class AutomationPilot
         string core = TextMatcher.Normalize(name.StartsWith('[') && name.IndexOf(']') is int close and > 0 ? name[(close + 1)..] : name);
         var roi = _settings.Regions.BossName.ToPixels(frame.Width, frame.Height);
         var (_, _, words) = await _analyzer.FindTextAsync(frame, roi, name);
+        _blossomTargetHp = BlossomText.TargetHp(ScreenAnalyzer.ToLines(words),
+            new NormRect(0.25, 0, 0.50, 0.16).ToPixels(frame.Width, frame.Height));
         foreach (var line in words.GroupBy(w => w.LineBounds).Select(g => (Bounds: g.Key, Text: g.First().LineText)))
         {
             if (line.Bounds.CenterY > frame.Height * 0.13 || Math.Abs(line.Bounds.CenterX - frame.Width / 2.0) > frame.Width * 0.22)
@@ -306,12 +324,71 @@ public sealed partial class AutomationPilot
         return null;
     }
 
+    /// <summary>The AFK Checker watch is on: Auto Blossom, in the map (its phases or the buff round), the game in front.</summary>
+    private bool BlossomAfkWatch => IsBlossom && !string.IsNullOrWhiteSpace(_settings.Blossom.AfkCheckerText)
+                                    && (IsBlossomPhase(_phase) || _phase == PilotPhase.WarBuff) && _controls.IsGameInFront;
+
+    /// <summary>
+    /// The chat's AFK Checker whisper (user, 2026-10-30: "(Whisper) [AFK Checker] : Start 1/5" ... "add a AFK Checker, if 1+/5,
+    /// try to move a little bit to other directions"): the newest such line at 1/5 or more -> the held skill let go and a short
+    /// Ctrl+click (half <see cref="BlossomSettings.WalkClickPx"/> from the feet) a different way each time; the phase carries on.
+    /// Read from the shared whole-screen check (every 5 s), so at most one step per check. True when it stepped.
+    /// </summary>
+    private bool TryBlossomAfkStep(Mat frame, IReadOnlyList<OcrWord> words, long now)
+    {
+        var b = _settings.Blossom;
+        if (BlossomText.AfkCheckerCount(ScreenAnalyzer.ToLines(words), b.AfkCheckerText, frame.Width, frame.Height) is not int count
+            || count < 1)
+            return false;
+
+        var (ux, uy, side) = BlossomStepWays[_blossomAfkSteps % BlossomStepWays.Length];
+        double px = b.WalkClickPx * 0.5;
+        int feetX = frame.Width / 2, feetY = (int)(frame.Height * 0.55);
+        int clickX = (int)Math.Round(Math.Clamp(feetX + ux * px, frame.Width * 0.25, frame.Width * RunClickRight));
+        int clickY = (int)Math.Round(Math.Clamp(feetY + uy * px, frame.Height * RunClickTop, frame.Height * 0.78));
+        ReleaseHeldSkill();
+        if (!_controls.WalkTo(clickX, clickY, forceWalk: true))
+            return false;
+
+        _blossomAfkSteps++;
+        Log?.Invoke(LogLevel.Warning, $"AFK Checker at {count}/5 - stepping {side} a little.");
+        BlossomShot(frame, "blossom_afk");
+        if (_phase == PilotPhase.BlossomAttack)
+            _blossomTargetSeenAt = Math.Max(_blossomTargetSeenAt, now + BlossomStepWalkMs);   // the step is not the kill
+        _waitUntil = now + BlossomStepWalkMs;
+        return true;
+    }
+
+    /// <summary>
+    /// Only a target at full health is fought (user, 2026-10-30: "Only Attack monster if full health" - a Jaso another player
+    /// is hitting is theirs); the walk goes on and Tab picks another. Unread numbers do not stop a fight. Said at most every
+    /// 5 s.
+    /// </summary>
+    private bool BlossomTargetAtFullHealth(string target, long now)
+    {
+        if (_blossomTargetHp is not (int cur, int max) || cur >= max)
+            return true;
+
+        if (now - _blossomNotFullToldAt >= 5000)
+        {
+            _blossomNotFullToldAt = now;
+            Log?.Invoke(LogLevel.Info, $"'{target}' is not at full health ({cur}/{max}) - leaving it, tabbing on.");
+        }
+
+        return false;
+    }
+
     private void BeginBlossomFight(string target)
     {
         long now = Environment.TickCount64;
         // Met while standing at a reached waypoint: that one is done, the walk goes on to the next after the fight.
         if (_blossomPauseSince > 0 && _blossomWaypoint >= 0)
-            _blossomWaypoint = BlossomRoute.Next(_blossomWaypoint, _blossomRoute.Count, _settings.Blossom.LoopFrom);
+        {
+            bool wasForward = _blossomForward;
+            _blossomWaypoint = BlossomRoute.Next(_blossomWaypoint, _blossomRoute.Count, _settings.Blossom.LoopFrom,
+                _settings.Blossom.BackAndForth, ref _blossomForward);
+            LogBlossomTurnaround(wasForward);
+        }
         _blossomPauseSince = 0;
         _blossomTarget = target;
         _blossomTargetSeenAt = now;
@@ -320,7 +397,12 @@ public sealed partial class AutomationPilot
         _blossomCoordsAt = 0;
         _blossomAttackCoords = null;
         _blossomJumpCandidate = null;
-        Log?.Invoke(LogLevel.Success, $"Jaso Practitioner targeted ('{target}') - attacking with {SkillText(_settings.Dungeon.SkillKey)} ({_blossomKills} kill(s) so far).");
+        _blossomStuckCheckAt = 0;   // the first attack tick takes the baseline
+        _blossomStuckCoords = null;
+        _blossomStuckLog = null;
+        _blossomSteps = 0;
+        _blossomFightLootAt = 0;
+        Log?.Invoke(LogLevel.Success, $"Jaso Practitioner targeted ('{target}') - {(_settings.Blossom.HoldSkill ? "holding" : "attacking with")} {SkillText(_settings.Dungeon.SkillKey)} ({_blossomKills} kill(s) so far).");
         Advance(PilotPhase.BlossomAttack, 0);
     }
 
@@ -392,7 +474,7 @@ public sealed partial class AutomationPilot
         if (now >= _blossomTargetAt)
         {
             _blossomTargetAt = now + BlossomTargetCheckMs;
-            if (now >= _blossomIgnoreTargetsUntil && await FindBlossomTargetAsync(frame) is { } target)
+            if (now >= _blossomIgnoreTargetsUntil && await FindBlossomTargetAsync(frame) is { } target && BlossomTargetAtFullHealth(target, now))
             {
                 BeginBlossomFight(target);
                 return;
@@ -494,7 +576,6 @@ public sealed partial class AutomationPilot
         {
             _blossomWaypointSteps = 0;
             _blossomBestDistance = double.MaxValue;
-            _blossomZoomedOutAgain = false;
             _blossomWaypoint = BlossomRoute.Nearest(_blossomRoute, coords.X, coords.Y);
             _blossomLegFrom = _blossomWaypoint > 0 ? _blossomRoute[_blossomWaypoint - 1] : (coords.X, coords.Y);
             var start = _blossomRoute[_blossomWaypoint];
@@ -569,12 +650,12 @@ public sealed partial class AutomationPilot
             return false;
         }
 
-        if (_blossomStalls >= BlossomMaxStalls)
+        // No skip (user, 2026-10-30: "If the character didn't move for 5s, try to zoom out and move in every direction until it
+        // moves"): one note and a snapshot, and the steps go on (BlossomUnblock); the no-progress rule below still skips.
+        if (_blossomStalls == BlossomMaxStalls)
         {
-            Log?.Invoke(LogLevel.Warning, $"Not moving for {_blossomStalls} steps at {coords} on the way to waypoint {_blossomWaypoint + 1} - skipping it.");
+            Log?.Invoke(LogLevel.Warning, $"Not moving for {_blossomStalls} steps at {coords} on the way to waypoint {_blossomWaypoint + 1} - trying every way until it moves.");
             BlossomShot(frame, "blossom_stuck");
-            AdvanceBlossomWaypoint($"Waypoint {_blossomWaypoint + 1} skipped");
-            return false;
         }
 
         // Moving, but no closer (round an obstacle and back): skipped after BlossomNoProgressSteps reads without getting 30
@@ -633,28 +714,22 @@ public sealed partial class AutomationPilot
 
     /// <summary>
     /// Blocked (live 2026-10-29: against the side of the bridge, where the camera had zoomed in - a 200 px click is a much
-    /// shorter walk then): on the 2nd still step the camera is zoomed out again (once per waypoint) and the click goes to the
-    /// right of the way, on the 3rd to the left, on the 4th back; the 5th skips the waypoint. A full-length click each time.
+    /// shorter walk then), from the 2nd still step: the ways of <see cref="BlossomStepWays"/> in turn, relative to the way
+    /// (right of it, left, back, then the diagonals), a full-length click each; the camera is zoomed out again at the start
+    /// of each round (user, 2026-10-30: "try to zoom out and move in every direction until it moves").
     /// </summary>
     private (double X, double Y) BlossomUnblock(Mat frame, GameCoordinates coords, double ox, double oy)
     {
         double len = Math.Max(1, Math.Sqrt(ox * ox + oy * oy));
-        double ux = ox / len * _settings.Blossom.WalkClickPx, uy = oy / len * _settings.Blossom.WalkClickPx;
-        if (!_blossomZoomedOutAgain && _settings.Dungeon.ZoomOutNotches > 0
+        double fx = ox / len * _settings.Blossom.WalkClickPx, fy = oy / len * _settings.Blossom.WalkClickPx;   // ahead
+        int index = Math.Max(0, _blossomStalls - 2) % BlossomStepWays.Length;
+        if (index == 0 && _settings.Dungeon.ZoomOutNotches > 0
             && _controls.ZoomOut(frame.Width / 2, (int)(frame.Height * 0.40), _settings.Dungeon.ZoomOutNotches))
-        {
-            _blossomZoomedOutAgain = true;
             Log?.Invoke(LogLevel.Info, $"Blocked at {coords} - zoomed out again.");
-        }
 
-        var (x, y, how) = _blossomStalls switch
-        {
-            2 => (-uy, ux, "sidestepping right"),
-            3 => (uy, -ux, "sidestepping left"),
-            _ => (-ux, -uy, "stepping back"),
-        };
-        Log?.Invoke(LogLevel.Info, $"Blocked at {coords} ({_blossomStalls} still steps towards waypoint {_blossomWaypoint + 1}) - {how}.");
-        return (x, y);
+        var (x, y, name) = BlossomStepWays[index];   // x: right of the way, y: back
+        Log?.Invoke(LogLevel.Info, $"Blocked at {coords} ({_blossomStalls} still steps towards waypoint {_blossomWaypoint + 1}) - stepping {name}.");
+        return (-x * fy - y * fx, x * fx - y * fy);
     }
 
     /// <summary>The view's world direction (screen-up turned <paramref name="angle"/> from world north); the heading fix restarts there.</summary>
@@ -682,23 +757,29 @@ public sealed partial class AutomationPilot
     private void AdvanceBlossomWaypoint(string what)
     {
         int left = _blossomWaypoint + 1;
+        bool wasForward = _blossomForward;
         _blossomLegFrom = _blossomRoute[_blossomWaypoint];   // the next leg runs from the waypoint just left
-        _blossomWaypoint = BlossomRoute.Next(_blossomWaypoint, _blossomRoute.Count, _settings.Blossom.LoopFrom);
+        _blossomWaypoint = BlossomRoute.Next(_blossomWaypoint, _blossomRoute.Count, _settings.Blossom.LoopFrom,
+            _settings.Blossom.BackAndForth, ref _blossomForward);
         var next = _blossomRoute[_blossomWaypoint];
+        bool turnaround = LogBlossomTurnaround(wasForward);
         Log?.Invoke(LogLevel.Info, $"{what} - on to waypoint {_blossomWaypoint + 1} ({next.X},{next.Y}).");
         _blossomPauseSince = 0;
         _blossomStalls = 0;
         _blossomWaypointSteps = 0;
         _blossomBestDistance = double.MaxValue;
-        _blossomZoomedOutAgain = false;
         _simpleClick = null;
         _lastCoords = null;
         _blossomDir = null;
         _waitUntil = Environment.TickCount64;
 
-        // The camera turn the user set for the waypoint just left (WaypointTurns), done by the walk one tap per tick.
-        if (_blossomTurns.TryGetValue(left, out var turn))
+        // The camera turn the user set for the waypoint just left (WaypointTurns), done by the walk one tap per tick. Walking
+        // back (BackAndForth) it is undone at the same waypoint, so each stretch keeps the camera it had on the way out; a
+        // turnaround taps nothing (the last waypoint's own turn is never made, and at the loop start undo + redo cancel out).
+        if (!turnaround && _blossomTurns.TryGetValue(left, out var turn))
         {
+            if (!_blossomForward)
+                turn = (turn.Direction == TurnDirection.Left ? TurnDirection.Right : TurnDirection.Left, turn.Taps);
             _blossomCamKey = turn.Direction;
             _blossomCamTaps = turn.Taps;
             string key = turn.Direction == TurnDirection.Left ? _settings.Dungeon.RotateLeftKey : _settings.Input.RotateKey;
@@ -706,10 +787,22 @@ public sealed partial class AutomationPilot
         }
     }
 
+    /// <summary>Walk-back (BackAndForth): one log line when the walk's direction just turned. True when it did.</summary>
+    private bool LogBlossomTurnaround(bool wasForward)
+    {
+        if (wasForward == _blossomForward)
+            return false;
+        Log?.Invoke(LogLevel.Info, _blossomForward
+            ? "Back at the start of the route - walking it forward again."
+            : "End of the route - walking it back the same way.");
+        return true;
+    }
+
     /// <summary>
-    /// The skill on the Jaso (as LOD: tapped every Lod.SkillEveryMs, or held with Lod.HoldSkill; Ctrl + skill with
-    /// Dungeon.CtrlSkill) until the target is gone TargetGoneMs = dead -> loot. A coordinate jump = died; a target that never
-    /// goes is given up after FightMaxMs (one out of reach would hold the character still).
+    /// The skill on the Jaso (held with Blossom.HoldSkill, on by default, else tapped every Lod.SkillEveryMs; Ctrl + skill
+    /// with Dungeon.CtrlSkill) until the target is gone TargetGoneMs = dead -> loot. A coordinate jump with no target in view =
+    /// died (with the target in view it is a chase); a target that never goes is given up after FightMaxMs (one out of reach
+    /// would hold the character still).
     /// </summary>
     private async Task TickBlossomAttackAsync(Mat frame)
     {
@@ -720,7 +813,7 @@ public sealed partial class AutomationPilot
 
         if (!string.IsNullOrWhiteSpace(skill))
         {
-            if (lod.HoldSkill)
+            if (b.HoldSkill)
             {
                 if (_heldSkill != null && _settings.Dungeon.CtrlSkill && now - _blossomSkillAt >= lod.SkillEveryMs)
                 {
@@ -765,7 +858,15 @@ public sealed partial class AutomationPilot
                     _blossomJumpCandidate = null;
                 }
 
-                if (confirmed && _blossomAttackCoords is (int ax, int ay))
+                // The target still in the target bar = alive and chasing it (live 2026-10-30: with TAB target "Nearest
+                // monster" and the Run skill the character covers ~500 units between two reads): the new spot is the baseline.
+                if (confirmed && now - _blossomTargetSeenAt <= BlossomChaseTargetMs)
+                {
+                    _blossomJumpCandidate = null;
+                    _blossomAttackCoords = (coords.X, coords.Y);
+                    Log?.Invoke(LogLevel.Trace, $"Moved to {coords} while '{b.TargetName}' is targeted - chasing it.");
+                }
+                else if (confirmed && _blossomAttackCoords is (int ax, int ay))
                 {
                     _blossomJumpCandidate = null;
                     ReleaseHeldSkill();
@@ -781,10 +882,21 @@ public sealed partial class AutomationPilot
             }
         }
 
+        // Looting through the fight (LootWhileFighting): the drops are picked up during the TargetGoneMs that tells the kill.
+        if (b.LootWhileFighting && now - _blossomFightLootAt >= b.LootEveryMs && _controls.Press(GameAction.Loot))
+            _blossomFightLootAt = now;
+
         if (now - _blossomTargetSeenAt > b.TargetGoneMs)
         {
             ReleaseHeldSkill();
             _blossomKills++;
+            if (b.LootWhileFighting)
+            {
+                Log?.Invoke(LogLevel.Success, $"Jaso Practitioner down (kill {_blossomKills}) - looted while fighting, walking on.");
+                ResumeBlossomWalkOrRebuff("after the kill");
+                return;
+            }
+
             Log?.Invoke(LogLevel.Success, $"Jaso Practitioner down (kill {_blossomKills}) - looting with '{lod.LootKey}' for {b.LootMs / 1000.0:0.#}s in {b.LootDelayMs / 1000.0:0.#}s.");
             _blossomLootStart = 0;
             _blossomLootAt = 0;
@@ -804,8 +916,64 @@ public sealed partial class AutomationPilot
             return;
         }
 
+        if (b.FightStuckMs > 0 && now >= _blossomStuckCheckAt && await BlossomFightStuckAsync(frame, now))
+            return;
+
         _detail = $"attacking '{_blossomTarget}' (seen {(now - _blossomTargetSeenAt) / 1000.0:0.0}s ago, fight {(now - _blossomFightStart) / 1000}s)";
         _waitUntil = now + Math.Min(lod.SkillEveryMs, 300);
+    }
+
+    /// <summary>
+    /// Every FightStuckMs of a fight (user, 2026-10-30: "if a monster is tab, but there is 5s that it didn't move and no attack
+    /// succeeded log, try to click on other direction to reposition"): the spot (the fight's latest coordinate read) and the
+    /// combat log's "Attack succeeded" lines against the last check. Neither changed -> the skill let go and a Ctrl+click
+    /// (walk, the target stays) WalkClickPx from the feet: right, then left, back, ahead in turn; the hold comes back on the
+    /// next tick. An unread spot is not taken for a still one. True when it stepped.
+    /// </summary>
+    private async Task<bool> BlossomFightStuckAsync(Mat frame, long now)
+    {
+        var b = _settings.Blossom;
+        var roi = _settings.Regions.AttackMessage.ToPixels(frame.Width, frame.Height);
+        string log = await ReadAttackLogAsync(frame, roi, _settings.Dungeon.AttackConfirmText);
+        var at = _blossomAttackCoords;
+        bool first = _blossomStuckCheckAt == 0;
+        bool still = !first && at is (int x, int y) && _blossomStuckCoords is (int sx, int sy)
+                     && Math.Sqrt((double)(x - sx) * (x - sx) + (double)(y - sy) * (y - sy)) < BlossomStuckMoveUnits;
+        bool noHit = !first && log == _blossomStuckLog;
+        _blossomStuckCoords = at;
+        _blossomStuckLog = log;
+        _blossomStuckCheckAt = now + b.FightStuckMs;
+        if (!still || !noHit)
+        {
+            _blossomSteps = 0;   // moving or hitting: the next stuck spell starts with a zoom-out and the first way again
+            return false;
+        }
+
+        // User, 2026-10-30: "If the character didn't move for 5s, try to zoom out and move in every direction until it moves":
+        // a zoom-out at the start of each round of ways, and the next look comes soon after a step, not FightStuckMs later.
+        var (ux, uy, side) = BlossomStepWays[_blossomSteps % BlossomStepWays.Length];
+        if (_blossomSteps % BlossomStepWays.Length == 0 && _settings.Dungeon.ZoomOutNotches > 0
+            && _controls.ZoomOut(frame.Width / 2, (int)(frame.Height * 0.40), _settings.Dungeon.ZoomOutNotches))
+            Log?.Invoke(LogLevel.Info, $"Stuck on '{_blossomTarget}' - zoomed out again.");
+        _blossomSteps++;
+        int feetX = frame.Width / 2, feetY = (int)(frame.Height * 0.55);
+        int clickX = (int)Math.Round(Math.Clamp(feetX + ux * b.WalkClickPx, frame.Width * 0.25, frame.Width * RunClickRight));
+        int clickY = (int)Math.Round(Math.Clamp(feetY + uy * b.WalkClickPx, frame.Height * RunClickTop, frame.Height * 0.78));
+        ReleaseHeldSkill();
+        if (!_controls.WalkTo(clickX, clickY, forceWalk: true))
+        {
+            _blossomStuckCheckAt = now;   // input refused (the game behind another window): look again next tick
+            return false;
+        }
+
+        Log?.Invoke(LogLevel.Info, $"No move and no new '{_settings.Dungeon.AttackConfirmText}' line for {b.FightStuckMs / 1000.0:0.#}s on " +
+                                   $"'{_blossomTarget}' - stepping {side} to get round it (step {_blossomSteps}).");
+        BlossomShot(frame, "blossom_fight_stuck");
+        _blossomTargetSeenAt = now + BlossomStepWalkMs;   // the step's walk is not the target gone
+        _blossomStuckCheckAt = now + BlossomStepWalkMs + BlossomStepRecheckMs;
+        _detail = $"stepping {side} to reach '{_blossomTarget}'";
+        _waitUntil = now + BlossomStepWalkMs;
+        return true;
     }
 
     /// <summary>The loot key every LootEveryMs for LootMs (user: 0.2 s for 5 s), no Tab; then on with the walk.</summary>
@@ -818,7 +986,8 @@ public sealed partial class AutomationPilot
 
         if (now - _blossomLootStart >= b.LootMs || !_controls.Has(GameAction.Loot))
         {
-            Log?.Invoke(LogLevel.Info, $"Looted for {b.LootMs / 1000.0:0.#}s - on to waypoint {_blossomWaypoint + 1}.");
+            Log?.Invoke(LogLevel.Info, $"Looted for {b.LootMs / 1000.0:0.#}s - " +
+                                       (_blossomWaypoint >= 0 ? $"on to waypoint {_blossomWaypoint + 1}." : "back to the route."));
             ResumeBlossomWalkOrRebuff("after the loot");
             return;
         }
@@ -843,12 +1012,24 @@ public sealed partial class AutomationPilot
             return;
         }
 
+        // The pillars are only in view from the arrival spot, where a death puts the character back. Elsewhere the "death"
+        // was a chase that lost its target while the minimap did not read (live 2026-10-30 10:20, alive at full HP 778 units
+        // on): buffs and the walk, the heading learnt from it.
+        if (coords != null && coords.DistanceTo(BlossomArrivalX, BlossomArrivalY) > BlossomArrivalRadius)
+        {
+            Log?.Invoke(LogLevel.Info, $"At {coords}, away from the arrival spot - no pillar turn, walking from the nearest waypoint.");
+            _blossomHeadingKnown = false;
+            _blossomWaypoint = -1;
+            BeginBlossomBuff("after the jump", thenTurn: false);
+            return;
+        }
+
         BeginBlossomArrival();
     }
 
     /// <summary>
-    /// Start (or a restart) inside Blossom Garden: a Jaso already targeted -> fight it first (the heading is unknown, so the
-    /// turn follows); else the arrival (buffs, the turn).
+    /// Start (or a restart) inside Blossom Garden: a Jaso already targeted -> fight it first; else the buffs. Then the walk
+    /// from the nearest waypoint, with no pillar turn.
     /// </summary>
     private async Task TickBlossomCheckZoneAsync(Mat frame)
     {
@@ -863,15 +1044,16 @@ public sealed partial class AutomationPilot
             _blossomHuntOffChecked = true;
         }
 
-        if (await FindBlossomTargetAsync(frame) is { } target)
+        // No pillar turn here (user, 2026-10-30: "it is possible to start it already in the map and no need to look for the
+        // pillar"): away from the arrival spot they are not in view; the walk learns the heading from its first step.
+        if (await FindBlossomTargetAsync(frame) is { } target && BlossomTargetAtFullHealth(target, Environment.TickCount64))
         {
-            _blossomHeadingUnknown = true;
-            Log?.Invoke(LogLevel.Warning, $"Already in {Destination} with '{target}' targeted - fighting it, then lining up on the pillars.");
+            Log?.Invoke(LogLevel.Warning, $"Already in {Destination} with '{target}' targeted - fighting it, then walking from the nearest waypoint.");
             BeginBlossomFight(target);
             return;
         }
 
-        Log?.Invoke(LogLevel.Info, $"Already in {Destination} - lining up on the pillars, then walking from the nearest waypoint.");
-        BeginBlossomArrival();
+        Log?.Invoke(LogLevel.Info, $"Already in {Destination} - buffing, then walking from the nearest waypoint (no pillar turn).");
+        BeginBlossomBuff("already in the map", thenTurn: false);
     }
 }

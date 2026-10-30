@@ -65,6 +65,7 @@ public class BlossomPilotTests
     public async Task JasoTargeted_StopsWalking_Attacks_ThenLoots_ThenWalksOn()
     {
         var (settings, input, ocr) = Harness(() => "15000 , 15000", target: i => Tabs(i) >= 3 && SkillTaps(i) < 4 ? "[S]Jaso Practitioner" : null);
+        settings.Blossom.LootWhileFighting = false;   // the loot phase after the kill
         settings.Blossom.LootMs = 1000;
         settings.Blossom.LootEveryMs = 200;
         settings.Blossom.LootDelayMs = 0;
@@ -221,6 +222,52 @@ public class BlossomPilotTests
     }
 
     [Fact]
+    public async Task StartInside_SkipsThePillars_AndWalks()
+    {
+        // User, 2026-10-30: "it is possible to start it already in the map and no need to look for the pillar" - away from
+        // the arrival spot the pillars are not in view anyway (the turn took 50 taps, ~1 min, for nothing).
+        var (settings, input, ocr) = Harness(() => "15705 , 18357");
+
+        var run = await RunAsync(settings, input, ocr, PilotPhase.CheckZone,
+            (_, lines) => lines.Any(l => l.StartsWith("Walking the route from", StringComparison.Ordinal)), 15000);
+
+        string log = string.Join("\n", run.Lines);
+        Assert.True(run.Lines.Any(l => l.StartsWith("Walking the route from", StringComparison.Ordinal)), log);
+        Assert.DoesNotContain(run.Lines, l => l.StartsWith("Turning (", StringComparison.Ordinal));
+        Assert.DoesNotContain("KeyDown D", input.Calls);
+    }
+
+    [Theory]
+    [InlineData("19150 , 19060", true)]    // back at the arrival spot: a real death - line up on the pillars
+    [InlineData("14913 , 18473", false)]   // live 10:20: alive, the target lost after a chase - no pillars here
+    public async Task AfterADeath_ThePillarTurn_OnlyAtTheArrivalSpot(string at, bool turns)
+    {
+        var (settings, input, ocr) = Harness(() => at);
+
+        var run = await RunAsync(settings, input, ocr, PilotPhase.BlossomRespawn,
+            (p, _) => p.Phase is PilotPhase.BlossomTurn or PilotPhase.BlossomWalk, 15000);
+
+        Assert.Equal(turns ? PilotPhase.BlossomTurn : PilotPhase.BlossomWalk, run.Phase);
+    }
+
+    [Fact]
+    public async Task Turn_NoPair_GivesUpAfterTheTimeLimit()
+    {
+        // User, 2026-10-30: "reduce the turn to pillars to 15 turns or 10s".
+        Assert.Equal((15, 10000), (new AppSettings().Blossom.TurnMaxTaps, new AppSettings().Blossom.TurnMaxMs));
+        var (settings, input, ocr) = Harness(() => "19148 , 19062");
+        settings.Blossom.TurnMaxMs = 2000;
+        long start = Environment.TickCount64;
+
+        var run = await RunAsync(settings, input, ocr, PilotPhase.BlossomTurn, (p, _) => p.Phase == PilotPhase.BlossomWalk, 15000);
+
+        Assert.Equal(PilotPhase.BlossomWalk, run.Phase);
+        Assert.True(Environment.TickCount64 - start < 5000, $"took {Environment.TickCount64 - start} ms");
+        Assert.InRange(input.Calls.Count(c => c == "KeyDown D"), 1, 14);
+        Assert.Contains(run.Lines, l => l.Contains("no pillars", StringComparison.Ordinal));
+    }
+
+    [Fact]
     public async Task Buff_WithTheMinimapTitleUnread_StillFinishes()
     {
         var (settings, input, ocr) = Harness(() => "19148 , 19062", title: false);
@@ -248,24 +295,52 @@ public class BlossomPilotTests
     }
 
     [Fact]
-    public async Task Stuck_SkipsAfterFiveStillSteps_AndSnapshotsAtMostThree()
+    public async Task Stuck_SnapshotsAtMostThree()
     {
         var (settings, input, ocr) = Harness(() => "15000 , 15000"); // never moves
         settings.Blossom.WalkReadEveryMs = 150;
         settings.Blossom.WalkClickEveryMs = 100;
-        int skips = 0, shots = 0;
+        int notes = 0, shots = 0;
 
         var run = await RunAsync(settings, input, ocr, PilotPhase.BlossomWalk, (_, lines) =>
         {
-            skips = lines.Count(l => l.StartsWith("Not moving for", StringComparison.Ordinal));
+            notes = lines.Count(l => l.StartsWith("Not moving for", StringComparison.Ordinal));
             if (Directory.Exists(AppPaths.DebugFolder))
                 shots = Directory.GetFiles(AppPaths.DebugFolder, "*blossom_stuck*").Length;
-            return skips >= 5;
-        }, 30000);
+            return notes >= 5;
+        }, 40000);
 
-        Assert.True(skips >= 5, string.Join("\n", run.Lines));
-        Assert.True(run.Lines.Any(l => l.StartsWith("Not moving for 5 steps", StringComparison.Ordinal)), string.Join("\n", run.Lines));
+        Assert.True(notes >= 5, string.Join("\n", run.Lines));
         Assert.InRange(shots, 1, 3);
+    }
+
+    [Fact]
+    public async Task Stuck_TriesEveryWay_ZoomingOutEachRound_UntilItMoves()
+    {
+        // User, 2026-10-30: "If the character didn't move for 5s, try to zoom out and move in every direction until it moves" -
+        // it used to try right, left and back, then skip the waypoint.
+        int y = 15700, clicks = 0;
+        FakeGameInput? sent = null;
+        var (settings, input, ocr) = Harness(() =>
+        {
+            int now = sent!.Clicks;
+            if (clicks == 0 && now > 0)
+                y -= 150;      // the first step goes north: the heading is learnt
+            clicks = now;      // then it never moves again
+            return $"13947 , {y}";
+        });
+        sent = input;
+        settings.Blossom.WalkReadEveryMs = 150;
+        settings.Blossom.WalkClickEveryMs = 100;
+
+        var run = await RunAsync(settings, input, ocr, PilotPhase.BlossomWalk,
+            (_, lines) => lines.Count(l => l.StartsWith("Blocked at", StringComparison.Ordinal) && l.Contains("stepping", StringComparison.Ordinal)) >= 9, 25000);
+
+        string log = string.Join("\n", run.Lines);
+        foreach (string way in new[] { "stepping right", "stepping left", "stepping back,", "stepping back-right", "stepping back-left", "stepping ahead-right", "stepping ahead-left" })
+            Assert.True(run.Lines.Any(l => l.Contains(way.TrimEnd(','), StringComparison.Ordinal) && (way.EndsWith(',') ? l.TrimEnd('.').EndsWith("stepping back", StringComparison.Ordinal) : true)), $"no '{way}':\n{log}");
+        Assert.DoesNotContain(run.Lines, l => l.Contains(" skipped", StringComparison.Ordinal));
+        Assert.True(input.Calls.Count(c => c.StartsWith("CtrlWheel", StringComparison.Ordinal)) >= 2, "expected a zoom-out each round:\n" + log);
     }
 
     [Fact]
@@ -311,7 +386,7 @@ public class BlossomPilotTests
     // Live 2026-10-29: stuck against the side of the bridge (camera zoomed in there) - every waypoint was skipped in turn.
 
     [Fact]
-    public async Task Blocked_ZoomsOutAndSidesteps_BeforeSkipping()
+    public async Task Blocked_ZoomsOutAndSidesteps_RightThenLeftThenBack()
     {
         int y = 15700, clicks = 0;
         FakeGameInput? sent = null;
@@ -328,15 +403,71 @@ public class BlossomPilotTests
         settings.Blossom.WalkClickEveryMs = 100;
 
         var run = await RunAsync(settings, input, ocr, PilotPhase.BlossomWalk,
-            (_, lines) => lines.Any(l => l.StartsWith("Not moving for", StringComparison.Ordinal)), 20000);
+            (_, lines) => lines.Any(l => l.Contains("stepping back-right", StringComparison.Ordinal)), 20000);
 
         string log = string.Join("\n", run.Lines);
-        int skip = run.Lines.FindIndex(l => l.StartsWith("Not moving for", StringComparison.Ordinal));
-        int right = run.Lines.FindIndex(l => l.Contains("sidestepping right", StringComparison.Ordinal));
-        int left = run.Lines.FindIndex(l => l.Contains("sidestepping left", StringComparison.Ordinal));
-        int back = run.Lines.FindIndex(l => l.Contains("stepping back", StringComparison.Ordinal));
-        Assert.True(skip > 0 && right >= 0 && right < left && left < back && back < skip, log);
+        int zoom = run.Lines.FindIndex(l => l.Contains("zoomed out again", StringComparison.Ordinal));
+        int right = run.Lines.FindIndex(l => l.Contains("stepping right", StringComparison.Ordinal));
+        int left = run.Lines.FindIndex(l => l.Contains("stepping left", StringComparison.Ordinal));
+        int back = run.Lines.FindIndex(l => l.TrimEnd('.').EndsWith("stepping back", StringComparison.Ordinal));
+        Assert.True(zoom >= 0 && zoom < right && right < left && left < back, log);
         Assert.Contains(input.Calls, c => c.StartsWith("CtrlWheel", StringComparison.Ordinal)); // zoomed out again
+    }
+
+    [Theory]
+    [InlineData("615378/750000", false)]   // another player is on it
+    [InlineData("750000/750000", true)]
+    public async Task OnlyAFullHealthTarget_IsAttacked(string hp, bool attacks)
+    {
+        // User, 2026-10-30: "Only Attack monster if full health".
+        var (settings, input, ocr) = Harness(() => "15000 , 15000", target: _ => "[S]Jaso Practitioner", hp: _ => hp);
+        long start = Environment.TickCount64;
+
+        var run = await RunAsync(settings, input, ocr, PilotPhase.BlossomWalk,
+            (_, lines) => lines.Any(l => l.Contains("Jaso Practitioner targeted", StringComparison.Ordinal)) || Environment.TickCount64 - start > 4000, 8000);
+
+        string log = string.Join("\n", run.Lines);
+        Assert.True(attacks == run.Lines.Any(l => l.Contains("Jaso Practitioner targeted", StringComparison.Ordinal)), log);
+        if (!attacks)
+            Assert.True(run.Lines.Any(l => l.Contains("not at full health", StringComparison.Ordinal)), log);
+    }
+
+    [Theory]
+    [InlineData("(Whisper) [AFK Checker] : Start 1/5", true)]
+    [InlineData("(Whisper) [AFK Checker] : Reset 0/5", false)]
+    public async Task AfkChecker_OneOrMore_StepsALittle(string line, bool steps)
+    {
+        // User, 2026-10-30: "add a AFK Checker, if 1+/5, try to move a little bit to other directions".
+        var (settings, input, ocr) = Harness(() => "15000 , 15000", chat: _ => [line]);
+        long start = Environment.TickCount64;
+
+        var run = await RunAsync(settings, input, ocr, PilotPhase.BlossomWalk,
+            (_, lines) => lines.Any(l => l.StartsWith("AFK Checker", StringComparison.Ordinal)) || Environment.TickCount64 - start > 3000, 8000);
+
+        string log = string.Join("\n", run.Lines);
+        Assert.True(steps == run.Lines.Any(l => l.StartsWith("AFK Checker at 1/5", StringComparison.Ordinal)), log);
+        Assert.Equal(steps, input.Calls.Any(c => c.StartsWith("CtrlClick", StringComparison.Ordinal)));
+    }
+
+    [Fact]
+    public async Task LootWhileFighting_LootsDuringTheFight_AndWalksOnRightAfterTheKill()
+    {
+        // User, 2026-10-30: "When attacking a monster, try looting also, so that when killed after 1s, the pilot can proceed to
+        // other monster/waypoint."
+        Assert.True(new AppSettings().Blossom.LootWhileFighting);
+        var (settings, input, ocr) = Harness(() => "15000 , 15000",
+            target: i => Tabs(i) >= 1 && SkillTaps(i) < 4 ? "[S]Jaso Practitioner" : null);
+        settings.Blossom.LootWhileFighting = true;
+
+        var run = await RunAsync(settings, input, ocr, PilotPhase.BlossomWalk,
+            (p, lines) => p.Phase == PilotPhase.BlossomWalk && lines.Any(l => l.Contains("down (kill 1)", StringComparison.Ordinal)), 15000);
+
+        string log = string.Join("\n", run.Lines);
+        Assert.True(run.Lines.Any(l => l.Contains("down (kill 1)", StringComparison.Ordinal)), log);
+        Assert.Equal(PilotPhase.BlossomWalk, run.Phase);
+        Assert.DoesNotContain(run.Lines, l => l.StartsWith("Looted", StringComparison.Ordinal));   // no loot phase after it
+        int firstSkill = input.Calls.IndexOf("KeyTap 1"), lastSkill = input.Calls.LastIndexOf("KeyTap 1");
+        Assert.Contains(input.Calls.Skip(firstSkill).Take(lastSkill - firstSkill), c => c == "KeyTap `");   // looted while fighting
     }
 
     [Fact]
@@ -380,6 +511,52 @@ public class BlossomPilotTests
         Assert.True(y <= 15700, "never reached the wall:\n" + log);
         Assert.DoesNotContain(run.Lines, l => l.Contains("re-learnt", StringComparison.Ordinal));
     }
+
+    [Fact]
+    public async Task BackAndForth_WalksTheRouteBack_AndUndoesItsCameraTurns()
+    {
+        // User, 2026-10-30: "1 - 83 then 83, 82, 81 to 1 then loop". The character "arrives" wherever the walk heads next.
+        // A turn is undone at the waypoint it was made at, so each stretch keeps the camera it had on the way out, and a
+        // turnaround (here waypoint 3, whose own turn is never made going forward) taps nothing.
+        List<string>? log = null;
+        int callsAtWaypoint1 = -1;
+        string Goal()
+        {
+            var last = log?.LastOrDefault(l => l.Contains("on to waypoint", StringComparison.Ordinal) || l.StartsWith("Walking the route from", StringComparison.Ordinal));
+            if (last == null)
+                return "10000 , 10000";
+            int open = last.IndexOf('(') + 1, close = last.IndexOf(')', open);
+            var xy = last[open..close].Split(',');
+            return $"{xy[0]} , {xy[1]}";
+        }
+
+        var (settings, input, ocr) = Harness(Goal);
+        settings.Blossom.Waypoints = ["10000,10000", "10000,9000", "10000,8000"];
+        settings.Blossom.LoopFrom = 1;
+        settings.Blossom.BackAndForth = true;
+        settings.Blossom.WaypointTurns = ["2:1D", "3:2A"];
+        settings.Blossom.WaypointWaitMs = 0;
+
+        var run = await RunAsync(settings, input, ocr, PilotPhase.BlossomWalk, (_, lines) =>
+        {
+            log = (List<string>)lines;
+            int legs = lines.Count(l => l.Contains("on to waypoint", StringComparison.Ordinal));
+            if (legs >= 4 && callsAtWaypoint1 < 0)
+                callsAtWaypoint1 = input.Calls.Count;   // just left waypoint 2 on the way back, heading for waypoint 1
+            return legs >= 5;
+        }, 20000);
+
+        var order = run.Lines.Where(l => l.Contains("on to waypoint", StringComparison.Ordinal))
+            .Select(l => l[(l.IndexOf("on to waypoint ", StringComparison.Ordinal) + 15)..].Split(' ')[0]).ToList();
+        Assert.Equal(["2", "3", "2", "1", "2"], order.Take(5));
+        string downs = string.Join("\n", input.Calls.Where(c => c.Contains("Down")));
+        int right = input.Calls.IndexOf("KeyDown D");
+        var lefts = input.Calls.Select((c, i) => (c, i)).Where(p => p.c == "KeyDown A").Select(p => p.i).ToList();
+        Assert.True(right >= 0 && right < callsAtWaypoint1, "expected D leaving waypoint 2 forward:\n" + downs);
+        Assert.True(lefts.Count == 1 && lefts[0] >= callsAtWaypoint1,
+            $"expected one A, leaving waypoint 2 on the way back (calls from {callsAtWaypoint1}):\n" + downs);
+    }
+
     [Fact]
     public async Task Waypoint_TooManyClicks_IsSkipped()
     {
@@ -558,6 +735,130 @@ public class BlossomPilotTests
     }
 
     [Fact]
+    public async Task BigMove_WhileTheTargetIsStillShown_IsAChase_NotADeath()
+    {
+        // Live 2026-10-30, TAB target "Nearest monster" + the Run skill: the character ran ~500 units to a far Jaso within one
+        // coordinate read, alive at full HP and still hitting it - three times taken for a death ("killed? Lining up again").
+        int reads = 0;
+        var (settings, input, ocr) = Harness(() => ++reads < 6 ? "15000 , 15000" : "15600 , 15000",
+            target: _ => "[S]Jaso Practitioner");
+        long start = Environment.TickCount64;
+
+        var run = await RunAsync(settings, input, ocr, PilotPhase.BlossomWalk, (_, _) => Environment.TickCount64 - start > 7000, 12000);
+
+        Assert.True(reads > 8, $"only {reads} reads");
+        Assert.DoesNotContain(run.Lines, l => l.Contains("killed?", StringComparison.Ordinal));
+        Assert.Equal(PilotPhase.BlossomAttack, run.Phase);
+    }
+
+    [Fact]
+    public async Task BigMove_WithTheTargetGone_IsADeath()
+    {
+        // A death puts the character back at the start with no target: still taken for one.
+        int reads = 0;
+        bool moved = false;
+        var (settings, input, ocr) = Harness(() => (moved = ++reads >= 6) ? "19148 , 19062" : "15000 , 15000",
+            target: _ => moved ? null : "[S]Jaso Practitioner");
+        settings.Blossom.TargetGoneMs = 5000;
+
+        var run = await RunAsync(settings, input, ocr, PilotPhase.BlossomWalk,
+            (_, lines) => lines.Any(l => l.Contains("killed?", StringComparison.Ordinal)), 15000);
+
+        Assert.Contains(run.Lines, l => l.Contains("killed?", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task HoldSkill_KeepsTheSkillKeyDown_WhileFighting()
+    {
+        // User, 2026-10-30: "spam or hold attack skill, currently it skills then normal attacks".
+        var (settings, input, ocr) = Harness(() => "15000 , 15000", target: _ => "[S]Jaso Practitioner");
+        settings.Blossom.HoldSkill = true;
+        settings.Dungeon.CtrlSkill = false;
+        long start = Environment.TickCount64;
+
+        var run = await RunAsync(settings, input, ocr, PilotPhase.BlossomWalk, (_, _) => Environment.TickCount64 - start > 3000, 8000);
+
+        Assert.Equal(PilotPhase.BlossomAttack, run.Phase);
+        Assert.Equal(1, input.Calls.Count(c => c == "KeyDown 1"));
+        Assert.Equal(1, input.Calls.Count(c => c == "KeyUp 1"));
+        Assert.Equal("KeyUp 1", input.Calls[^1]);   // let go only when the run stops
+        Assert.DoesNotContain("KeyTap 1", input.Calls);
+    }
+
+    [Fact]
+    public void HoldSkill_IsOnByDefault() => Assert.True(new AppSettings().Blossom.HoldSkill);
+
+    [Fact]
+    public async Task Fight_NoMoveAndNoHit_StepsAsideToReposition()
+    {
+        // User, 2026-10-30: "if a monster is tab, but there is 5s that it didn't move and no attack succeeded log, try to click
+        // on other direction to reposition".
+        Assert.Equal(5000, new AppSettings().Blossom.FightStuckMs);
+        var (settings, input, ocr) = Harness(() => "15000 , 15000", target: _ => "[S]Jaso Practitioner",
+            log: _ => ["Attack succeeded!Normal damage(+100) Attribution"]);   // the same line all along: no new hit
+        settings.Blossom.FightStuckMs = 1500;
+
+        var run = await RunAsync(settings, input, ocr, PilotPhase.BlossomWalk,
+            (_, _) => input.Calls.Count(c => c.StartsWith("CtrlClick", StringComparison.Ordinal)) >= 2, 12000);
+
+        var steps = input.Calls.Where(c => c.StartsWith("CtrlClick", StringComparison.Ordinal))
+            .Select(c => c["CtrlClick ".Length..].Split(',').Select(int.Parse).ToArray()).ToList();
+        Assert.True(steps.Count >= 2, string.Join("\n", run.Lines));
+        Assert.True(steps[0][0] > Width / 2 + 50, $"first step not to the right: {steps[0][0]},{steps[0][1]}");
+        Assert.True(steps[1][0] < Width / 2 - 50, $"second step not to the left: {steps[1][0]},{steps[1][1]}");
+        Assert.Contains(run.Lines, l => l.Contains("stepping", StringComparison.Ordinal));
+        Assert.Equal(PilotPhase.BlossomAttack, run.Phase);
+        Assert.DoesNotContain(run.Lines, l => l.Contains("down (kill", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task Fight_NewHits_DoesNotStepAside()
+    {
+        int n = 0;
+        var (settings, input, ocr) = Harness(() => "15000 , 15000", target: _ => "[S]Jaso Practitioner",
+            log: _ => [$"Attack succeeded!Normal damage(+{++n}) Attribution"]);   // a new hit on every read
+        settings.Blossom.FightStuckMs = 1500;
+        long start = Environment.TickCount64;
+
+        await RunAsync(settings, input, ocr, PilotPhase.BlossomWalk, (_, _) => Environment.TickCount64 - start > 5000, 10000);
+
+        Assert.DoesNotContain(input.Calls, c => c.StartsWith("CtrlClick", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task Fight_Moving_DoesNotStepAside()
+    {
+        int reads = 0;
+        var (settings, input, ocr) = Harness(() => $"{15000 + 60 * (++reads / 4)} , 15000", target: _ => "[S]Jaso Practitioner");
+        settings.Blossom.FightStuckMs = 1500;
+        long start = Environment.TickCount64;
+
+        await RunAsync(settings, input, ocr, PilotPhase.BlossomWalk, (_, _) => Environment.TickCount64 - start > 5000, 10000);
+
+        Assert.DoesNotContain(input.Calls, c => c.StartsWith("CtrlClick", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task BackAndForth_FightAtTheLastWaypoint_TurnsBack_DoesNotLoop()
+    {
+        // A Jaso met while standing at the last waypoint: after it the walk heads back to the one before, not to waypoint 1.
+        var (settings, input, ocr) = Harness(() => "10000 , 8000",
+            target: i => Tabs(i) >= 3 && SkillTaps(i) < 3 ? "[S]Jaso Practitioner" : null);   // during the pause
+        settings.Blossom.Waypoints = ["10000,10000", "10000,9000", "10000,8000"];
+        settings.Blossom.LoopFrom = 1;
+        settings.Blossom.BackAndForth = true;
+        settings.Blossom.LootWhileFighting = false;   // its "Looted ... on to waypoint N" line names the next waypoint
+        settings.Blossom.LootMs = 400;
+        settings.Blossom.LootDelayMs = 0;
+
+        var run = await RunAsync(settings, input, ocr, PilotPhase.BlossomWalk,
+            (_, lines) => lines.Any(l => l.StartsWith("Looted", StringComparison.Ordinal)), 15000);
+
+        string looted = run.Lines.FirstOrDefault(l => l.StartsWith("Looted", StringComparison.Ordinal)) ?? string.Join("\n", run.Lines);
+        Assert.EndsWith("on to waypoint 2.", looted);
+    }
+
+    [Fact]
     public async Task Overshot_ClicksBackPastTheCharactersBody_AndReachesTheWaypoint()
     {
         // Live run 7: waypoint 1 overshot ~50 north; the short click back south landed on the character's own body (just
@@ -656,7 +957,7 @@ public class BlossomPilotTests
 
     private static (AppSettings Settings, FakeGameInput Input, FakeOcrEngine Ocr) Harness(Func<string> coords, Func<FakeGameInput, string?>? target = null,
         bool autoBuffScroll = true, bool title = true, Func<FakeGameInput, string[]>? log = null,
-        string titleText = "[Blossom Garden]")
+        string titleText = "[Blossom Garden]", Func<FakeGameInput, string?>? hp = null, Func<FakeGameInput, string[]>? chat = null)
     {
         // The scroll in the item list keeps the buff round short: a Start buffs first (the timer starts at 0), and with no
         // buff key and no templates the round clicks nothing and goes back to the walk.
@@ -664,6 +965,7 @@ public class BlossomPilotTests
         settings.Sequence.Mode = RunMode.AutoBlossom;
         settings.Lod.BuffKey = string.Empty;
         settings.Lod.HoldSkill = false;
+        settings.Blossom.HoldSkill = false;   // the tests count skill taps; HoldSkill_KeepsTheSkillKeyDown_WhileFighting holds
 
         var input = new FakeGameInput();
         var ocr = new FakeOcrEngine();
@@ -683,9 +985,19 @@ public class BlossomPilotTests
                     words.Add(FakeOcrEngine.Line(lines[i], 20, 300 + i * 20));
             }
             if (target?.Invoke(input) is { } name)
+            {
                 words.Add(FakeOcrEngine.Line(name, 620, 50)); // the target bar, top centre
+                if (hp?.Invoke(input) is { } numbers)
+                    words.Add(FakeOcrEngine.Line(numbers, 620, 75)); // its HP numbers, under the name
+            }
             if (autoBuffScroll)
                 words.Add(FakeOcrEngine.Line("[Auto buff scroll] 01.01.2027", 1000, 700)); // the item list, bottom right
+            if (chat?.Invoke(input) is { } said)
+            {
+                // the chat box, bottom left
+                for (int i = 0; i < said.Length; i++)
+                    words.Add(FakeOcrEngine.Line(said[i], 20, 700 + i * 20, 320));
+            }
             return words;
         };
         return (settings, input, ocr);

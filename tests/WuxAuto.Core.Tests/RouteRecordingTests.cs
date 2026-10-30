@@ -80,4 +80,32 @@ public class RouteRecordingTests
 
     [Fact]
     public void NoLoopMark_LoopsFromTheStart() => Assert.Equal(1, new RouteRecording().LoopFrom);
+
+    [Fact]
+    public void ClosingGap_IsFromTheLastWaypointToTheLoopStart()
+    {
+        // Live 2026-10-30: a first-island recording ended 5052 from its start - looping would cross the map in one line.
+        var r = new RouteRecording();
+        Assert.Equal(0, r.ClosingGap);
+        r.AddReading(1000, 1000);
+        r.AddReading(1300, 1000);
+        r.AddReading(1600, 1000);
+        Assert.Equal(600, r.ClosingGap, 3);
+        r.AddReading(1300, 1000);   // walked back: 300 from the start
+        Assert.Equal(300, r.ClosingGap, 3);
+    }
+
+    [Fact]
+    public void WalkBack_OnlyWhenTheRouteEndsFarFromItsLoopStart()
+    {
+        // User, 2026-10-30: "no need to loop? instead from last waypoint go back in reverse" - for a route that does not close.
+        var r = new RouteRecording(spacing: 120, jump: 400);
+        r.AddReading(1000, 1000);
+        r.AddReading(1300, 1000);
+        r.AddReading(1500, 1000);
+        Assert.True(r.WalkBack);    // 500 from the start
+        r.AddReading(1300, 1100);
+        r.AddReading(1100, 1100);
+        Assert.False(r.WalkBack);   // came round: 100 from the start, a loop is fine
+    }
 }

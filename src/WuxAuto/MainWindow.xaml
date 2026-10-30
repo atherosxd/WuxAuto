@@ -518,7 +518,23 @@
                                 <RowDefinition Height="Auto" />
                                 <RowDefinition Height="Auto" />
                                 <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
                             </Grid.RowDefinitions>
+
+                            <!-- User, 2026-10-30: "1 - 83 then 83, 82, 81 to 1 then loop". Record route ticks it when the route does not come back round. -->
+                            <WrapPanel Grid.Row="4" Grid.Column="0" Grid.ColumnSpan="4" Margin="0,6,0,0">
+                                <CheckBox Content="Walk back the same way" Margin="0,0,16,0"
+                                          IsChecked="{Binding Settings.Blossom.BackAndForth}"
+                                          ToolTip="On: after the last waypoint the route is walked back (83, 82 ... to the loop start), then forward again, and the camera turns are undone on the way back. Off: from the last waypoint straight to the loop start. Record route ticks it when the recorded road does not come back to its start." />
+                                <!-- User, 2026-10-30: "spam or hold attack skill, currently it skills then normal attacks". -->
+                                <!-- User, 2026-10-30: "try looting also ... the 1s delay after killing is enough for the loot". -->
+                                <CheckBox Content="Loot while fighting" Margin="0,0,16,0"
+                                          IsChecked="{Binding Settings.Blossom.LootWhileFighting}"
+                                          ToolTip="On: the loot key is tapped all through a fight, and the walk goes on as soon as the kill is seen (the target gone 1 s). Off: after the kill it waits 1 s, then loots for 'Loot time'." />
+                                <CheckBox Content="Hold skill (Blossom)" Margin="0,0,16,0"
+                                          IsChecked="{Binding Settings.Blossom.HoldSkill}"
+                                          ToolTip="On: the skill key stays held down through a fight, so the skill keeps going instead of one cast followed by normal attacks (with 'Ctrl + skill key too' it is let go for a Ctrl + skill tap now and then). Off: the skill is tapped every 0.3 s." />
+                            </WrapPanel>
 
                             <!-- User, 2026-10-29: "add a settings in the app just like you showed 1:5A". Applied on the next Start. -->
                             <TextBlock Grid.Row="2" Grid.Column="0" Text="Camera turns" Style="{StaticResource FieldLabel}"
@@ -544,7 +560,7 @@
                                        ToolTip="How long the character stands at a reached waypoint, pressing Tab, before walking on. At most 5000 - the map's AFK checker kicks idle characters to town." />
                             <TextBox Grid.Row="1" Grid.Column="1" Style="{StaticResource WideField}" Text="{Binding Settings.Blossom.WaypointWaitMs}" />
                             <TextBlock Grid.Row="1" Grid.Column="2" Text="Loot time (ms)" Style="{StaticResource FieldLabel}"
-                                       ToolTip="How long the loot key is spammed after a kill (every 0.2 s, starting 1 s after the kill). The buffs use the Auto War settings above." />
+                                       ToolTip="Only with 'Loot while fighting' off: how long the loot key is spammed after a kill (every 0.2 s, starting 1 s after the kill). The buffs use the Auto War settings above." />
                             <TextBox Grid.Row="1" Grid.Column="3" Style="{StaticResource WideField}" Text="{Binding Settings.Blossom.LootMs}" />
                         </Grid>
 

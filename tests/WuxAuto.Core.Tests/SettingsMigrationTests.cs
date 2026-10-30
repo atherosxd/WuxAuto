@@ -70,7 +70,7 @@ public class SettingsMigrationTests
             war["ShuraHoldMs"] = 1500;     // proves the file was read, not replaced by defaults
         });
 
-        Assert.Equal(23, loaded.Version);
+        Assert.Equal(24, loaded.Version);
         Assert.Equal(1500, loaded.War.ShuraHoldMs);
         Assert.Equal(FiveBuffs, loaded.War.BuffIcons);
         Assert.Equal(["warbuff2", "warweapon1", "warweapon2"], loaded.War.WeaponBuffIcons);
@@ -100,6 +100,50 @@ public class SettingsMigrationTests
         var loaded = LoadAfterEdit(version: 23, "War", war => war["BuffIcons"] = JsonList(SixBuffs));
 
         Assert.Equal(SixBuffs, loaded.War.BuffIcons);
+    }
+
+    [Fact]
+    public void V24_BlossomKillCheckAndLoot_MoveFromTheOldDefaults()
+    {
+        // User, 2026-10-30: "the check if monster is killed, set it to 1s, loot for 2s". The 1 s before the loot stays.
+        Assert.Equal((1000, 2000, 1000), (new AppSettings().Blossom.TargetGoneMs, new AppSettings().Blossom.LootMs, new AppSettings().Blossom.LootDelayMs));
+        var loaded = LoadAfterEdit(version: 23, "Blossom", b =>
+        {
+            b["TargetGoneMs"] = 2000;
+            b["LootMs"] = 5000;
+            b["LootDelayMs"] = 1000;
+            b["TurnMaxTaps"] = 50;        // user, same day: "reduce the turn to pillars to 15 turns or 10s"
+            b["WaypointWaitMs"] = 2500;   // proves the file was read, not replaced by defaults
+        });
+
+        Assert.Equal(2500, loaded.Blossom.WaypointWaitMs);
+        Assert.Equal((1000, 2000, 1000), (loaded.Blossom.TargetGoneMs, loaded.Blossom.LootMs, loaded.Blossom.LootDelayMs));
+        Assert.Equal(15, loaded.Blossom.TurnMaxTaps);
+        Assert.Equal(10000, loaded.Blossom.TurnMaxMs);
+    }
+
+    [Fact]
+    public void V24_BlossomValuesSetByHand_Stay()
+    {
+        var loaded = LoadAfterEdit(version: 23, "Blossom", b =>
+        {
+            b["TargetGoneMs"] = 3000;
+            b["LootMs"] = 4000;
+        });
+
+        Assert.Equal((3000, 4000), (loaded.Blossom.TargetGoneMs, loaded.Blossom.LootMs));
+    }
+
+    [Fact]
+    public void AfterV24_TheOldValuesPutBackByTheUser_Stay()
+    {
+        var loaded = LoadAfterEdit(version: 24, "Blossom", b =>
+        {
+            b["TargetGoneMs"] = 2000;
+            b["LootMs"] = 5000;
+        });
+
+        Assert.Equal((2000, 5000), (loaded.Blossom.TargetGoneMs, loaded.Blossom.LootMs));
     }
 
     [Fact]

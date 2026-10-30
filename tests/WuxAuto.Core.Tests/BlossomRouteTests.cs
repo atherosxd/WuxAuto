@@ -42,6 +42,38 @@ public class BlossomRouteTests
     }
 
     [Fact]
+    public void BackAndForth_WalksBackFromTheLastWaypoint_ThenForwardAgain()
+    {
+        // User, 2026-10-30: "no need to loop? instead from last waypoint go back in reverse".
+        bool forward = true;
+        var seen = new List<int>();
+        int i = 0;
+        for (int n = 0; n < 8; n++)
+        {
+            i = BlossomRoute.Next(i, 4, loopFrom: 1, backAndForth: true, ref forward);
+            seen.Add(i);
+        }
+
+        Assert.Equal([1, 2, 3, 2, 1, 0, 1, 2], seen);
+    }
+
+    [Fact]
+    public void BackAndForth_TurnsAtLoopFrom_NotBeforeIt()
+    {
+        bool forward = false;
+        Assert.Equal(1, BlossomRoute.Next(2, 5, loopFrom: 2, backAndForth: true, ref forward)); // back to waypoint 2 (index 1)
+        Assert.Equal(2, BlossomRoute.Next(1, 5, loopFrom: 2, backAndForth: true, ref forward)); // and forward again from it
+        Assert.True(forward);
+    }
+
+    [Fact]
+    public void BackAndForth_OneWaypoint_StaysPut()
+    {
+        bool forward = true;
+        Assert.Equal(0, BlossomRoute.Next(0, 1, loopFrom: 1, backAndForth: true, ref forward));
+    }
+
+    [Fact]
     public void Nearest_PicksTheClosest()
     {
         var route = BlossomRoute.Parse(new AppSettings().Blossom.Waypoints);
@@ -59,6 +91,18 @@ public class BlossomRouteTests
         Assert.Equal((TurnDirection.Right, 5), turns[2]);
         Assert.Equal((TurnDirection.Left, 5), turns[3]);
         Assert.Equal((TurnDirection.Right, 5), turns[4]);
+    }
+
+    [Fact]
+    public void TabTarget_DefaultsToNearestMonster_AndAnUnknownValueIsReset()
+    {
+        // User, 2026-10-30: "make sure that the tab target is nearest monster" - Tab then reaches monsters further away.
+        var s = new AppSettings();
+        Assert.Equal("Nearest monster", s.Blossom.TabTargetOption);
+        Assert.Contains(s.Blossom.TabTargetOption, TabTargetOptions.All);
+        s.Blossom.TabTargetOption = "Sound";   // no TAB target value
+        SettingsStore.Normalize(s);
+        Assert.Equal("Nearest monster", s.Blossom.TabTargetOption);
     }
 
     [Fact]

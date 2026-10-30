@@ -42,7 +42,7 @@ public static class AppPaths
 public static class SettingsStore
 {
     /// <summary>Bump when an existing settings.json must be migrated (see <see cref="Migrate"/>).</summary>
-    private const int CurrentVersion = 23;
+    private const int CurrentVersion = 24;
 
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
@@ -198,6 +198,19 @@ public static class SettingsStore
         if (s.Version < 23 && s.War?.BuffIcons is { } buffs)
             buffs.RemoveAll(b => string.Equals(b?.Trim(), "warbuff2", StringComparison.OrdinalIgnoreCase));
 
+        // v24: Auto Blossom's kill check 2 s -> 1 s and loot 5 s -> 2 s (user, 2026-10-30: "the check if monster is killed,
+        // set it to 1s, loot for 2s"), the pillar turn 50 taps -> 15 ("reduce the turn to pillars to 15 turns or 10s"; the
+        // 10 s is the new TurnMaxMs). Only the old defaults move; a value set by hand stays.
+        if (s.Version < 24 && s.Blossom is { } blossom)
+        {
+            if (blossom.TargetGoneMs == 2000)
+                blossom.TargetGoneMs = 1000;
+            if (blossom.LootMs == 5000)
+                blossom.LootMs = 2000;
+            if (blossom.TurnMaxTaps == 50)
+                blossom.TurnMaxTaps = 15;
+        }
+
         s.Version = CurrentVersion;
         return true;
     }
@@ -266,6 +279,10 @@ public static class SettingsStore
         b.Destination = string.IsNullOrWhiteSpace(b.Destination) ? d.Destination : b.Destination.Trim();
         b.PillarTemplate = string.IsNullOrWhiteSpace(b.PillarTemplate) ? d.PillarTemplate : b.PillarTemplate.Trim();
         b.TargetName = string.IsNullOrWhiteSpace(b.TargetName) ? d.TargetName : b.TargetName.Trim();
+        b.AfkCheckerText = (b.AfkCheckerText ?? "").Trim();
+        b.TabTargetOption = Automation.TabTargetOptions.IndexOf((b.TabTargetOption ?? "").Trim()) is int tab
+            ? Automation.TabTargetOptions.All[tab]
+            : d.TabTargetOption;
         if (Automation.BlossomRoute.Parse(b.Waypoints).Count == 0)
             b.Waypoints = BlossomSettings.DefaultWaypoints();
         int count = Automation.BlossomRoute.Parse(b.Waypoints).Count;
@@ -275,12 +292,14 @@ public static class SettingsStore
         b.TurnTapMs = Math.Clamp(b.TurnTapMs, 20, 1000);
         b.TurnTaps = Math.Clamp(b.TurnTaps, 1, 60);
         b.TurnMaxTaps = Math.Clamp(b.TurnMaxTaps, b.TurnTaps, 120);
+        b.TurnMaxMs = Math.Clamp(b.TurnMaxMs, 2000, 120000);
         b.LoopFrom = Math.Clamp(b.LoopFrom, 1, Math.Max(1, count));
         b.WaypointTolerance = Math.Clamp(b.WaypointTolerance, 10, 500);
         b.WaypointWaitMs = Math.Clamp(b.WaypointWaitMs, 0, 5000);   // the AFK checker (user: 5 s or less)
         b.TabEveryMs = Math.Clamp(b.TabEveryMs, 300, 10000);
         b.TargetGoneMs = Math.Clamp(b.TargetGoneMs, 500, 30000);
         b.FightMaxMs = Math.Clamp(b.FightMaxMs, 10000, 600000);
+        b.FightStuckMs = b.FightStuckMs <= 0 ? 0 : Math.Clamp(b.FightStuckMs, 1000, 60000);
         b.LootDelayMs = Math.Clamp(b.LootDelayMs, 0, 10000);
         b.LootMs = Math.Clamp(b.LootMs, 0, 60000);
         b.LootEveryMs = Math.Clamp(b.LootEveryMs, 50, 2000);

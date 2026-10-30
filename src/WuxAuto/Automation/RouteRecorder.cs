@@ -99,8 +99,8 @@ public sealed class RouteRecorder(AppSettings settings, ScreenAnalyzer analyzer,
     }
 
     /// <summary>
-    /// Ends the recording. With at least 2 waypoints they replace the Blossom route (waypoints, loop start, camera turns) and
-    /// are saved; fewer - nothing changes. False when nothing was saved.
+    /// Ends the recording. With at least 2 waypoints they replace the Blossom route (waypoints, loop start, camera turns, and
+    /// "walk back" when the end is far from the loop start) and are saved; fewer - nothing changes. False when nothing was saved.
     /// </summary>
     public bool Stop()
     {
@@ -125,6 +125,7 @@ public sealed class RouteRecorder(AppSettings settings, ScreenAnalyzer analyzer,
         b.Waypoints = r.WaypointStrings();
         b.LoopFrom = r.LoopFrom;
         b.WaypointTurns = r.TurnStrings();
+        b.BackAndForth = r.WalkBack;   // the end far from the loop start: walk it back instead of crossing the map
         SettingsStore.Save(settings);
 
         // A copy outside settings.json: a WuxAuto from before Auto Blossom drops the settings it does not know when it saves.
@@ -135,6 +136,7 @@ public sealed class RouteRecorder(AppSettings settings, ScreenAnalyzer analyzer,
             [
                 $"# Auto Blossom route recorded {DateTime.Now:yyyy-MM-dd HH:mm}",
                 $"LoopFrom: {b.LoopFrom}",
+                $"BackAndForth: {b.BackAndForth}",
                 $"Camera turns: {string.Join(", ", b.WaypointTurns)}",
                 .. b.Waypoints,
             ]);
@@ -144,7 +146,10 @@ public sealed class RouteRecorder(AppSettings settings, ScreenAnalyzer analyzer,
             Log?.Invoke(LogLevel.Warning, $"Record route: the copy {copy} could not be written ({ex.Message}).");
         }
 
-        Log?.Invoke(LogLevel.Success, $"Route saved: {r.Count} waypoints, loop from {r.LoopFrom}, camera turns " +
+        string order = b.BackAndForth
+            ? $"walked back the same way (the end is {r.ClosingGap:0} from waypoint {r.LoopFrom})"
+            : $"loop from {r.LoopFrom}";
+        Log?.Invoke(LogLevel.Success, $"Route saved: {r.Count} waypoints, {order}, camera turns " +
                                       $"{(b.WaypointTurns.Count == 0 ? "none" : string.Join(", ", b.WaypointTurns))} (a copy in {copy}).");
         return true;
     }

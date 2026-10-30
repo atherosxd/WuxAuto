@@ -475,7 +475,7 @@ public sealed partial class AutomationPilot
         _returning = false;
         _autohuntOff = false;
         ResetAutohuntCheck();
-        _visitTabTarget = _settings.Sequence.TabTargetDefault ? "Default" : null;
+        _visitTabTarget = TownTabTarget(_settings);
         _visitSkipFont = false;
         _visitNext = PilotPhase.OpenInventory;
         _warListCheck = false;
@@ -561,7 +561,8 @@ public sealed partial class AutomationPilot
                              && _phase is not (PilotPhase.FindChevron or PilotPhase.FindDestination);
         bool watchWarDialog = IsWar && _phase is (PilotPhase.WarWait or PilotPhase.WarRemember) && !_warMonsterConfirmed;
         bool warBehind = IsWar && !_controls.IsGameInFront;
-        if ((_settings.Sequence.AutoReconnect || cancelDialogs || watchWarDialog) && !warBehind && _phase != PilotPhase.Reconnect && now >= _nextDisconnectCheckAt)
+        bool afkWatch = BlossomAfkWatch;
+        if ((_settings.Sequence.AutoReconnect || cancelDialogs || watchWarDialog || afkWatch) && !warBehind && _phase != PilotPhase.Reconnect && now >= _nextDisconnectCheckAt)
         {
             _nextDisconnectCheckAt = now + 5000;
             try
@@ -587,6 +588,10 @@ public sealed partial class AutomationPilot
                     Advance(PilotPhase.Reconnect, _settings.Sequence.ReconnectStepDelayMs);
                     return;
                 }
+
+                // Auto Blossom: the chat's AFK Checker at 1/5 or more -> a short step (user, 2026-10-30).
+                if (afkWatch && TryBlossomAfkStep(frame, screenWords, now))
+                    return;
 
                 // The war dialog while waiting for the war: join now.
                 if (watchWarDialog
@@ -1092,7 +1097,7 @@ public sealed partial class AutomationPilot
 
     /// <summary>
     /// In town: the Run skill (every run), then once per Start the game's font size (user: 110 - 120 %)
-    /// and TAB target (Default); else the teleport.
+    /// and TAB target (Default; Auto Blossom: its own option); else the teleport.
     /// </summary>
     private PilotPhase AfterTownChecks()
     {
@@ -1102,13 +1107,13 @@ public sealed partial class AutomationPilot
             return PilotPhase.RunSkill;
         }
 
-        bool tabDefault = _settings.Sequence.TabTargetDefault;
-        bool settingsCheck = _settings.Sequence.FontSizePercent > 0 || tabDefault;
+        string? tabTarget = TownTabTarget(_settings);
+        bool settingsCheck = _settings.Sequence.FontSizePercent > 0 || tabTarget != null;
         if (_fontChecked || !settingsCheck)
             return PilotPhase.OpenInventory;
 
-        // The Laby/LOD visit, from the same read of the TAB target box as the decision above.
-        _visitTabTarget = tabDefault ? "Default" : null;
+        // The Laby/LOD/Blossom visit, from the same read of the settings as the decision above.
+        _visitTabTarget = tabTarget;
         _visitSkipFont = false;
         _visitNext = PilotPhase.OpenInventory;
         return PilotPhase.FontSize;
@@ -1714,6 +1719,14 @@ public sealed partial class AutomationPilot
     /// Nearest monster) score below 0.2 against it.
     /// </summary>
     public static bool IsDefaultTabTarget(string value) => TextMatcher.Similarity(value, "Default") >= 0.75;
+
+    /// <summary>
+    /// The TAB target the town Settings visit sets: Auto Blossom's own option (user, 2026-10-30: "make sure that the tab
+    /// target is nearest monster"), else Default when "TAB target: Default" is ticked (Laby / LOD), else none.
+    /// </summary>
+    internal static string? TownTabTarget(AppSettings settings) =>
+        settings.Sequence.Mode == RunMode.AutoBlossom ? settings.Blossom.TabTargetOption
+        : settings.Sequence.TabTargetDefault ? "Default" : null;
 
     /// <summary>
     /// The TAB target chevron that moves <paramref name="value"/> towards <paramref name="wanted"/>:

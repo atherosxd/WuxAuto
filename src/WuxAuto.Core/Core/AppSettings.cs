@@ -306,14 +306,60 @@ public sealed class BlossomSettings
     /// <summary>The taps the user expects to need (7); past them the turn goes on to <see cref="TurnMaxTaps"/>.</summary>
     public int TurnTaps { get; set; } = 7;
 
-    /// <summary>Give up turning after this many taps (about a full turn) and walk anyway.</summary>
-    public int TurnMaxTaps { get; set; } = 50;
+    /// <summary>Give up turning after this many taps and walk anyway (user, 2026-10-30: "reduce the turn to pillars to 15 turns
+    /// or 10s"; was 50, about a full turn).</summary>
+    public int TurnMaxTaps { get; set; } = 15;
 
-    /// <summary>The route, "x,y" world coordinates in order (user). From the last one it goes back to <see cref="LoopFrom"/>.</summary>
+    /// <summary>...or after this long, whichever comes first (user, 2026-10-30: 10 s).</summary>
+    public int TurnMaxMs { get; set; } = 10000;
+
+    /// <summary>The route, "x,y" world coordinates in order (user). From the last one it goes back to <see cref="LoopFrom"/> (or walks back, <see cref="BackAndForth"/>).</summary>
     public List<string> Waypoints { get; set; } = DefaultWaypoints();
 
     /// <summary>1-based waypoint the route loops back to after the last one (user: 17 -> 6).</summary>
     public int LoopFrom { get; set; } = 6;
+
+    /// <summary>
+    /// Walk back the same way instead of looping (user, 2026-10-30: "1 - 83 then 83, 82, 81 to 1 then loop"): forward to the
+    /// last waypoint, back to <see cref="LoopFrom"/>, forward again; camera turns are undone on the way back. Record route
+    /// switches it on when a recording does not end near its start.
+    /// </summary>
+    public bool BackAndForth { get; set; }
+
+    /// <summary>
+    /// The game's TAB target, set in the town Settings visit before the teleport (user, 2026-10-30: "make sure that the tab
+    /// target is nearest monster" - Tab then reaches monsters further off, so the walk between waypoints matters less).
+    /// One of <see cref="Automation.TabTargetOptions.All"/>.
+    /// </summary>
+    public string TabTargetOption { get; set; } = "Nearest monster";
+
+    /// <summary>
+    /// Hold the skill key down through a fight instead of tapping it (user, 2026-10-30: "spam or hold attack skill, currently
+    /// it skills then normal attacks" - one tap casts once, then the character falls back to normal attacks). With
+    /// Dungeon.CtrlSkill the key is let go for a Ctrl + skill tap every Lod.SkillEveryMs, as LOD's hold.
+    /// </summary>
+    public bool HoldSkill { get; set; } = true;
+
+    /// <summary>
+    /// A fight with no move and no new "Attack succeeded" line this long -> a Ctrl+click step to the side (right, left, back,
+    /// ahead in turn) to get round whatever is in the way (user, 2026-10-30: "if a monster is tab, but there is 5s that it
+    /// didn't move and no attack succeeded log, try to click on other direction to reposition"). 0 = off.
+    /// </summary>
+    public int FightStuckMs { get; set; } = 5000;
+
+    /// <summary>
+    /// Tap the loot key through the fight too, and walk on as soon as the kill is seen (the target gone TargetGoneMs) - no
+    /// loot phase after it (user, 2026-10-30: "When attacking a monster, try looting also, so that when killed after 1s, the
+    /// pilot can proceed" / "the 1s delay after killing is enough for the loot, so remove the loot after kill seconds"). Off =
+    /// LootDelayMs, then LootMs of looting after the kill.
+    /// </summary>
+    public bool LootWhileFighting { get; set; } = true;
+
+    /// <summary>
+    /// The chat's "[AFK Checker] : Start 1/5" whisper (user, 2026-10-30: "if 1+/5, try to move a little bit to other
+    /// directions"): the newest such line at 1/5 or more -> a short Ctrl+click step. Empty = off.
+    /// </summary>
+    public string AfkCheckerText { get; set; } = "AFK Checker";
 
     /// <summary>
     /// Reached within this many units. Live 2026-10-29: the old waypoints 2, 4 and 5 lay just past a railing (stopped 86, 67,
@@ -363,16 +409,17 @@ public sealed class BlossomSettings
     /// <summary>The monster to kill (the target bar); its chest counts too (user).</summary>
     public string TargetName { get; set; } = "[S]Jaso Practitioner";
 
-    /// <summary>The target gone this long = dead.</summary>
-    public int TargetGoneMs { get; set; } = 2000;
+    /// <summary>The target gone this long = dead (user, 2026-10-30: "the check if monster is killed, set it to 1s"; was 2 s).</summary>
+    public int TargetGoneMs { get; set; } = 1000;
 
     /// <summary>A fight whose target never goes is given up after this long (user: a Jaso dies within 2 min).</summary>
     public int FightMaxMs { get; set; } = 120000;
 
-    /// <summary>Loot this long after the kill (user: 1 s), every <see cref="LootEveryMs"/> (0.2 s) for <see cref="LootMs"/> (5 s).</summary>
+    /// <summary>Loot this long after the kill (user: 1 s), every <see cref="LootEveryMs"/> (0.2 s) for <see cref="LootMs"/>.</summary>
     public int LootDelayMs { get; set; } = 1000;
 
-    public int LootMs { get; set; } = 5000;
+    /// <summary>How long the loot key is spammed (user, 2026-10-30: "loot for 2s"; was 5 s).</summary>
+    public int LootMs { get; set; } = 2000;
 
     public int LootEveryMs { get; set; } = 200;
 

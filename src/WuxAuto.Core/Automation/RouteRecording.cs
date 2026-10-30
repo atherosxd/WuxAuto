@@ -25,6 +25,25 @@ public sealed class RouteRecording(int spacing = 120, int jump = 400)
     /// <summary>1-based waypoint the route loops back to; 1 until "Loop starts here".</summary>
     public int LoopFrom { get; private set; } = 1;
 
+    /// <summary>How far the last waypoint is from the loop start: a big gap means the route does not come back round, so a
+    /// loop would cross the map in one straight line (walk it back the same way instead).</summary>
+    public double ClosingGap
+    {
+        get
+        {
+            if (_points.Count < 2)
+                return 0;
+            var start = _points[Math.Clamp(LoopFrom - 1, 0, _points.Count - 1)];
+            return Distance(_points[^1].X, _points[^1].Y, start.X, start.Y);
+        }
+    }
+
+    /// <summary>
+    /// The route ends further than a jump from its loop start: the pilot should walk it back the same way (user, 2026-10-30:
+    /// "1 - 83 then 83, 82, 81 to 1"), since a loop would cross the map in one straight line.
+    /// </summary>
+    public bool WalkBack => ClosingGap > jump;
+
     /// <summary>The latest accepted reading.</summary>
     public (int X, int Y)? Current => _current;
 
