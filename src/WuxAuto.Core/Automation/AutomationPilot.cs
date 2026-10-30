@@ -33,6 +33,7 @@ public enum PilotPhase
     ReturnToTown,
     Reconnect,
     RegularWarOn,
+    RegularWarOff,
     LodRun,
     LodAttack,
     LodApproach,
@@ -315,6 +316,7 @@ public sealed partial class AutomationPilot
         PilotPhase.ReturnToTown => "autohunt off, returning to town",
         PilotPhase.Reconnect => "disconnected - logging back in",
         PilotPhase.RegularWarOn => "turning the auto war on",
+        PilotPhase.RegularWarOff => "making sure Regular War is off in the autohunt settings",
         PilotPhase.WarRemember => "remembering the cave and monster",
         PilotPhase.WarWait => "waiting for the Bohai war",
         PilotPhase.WarJoin => "joining the war",
@@ -340,6 +342,7 @@ public sealed partial class AutomationPilot
     {
         _runCount = 0;
         _fontChecked = false;
+        _regularWarOffChecked = false;
         _runKeyPressed = false;
         _labyOut = false;
         _lodOut = false;
@@ -860,6 +863,9 @@ public sealed partial class AutomationPilot
                 case PilotPhase.RegularWarOn:
                     await TickRegularWarAsync(frame);
                     break;
+                case PilotPhase.RegularWarOff:
+                    await TickRegularWarOffAsync(frame);
+                    break;
                 case PilotPhase.WarWait:
                     await TickWarWaitAsync(frame);
                     break;
@@ -1011,6 +1017,9 @@ public sealed partial class AutomationPilot
             bool townCheck = TownIn(title) != null && !_returning;
             _runSkillDue = townCheck && _settings.Sequence.RunSkillCheck;
             _runSkillClicks = 0;
+            // Auto Laby, once per Start (user, 2026-10-29): Regular War off, or the autohunt may take the
+            // character to a war mid-boss. LOD has no autohunt.
+            _regularWarOffDue = townCheck && !IsLod && !IsBlossom && !_regularWarOffChecked && _settings.Sequence.RegularWarOffForLaby;
             if (townCheck && _settings.Sequence.AutohuntOffInTown && _controls.Has(GameAction.ToggleAutohunt))
             {
                 _huntOffPresses = 0;
@@ -1096,8 +1105,8 @@ public sealed partial class AutomationPilot
     }
 
     /// <summary>
-    /// In town: the Run skill (every run), then once per Start the game's font size (user: 110 - 120 %)
-    /// and TAB target (Default; Auto Blossom: its own option); else the teleport.
+    /// In town: the Run skill (every run), then once per Start Regular War off (Auto Laby), the game's font
+    /// size (user: 110 - 120 %) and TAB target (Default; Auto Blossom: its own option); else the teleport.
     /// </summary>
     private PilotPhase AfterTownChecks()
     {
@@ -1105,6 +1114,12 @@ public sealed partial class AutomationPilot
         {
             _runSkillDue = false;
             return PilotPhase.RunSkill;
+        }
+
+        if (_regularWarOffDue)
+        {
+            BeginRegularWarOff();
+            return PilotPhase.RegularWarOff;
         }
 
         string? tabTarget = TownTabTarget(_settings);
