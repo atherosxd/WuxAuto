@@ -273,6 +273,9 @@ public static class SettingsStore
         p.AttackTapEveryMs = Math.Clamp(p.AttackTapEveryMs, 50, 2000);
         if (!Enum.IsDefined(p.AttackMode))
             p.AttackMode = PhoneAttackMode.Hold;
+        p.HoldRepressMs = Math.Clamp(p.HoldRepressMs, 0, 60000);
+        p.LodArrivalWalkMs = Math.Clamp(p.LodArrivalWalkMs, 0, 10000);
+        p.LodBossTapAfterTabs = Math.Clamp(p.LodBossTapAfterTabs, 0, 100);
         p.TapSettleMs = Math.Clamp(p.TapSettleMs, 0, 2000);
         p.JoystickStepMs = Math.Clamp(p.JoystickStepMs, 100, 5000);
         p.SwipePxPerTurnMs = ClampOr(p.SwipePxPerTurnMs, 0.05, 20, 0.5);

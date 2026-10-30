@@ -504,6 +504,8 @@ public sealed partial class AutomationPilot
         _turnWest = false;
         _faceSouth = false;
         _lodStayPut = false;
+        _lodArrivalWalkDue = false;
+        _lodBladeTaps = 0;
         _lodStill = 0;
         _lodWaitLogged = false;
         _fromWaypoint = false;
@@ -2762,7 +2764,7 @@ public sealed partial class AutomationPilot
 
         if (IsLod)
         {
-            BeginFaceSouth();
+            BeginFaceSouth(arrival: true);
             return;
         }
 

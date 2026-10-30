@@ -95,6 +95,7 @@ public class PhoneLodFlowTests : AppPathsScope
     {
         // No LOD frame from the phone yet, so no phone_flashlightlod crop: no turn drags, no walk - Tab (the sword) only.
         using var phone = new PhonePilot(TempRoot());
+        phone.Settings.Phone.LodArrivalWalkMs = 0;        // the arrival walk has its own test
         phone.Shortcuts.Icons[GameAction.TargetNearest] = Sword;
         phone.Shortcuts.Joystick = (262, 816, 106);
         Assert.True(phone.Settings.Lod.WalkToBossSpot);
@@ -113,6 +114,60 @@ public class PhoneLodFlowTests : AppPathsScope
         Assert.DoesNotContain(phone.Touch.Calls, c => c.StartsWith("Drag", StringComparison.Ordinal) || c.StartsWith("Joy", StringComparison.Ordinal));
         Assert.True(phone.Touch.Taps.Count(t => t == Centre(Sword)) >= 2, phone.Log);
         Assert.Equal(PilotPhase.LodRun, phone.Pilot.Phase);
+    }
+
+    [Fact]
+    public async Task PhoneLod_Arrival_WalksUpLeftWithTheJoystick_ThenTabs()
+    {
+        // User, Xiaomi 2026-10-30: "walk/run using joystick for 2s going northwest ... the Boss Arena is just left of the
+        // character". One joystick push up-left (45 degrees) on arrival, before the first sword tap.
+        using var phone = new PhonePilot(TempRoot());
+        Assert.Equal(2000, phone.Settings.Phone.LodArrivalWalkMs);
+        phone.Shortcuts.Icons[GameAction.TargetNearest] = Sword;
+        phone.Shortcuts.Joystick = (262, 816, 106);
+        phone.Ocr.Scene = () => [Title];
+        using var frame = PhoneFrames.Grey();
+
+        await phone.RunAsync(() => frame, PilotPhase.ZoomOut,
+            () => phone.Touch.Taps.Count(t => t == Centre(Sword)) >= 2, timeoutMs: 8000);
+
+        var joys = phone.Touch.Calls.Where(c => c.StartsWith("Joy", StringComparison.Ordinal)).ToList();
+        Assert.Equal(["Joy 262,816 -75,-75"], joys);
+        int joy = phone.Touch.Calls.IndexOf(joys[0]);
+        int sword = phone.Touch.Calls.IndexOf($"Tap {Sword.CenterX},{Sword.CenterY}");
+        Assert.True(joy < sword, string.Join(" | ", phone.Touch.Calls));
+        Assert.Contains(phone.Lines, l => l.StartsWith("Walked up-left with the joystick for 2s", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task PhoneLod_SwordDoesNotTarget_TapsTheBossRing()
+    {
+        // User, Xiaomi 2026-10-30: "if the blade doesn't select the boss, try tapping the boss, using the build of it or
+        // just below it". Three sword taps without the boss in the target bar, a pink ring in view: tap its centre.
+        using var phone = new PhonePilot(TempRoot());
+        phone.Settings.Lod.WalkToBossSpot = false;
+        phone.Settings.Lod.TabEveryMs = 600;
+        phone.Shortcuts.Icons[GameAction.TargetNearest] = Sword;
+        phone.Ocr.Scene = () => [Title];
+        using var frame = PhoneFrames.Grey();
+        var centre = new Point(1100, 500);
+        CvInvoke.Ellipse(frame, centre, new Size(110, 40), 0, 0, 360, new MCvScalar(230, 120, 255, 255), 8);
+        var ringTap = $"Tap {centre.X},{centre.Y}";
+
+        await phone.RunAsync(() => frame, PilotPhase.LodRun, () => phone.Touch.Calls.Any(c => IsNear(c, centre)), timeoutMs: 8000);
+
+        var calls = phone.Touch.Calls;
+        int tap = calls.FindIndex(c => IsNear(c, centre));
+        Assert.True(tap >= 0, string.Join(" | ", calls));
+        Assert.Equal(3, calls.Take(tap).Count(c => c == $"Tap {Sword.CenterX},{Sword.CenterY}"));
+        Assert.Contains(phone.Lines, l => l.StartsWith("3 sword taps did not target 'Bai Gu Great' - tapped the boss (pink ring)", StringComparison.Ordinal));
+
+        static bool IsNear(string call, Point p)
+        {
+            var parts = call.Split(' ', ',');
+            return parts.Length == 3 && parts[0] == "Tap" && int.TryParse(parts[1], out int x) && int.TryParse(parts[2], out int y)
+                   && Math.Abs(x - p.X) <= 6 && Math.Abs(y - p.Y) <= 6;
+        }
     }
 
     // ---------------------------------------------------------------- the fight
@@ -152,6 +207,7 @@ public class PhoneLodFlowTests : AppPathsScope
         // Hold skill (LOD) says; no Ctrl let-go on the phone.
         using var phone = new PhonePilot(TempRoot());
         phone.Settings.Phone.AttackMode = PhoneAttackMode.Hold;
+        phone.Settings.Phone.HoldRepressMs = 0;           // the re-press has its own test
         phone.Settings.Lod.HoldSkill = false;
         phone.Settings.Lod.SkillEveryMs = 100;
         phone.Settings.Lod.ApproachBoss = false;
@@ -164,6 +220,30 @@ public class PhoneLodFlowTests : AppPathsScope
 
         Assert.Equal(PilotPhase.LodAttack, phone.Pilot.Phase);
         Assert.Equal([$"Down {Skill1.CenterX},{Skill1.CenterY}"], phone.Touch.Calls);
+    }
+
+    [Fact]
+    public async Task PhoneLod_HoldMode_PressesAgainEveryHoldRepressMs()
+    {
+        // User, Xiaomi 2026-10-30: "it also sometimes stop attacking, whenever I touch something on the screen. maybe every
+        // 5s hold, then retap" - then "try 2s". The held press is let go and pressed again on the timer.
+        using var phone = new PhonePilot(TempRoot());
+        Assert.Equal(2000, phone.Settings.Phone.HoldRepressMs);
+        phone.Settings.Phone.AttackMode = PhoneAttackMode.Hold;
+        phone.Settings.Phone.HoldRepressMs = 400;
+        phone.Settings.Lod.ApproachBoss = false;
+        phone.Shortcuts.Skills["1"] = Skill1;
+        phone.Ocr.Scene = () => [Title, Target];
+        using var frame = PhoneFrames.Grey();
+        string down = $"Down {Skill1.CenterX},{Skill1.CenterY}";
+
+        await phone.RunAsync(() => frame, PilotPhase.LodAttack, () => phone.Touch.Calls.Count(c => c == down) >= 3);
+
+        var calls = phone.Touch.Calls;
+        Assert.Equal(down, calls[0]);
+        Assert.All(calls, c => Assert.True(c == down || c == "Release", string.Join(" | ", calls)));
+        for (int i = 1; i < calls.Count; i++)
+            Assert.NotEqual(calls[i - 1], calls[i]);    // Down, Release, Down, Release, Down
     }
 
     [Fact]

@@ -21,6 +21,27 @@ public sealed class PhoneSettings
     /// </summary>
     public PhoneAttackMode AttackMode { get; set; } = PhoneAttackMode.Hold;
 
+    /// <summary>
+    /// Hold mode in the LOD fight: lift and press the attack again this often (user, Xiaomi 2026-10-30: "it also
+    /// sometimes stop attacking, whenever I touch something on the screen. maybe every 5s hold, then retap", then "5s is
+    /// too long maybe try 2s"). The player's own touch can end the pilot's held finger without the system telling it.
+    /// 0 = never; clamped 0-60000.
+    /// </summary>
+    public int HoldRepressMs { get; set; } = 2000;
+
+    /// <summary>
+    /// LOD on arrival (and after dying, back at the start): push the joystick up-left this long before tabbing (user,
+    /// Xiaomi 2026-10-30: "walk/run using joystick for 2s going northwest, ... the Boss Arena is just left of the
+    /// character"). 0 = stand where the teleport put the character; clamped 0-10000.
+    /// </summary>
+    public int LodArrivalWalkMs { get; set; } = 2000;
+
+    /// <summary>
+    /// LOD: after this many sword (target) taps without the boss targeted, tap the boss itself - its pink ring, else just
+    /// below its belt (user, Xiaomi 2026-10-30: "if the blade doesn't select the boss, try tapping the boss"). 0 = never.
+    /// </summary>
+    public int LodBossTapAfterTabs { get; set; } = 3;
+
     // Values below marked "measured" come from MuMu on 2026-10-28, see docs/superpowers/notes/2026-10-28-phone-checks.md.
 
     /// <summary>Pause after a joystick step before the next input; a tap right after the release was lost up to 38 ms, delivered from 41 ms (measured; 2x the threshold).</summary>

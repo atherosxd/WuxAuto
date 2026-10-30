@@ -191,7 +191,10 @@ public sealed class TouchControls(AppSettings settings, ITouchInput touch, IShor
     /// <paramref name="forceWalk"/> changes nothing), then <see cref="PhoneSettings.TapSettleMs"/>: the touches are
     /// serialised and the next one must not cut this one short.
     /// </summary>
-    public bool WalkTo(int x, int y, bool forceWalk) => Send(() =>
+    public bool WalkTo(int x, int y, bool forceWalk) => WalkToward(x, y, Phone.JoystickStepMs);
+
+    /// <summary>The joystick pushed towards the screen point for <paramref name="durationMs"/>, then <see cref="PhoneSettings.TapSettleMs"/>.</summary>
+    public bool WalkToward(int x, int y, int durationMs) => Send(() =>
     {
         if (shortcuts.Joystick is not { } stick)
         {
@@ -204,7 +207,7 @@ public sealed class TouchControls(AppSettings settings, ITouchInput touch, IShor
             return false;
 
         var (dx, dy) = JoystickMath.ToStick(w, h, x, y, stick.Radius);
-        if (!touch.Joystick(stick.Cx, stick.Cy, dx, dy, Phone.JoystickStepMs))
+        if (!touch.Joystick(stick.Cx, stick.Cy, dx, dy, durationMs))
             return false;
 
         _sleep(Phone.TapSettleMs);

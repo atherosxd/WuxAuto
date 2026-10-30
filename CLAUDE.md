@@ -239,6 +239,14 @@ log every tap ("Auto buff tapped at x,y", "Loot: N taps over M s"), warn once on
 a missing AUTO BUFF / Pick up, and check a buff ~3 s later on the row under the HP bar (timers if they read, else the
 row's pixels; unchanged = one more tap, then "Auto buff did not take"). Open: the Xiaomi ring shows a second padlock
 (top left, reads open, no (+) shown) - what it does is the owner's word.
+
+**Phone LOD, Xiaomi live test 2026-10-30 (`PhoneSettings`):** `LodArrivalWalkMs` 2000 - on arrival and back at the start
+after dying the joystick is pushed up-left on the screen for 2 s before the sword taps ("northwest", the boss arena is left
+of the arrival spot; the camera keeps the teleport's heading, there is no south turn on the phone). `LodBossTapAfterTabs` 3
+- three sword taps without the boss targeted → a plain tap on its pink ring, else just below its belt (`FindApproachSpot`).
+`HoldRepressMs` 2000 - the held attack is lifted and pressed again every 2 s (the player's own touch can end the held
+finger unseen; user asked 5 s, then 2 s). Open from that test: the sword "unselects the boss" (cause unknown - debug bundle
+pending) and a heads-up notification pausing the pilot.
 Review round (same day): HUNT is **not** a required shortcut (used where found, never added) and the town autohunt-off
 check does not run on the phone (its log read is unverified there); a hit whose colour cannot be told (dark middle) is
 neither HUNT nor AUTO BUFF; the buff check counts a miss only when timers that read did not go up **and** the first row
