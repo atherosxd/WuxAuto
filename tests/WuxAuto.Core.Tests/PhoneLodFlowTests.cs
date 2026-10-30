@@ -140,6 +140,25 @@ public class PhoneLodFlowTests : AppPathsScope
     }
 
     [Fact]
+    public async Task PhoneLod_BossAlreadyTargeted_NoSwordTap()
+    {
+        // User, Xiaomi 2026-10-30: "even the boss name is clearly shown or the chest, it taps the blade?" - the sword went
+        // out on its timer before the frame was read. Now the read comes first: the boss in the target bar, no sword tap.
+        using var phone = new PhonePilot(TempRoot());
+        phone.Settings.Lod.WalkToBossSpot = false;
+        phone.Settings.Lod.ApproachBoss = false;
+        phone.Shortcuts.Icons[GameAction.TargetNearest] = Sword;
+        phone.Shortcuts.Skills["1"] = Skill1;
+        phone.Ocr.Scene = () => [Title, Target];
+        using var frame = PhoneFrames.Grey();
+
+        await phone.RunAsync(() => frame, PilotPhase.LodRun, () => phone.Pilot.Phase == PilotPhase.LodAttack);
+
+        Assert.Equal(PilotPhase.LodAttack, phone.Pilot.Phase);
+        Assert.DoesNotContain(phone.Touch.Calls, c => c == $"Tap {Sword.CenterX},{Sword.CenterY}");
+    }
+
+    [Fact]
     public async Task PhoneLod_SwordDoesNotTarget_TapsTheBossRing()
     {
         // User, Xiaomi 2026-10-30: "if the blade doesn't select the boss, try tapping the boss, using the build of it or

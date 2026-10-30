@@ -573,22 +573,32 @@ public sealed partial class AutomationPilot
             return;
         }
 
-        if (TapLodTab(now, lod.TabEveryMs))
+        // Desktop: Tab on its timer before the read, as before (verified live there).
+        if (Profile != PlatformProfile.Phone && TapLodTab(now, lod.TabEveryMs))
         {
-            if (Profile == PlatformProfile.Phone)
-                _lodBladeTaps++;
             _waitUntil = now + 250;
             return;
         }
 
+        // Phone: the boss first, Tab only without it (user, Xiaomi 2026-10-30: "even the boss name is clearly shown or the
+        // chest, it taps the blade?" - it did: the sword went out on its timer before the frame was read, and a tap with
+        // the boss already selected left it unselected).
         var boss = await FindLodBossAsync(frame);
-        if (boss == null && TapLodBoss(frame, now))
-            return;
         if (boss != null)
         {
             Log?.Invoke(LogLevel.Success, $"'{boss.Text}' targeted - spamming skill {SkillText(_settings.Dungeon.SkillKey)} ({_lodKills} kill(s) so far).");
             BeginLodFight();
             Advance(PilotPhase.LodAttack, 0);
+            return;
+        }
+
+        if (TapLodBoss(frame, now))
+            return;
+
+        if (Profile == PlatformProfile.Phone && TapLodTab(Environment.TickCount64, lod.TabEveryMs))
+        {
+            _lodBladeTaps++;
+            _waitUntil = Environment.TickCount64 + 250;
             return;
         }
 
