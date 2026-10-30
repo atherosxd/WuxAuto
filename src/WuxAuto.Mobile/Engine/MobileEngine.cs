@@ -68,11 +68,11 @@ public sealed class MobileEngine : IDisposable
     private Mat? _frame;
     private long _frameTicks;
 
-    /// <param name="capture">The running capture, or null (it comes and goes with the consent: one per session).</param>
-    /// <param name="ocr">Owned: disposed with the engine (through the analyzer).</param>
     /// <summary>The modes the phone runs (M5: LOD and Laby; Auto War and Auto Blossom come later).</summary>
     public static readonly IReadOnlySet<RunMode> PhoneModes = new HashSet<RunMode> { RunMode.AutoLod, RunMode.AutoLaby };
 
+    /// <param name="capture">The running capture, or null (it comes and goes with the consent: one per session).</param>
+    /// <param name="ocr">Owned: disposed with the engine (through the analyzer).</param>
     public MobileEngine(AppSettings settings, Func<CaptureService?> capture, ITouchInput touch, IOcrEngine ocr)
     {
         _settings = settings;

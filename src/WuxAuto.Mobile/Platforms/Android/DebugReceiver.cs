@@ -15,7 +15,7 @@ namespace WuxAuto.Mobile;
 /// <item>PING, FRONT (active package, game in front?), TEMPLATES (what TemplateLibrary loads)</item>
 /// <item>CAPTURE [--ez bringGame false] (consent dialog), STOPCAPTURE, SHOT (LatestFrame → files/debug/shot_*.png)</item>
 /// <item>OCR --ei x --ei y --ei w --ei h [--ef scale 1.5, clamped 0.5-4] (whole frame without w/h)</item>
-/// <item>START (the pilot in Auto LOD, as the Start button), STOP (as the Stop button) - a live check can stop the run from a
+/// <item>START [--es mode lod|laby] (the pilot in that mode, else the saved one, as the Start button), STOP (as the Stop button) - a live check can stop the run from a
 /// logcat watcher before it teleports</item>
 /// <item>TAP x y [ms], SWIPE x1 y1 x2 y2 [ms], DRAG x1 y1 x2 y2 [ms] [hold], JOY cx cy dx dy [ms], PINCH cx cy from to [ms] (full gaps, default 720 → 192), HOLD x y, RELEASE</item>
 /// </list>
@@ -161,10 +161,20 @@ public sealed class DebugReceiver : BroadcastReceiver
                 Report(name, !touch.IsHolding);
                 break;
             case "START":
-                // On the main thread, as the Start button calls it (it raises UI state events).
-                Microsoft.Maui.ApplicationModel.MainThread.BeginInvokeOnMainThread(() => Engine.EngineHost.Engine.Start(RunMode.AutoLod));
+            {
+                // [--es mode lod|laby]; without it the saved mode. On the main thread, as the Start button calls it (it raises
+                // UI state events).
+                var engine = Engine.EngineHost.Engine;
+                var mode = i.GetStringExtra("mode")?.ToLowerInvariant() switch
+                {
+                    "laby" => RunMode.AutoLaby,
+                    "lod" => RunMode.AutoLod,
+                    _ => engine.Settings.Sequence.Mode,
+                };
+                Microsoft.Maui.ApplicationModel.MainThread.BeginInvokeOnMainThread(() => engine.Start(mode));
                 Report(name, true);
                 break;
+            }
             case "STOP":
                 Microsoft.Maui.ApplicationModel.MainThread.BeginInvokeOnMainThread(() => Engine.EngineHost.Engine.Stop("adb STOP probe"));
                 Report(name, true);
