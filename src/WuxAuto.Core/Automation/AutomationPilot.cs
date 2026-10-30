@@ -169,6 +169,19 @@ public sealed partial class AutomationPilot
     private bool _manualHit;
     private long? _holdUntil;                // a held skill press (stage 5's first manual attack, stages 1-4 before J) is let go at this time
     private bool _heldBeforeHunt;            // stages 1-4: the held skill press before J is done (HoldBeforeAutohunt)
+    private int _holdRefusals;               // phone: skill presses refused (no attack icon), this boss (PhoneSkillGivenUp)
+    private long? _gateDueAt;                // phone: when the next Labyrinth gate opens by the game's fixed timer (clock ms)
+
+    // The Labyrinth's fixed timers (Wuxen wiki, from the user 2026-10-30): the first gate opens 30 s after arriving (alone or
+    // with a full party), the next one 5 s after the stage boss dies, and each stays open 60 s.
+    private const int LabyFirstGateMs = 30000;
+    private const int LabyNextGateAfterKillMs = 5000;
+
+    /// <summary>Phone: no gate banner read this long after the gate's timer -> the map is opened anyway (the gate stays open 60 s).</summary>
+    private const int PhoneGateGraceMs = 3000;
+
+    /// <summary>Phone: this many refused held presses (~300 ms apart) before the autohunt goes on without the hold.</summary>
+    private const int PhoneHoldTries = 10;
     private bool _awaitQuietLog;             // stages 1-4 after the hold + J: wait for the combat log to stop changing before the clicks
     private long _quietWaitStart;
     private long _quietSince;
@@ -215,6 +228,8 @@ public sealed partial class AutomationPilot
     private int _watchGateLines = -1;
     private bool _compassAnchored;
     private double _bestFlashlightScore;
+    private int _northAims;                  // phone: long turns made towards the beam's heading this lining-up (PhoneAimBeam)
+    private (int Height, double Scale)? _beamScale; // the scale the searchlight last matched at (>= the gate), per frame height
     private int _bestFlashlightStep;
     private readonly List<int> _tapsSinceBest = new();
 
@@ -559,11 +574,13 @@ public sealed partial class AutomationPilot
         _finalHuntOffChecked = false;
         _compassAnchored = false;
         _bestFlashlightScore = 0;
+        _northAims = 0;
         _bestFlashlightStep = 0;
         _tapsSinceBest.Clear();
         _refineDir = 0;
         _refinePending = false;
         _killShotTag = null;
+        _gateDueAt = null;
         ResetBossState();
     }
 
@@ -577,6 +594,7 @@ public sealed partial class AutomationPilot
         _manualHit = false;
         _holdUntil = null;
         _heldBeforeHunt = false;
+        _holdRefusals = 0;
         _awaitQuietLog = false;
         _quietWaitStart = 0;
         _quietSince = 0;
@@ -1226,9 +1244,11 @@ public sealed partial class AutomationPilot
                 _regularWarOffChecked = true;
                 Log?.Invoke(LogLevel.Info, "Regular War off: not checked on the phone yet (☰ -> Auto-Hunt; it needs Premium to be on at all).");
             }
-            // Not on the phone yet: its combat-log read of the autohunt lines is not verified there, and a misread tap of
-            // HUNT in town starts a Smart Farm journey.
-            if (townCheck && _settings.Sequence.AutohuntOffInTown && Profile != PlatformProfile.Phone
+            // The phone only when its HUNT button shows the autohunt on (the "+"): its combat-log read of the autohunt lines
+            // is not verified there, and a blind tap of HUNT in town starts a Smart Farm journey. The check then reads the
+            // button (EnsureAutohuntAsync).
+            if (townCheck && _settings.Sequence.AutohuntOffInTown
+                && (Profile != PlatformProfile.Phone || _controls.AutohuntOn == true)
                 && _controls.Has(GameAction.ToggleAutohunt))
             {
                 _huntOffPresses = 0;
@@ -1305,11 +1325,15 @@ public sealed partial class AutomationPilot
         }
 
         _stageIndex = found;
-        _autohuntPressed = true;   // it is already fighting; J is a toggle
+        // It is already fighting; J is a toggle. The phone's HUNT button tells: yellow swords = off -> the stage's own
+        // hold + J (live 2026-10-30: a resume with the autohunt off took 14 min over a stage 1 boss at 1 %).
+        bool huntOff = AutohuntShows(false);
+        _autohuntPressed = !huntOff;
         _zoneConfirmedAt = Environment.TickCount64;
         _sweepDone = true;
         Log?.Invoke(LogLevel.Warning,
-            $"Already in the Labyrinth - resuming at stage {found + 1} ('{text}') instead of teleporting.");
+            $"Already in the Labyrinth - resuming at stage {found + 1} ('{text}') instead of teleporting" +
+            (huntOff ? " (the HUNT button shows the autohunt off - it goes on after the held press)." : "."));
         Advance(PilotPhase.SelectBoss, 200);
     }
 
@@ -1438,6 +1462,38 @@ public sealed partial class AutomationPilot
             _detail = $"pressed '{key}' ({_huntOffPresses}/3) - reading the combat log";
             _waitUntil = now + 600;
             return true;
+        }
+
+        // The phone's HUNT button shows the state (user, 2026-10-30: the yellow swords turn into a "+" while the autohunt
+        // runs): no combat log needed. Null (the button not seen, or a tap not settled yet) -> wait a little after a tap,
+        // else the combat log as before.
+        if (_controls.AutohuntOn is bool shown)
+        {
+            string picture = shown ? "the '+'" : "the yellow swords";
+            if (shown == wantOn)
+            {
+                Log?.Invoke(LogLevel.Success, $"Autohunt is {want} {where} (the HUNT button shows {picture}).");
+                _huntCheckConfirmed = true;
+                return true;
+            }
+
+            if (_huntOffPresses >= 3)
+            {
+                Log?.Invoke(LogLevel.Warning, $"The HUNT button still shows {picture} after {_huntOffPresses} tap(s) - carrying on.");
+                DebugArtifacts.SaveFrame(frame, _overlays, wantOn ? "autohunt_off" : "autohunt_on");
+                return true;
+            }
+
+            if (Tap())
+                Log?.Invoke(LogLevel.Info, $"The HUNT button shows {picture} - the autohunt is {other} {where}; tapped it to turn it {want}.");
+            return false;
+        }
+
+        if (_huntOffPresses > 0 && _huntOffPressedAt > 0 && Profile == PlatformProfile.Phone && now - _huntOffPressedAt < 4000)
+        {
+            _detail = $"waiting for the HUNT button to show the autohunt {want}";
+            _waitUntil = now + 300;
+            return false;
         }
 
         if (_huntOffPresses == 0)
@@ -2581,6 +2637,14 @@ public sealed partial class AutomationPilot
             return;
         }
 
+        if (match != null && score >= need)
+            _beamScale = (frame.Height, match.Scale);
+
+        // Phone (user, 2026-10-30: "it is too slow to rotate try to rotate faster" - 27 taps of ~15 degrees, ~1 s each):
+        // before the first tap, read which way the beam points and turn most of the way in one long drag.
+        if (Profile == PlatformProfile.Phone && _attempts == 0 && _northAims < MaxNorthAims && PhoneAimBeam(frame, template, roi, match, need))
+            return;
+
         if (score > _bestFlashlightScore + 0.002)
         {
             _bestFlashlightScore = score;
@@ -2670,6 +2734,86 @@ public sealed partial class AutomationPilot
         _attempts++;
         _detail = $"searchlight {score:0.00} (best {_bestFlashlightScore:0.00}), tap {_attempts}/{maxSteps}{(fine ? " fine" : string.Empty)}";
         _waitUntil = Environment.TickCount64 + _settings.Sequence.RotateSettleMs;
+    }
+
+    /// <summary>Phone: long turns towards the beam's wanted heading before the tap-and-look search, per lining-up.</summary>
+    private const int MaxNorthAims = 3;
+
+    /// <summary>
+    /// Phone: the long turn leaves the beam this far clockwise of the wanted heading - the tap search taps left
+    /// (anticlockwise) from there; landing anticlockwise of it would send the taps the long way round.
+    /// </summary>
+    private const int AimLeaveCwDegrees = 15;
+
+    /// <summary>Phone: the longest single aim turn (a turn drag is cut to the right-hand band, ~108 degrees at 1920x1080).</summary>
+    private const int MaxAimDegrees = 100;
+
+    /// <summary>
+    /// Phone turn drags, measured in MuMu 2026-10-28 (docs/superpowers/notes/2026-10-28-phone-checks.md): about 20 px
+    /// dead zone, then 4.8 px per degree (drag + 100 ms hold).
+    /// </summary>
+    private const double TurnDeadZonePx = 20, TurnPxPerDegree = 4.8;
+
+    /// <summary>
+    /// Phone: one long turn towards the template's heading (<see cref="ScreenAnalyzer.BeamAngle"/> in 15 degree steps), so
+    /// the tap-and-look search below only has a tap or two left. Up to <see cref="MaxNorthAims"/> turns, each re-read; done
+    /// (false, the taps take over) once the beam is 0-30 degrees clockwise of the heading, or when no estimate scores
+    /// <paramref name="need"/>. True = a turn went out (or was blocked) and the tick is over.
+    /// </summary>
+    private bool PhoneAimBeam(Mat frame, string template, PixelRect roi, TemplateMatch? match, double need)
+    {
+        long now = Environment.TickCount64;
+        // The scale the beam matched at: a good match this lining-up or earlier, else this frame's best, else three
+        // guesses round the phone's measured x1.5 (MuMu 1920x1080, interface scale 1.10).
+        var scales = new List<double>();
+        if (_beamScale is { } known && known.Height == frame.Height)
+            scales.Add(known.Scale);
+        else if (match is { Score: >= 0.60 })
+            scales.Add(match.Scale);
+        else
+            scales.AddRange(new[] { 1.35, 1.5, 1.65 }.Select(s => s * _analyzer.ScaleFor(frame.Height)));
+
+        (int AngleCw, double Score)? beam = null;
+        foreach (double scale in scales)
+        {
+            if (_analyzer.BeamAngle(frame, template, roi, scale) is { } b && (beam == null || b.Score > beam.Value.Score))
+                beam = b;
+        }
+
+        if (beam is not { } found || found.Score < need)
+        {
+            Log?.Invoke(LogLevel.Info,
+                $"Could not tell which way the searchlight points (best {beam?.Score ?? 0:0.00}, {need:0.00} needed) - turning by taps.");
+            _northAims = MaxNorthAims;
+            return false;
+        }
+
+        int signed = found.AngleCw > 180 ? found.AngleCw - 360 : found.AngleCw; // + = clockwise of the heading
+        if (signed >= 0 && signed <= 2 * AimLeaveCwDegrees)
+        {
+            if (_northAims > 0)
+                Log?.Invoke(LogLevel.Info, $"Searchlight {signed} degrees clockwise of {template} after {_northAims} long turn(s) - tapping from here.");
+            _northAims = MaxNorthAims;
+            return false;
+        }
+
+        int turn = signed - AimLeaveCwDegrees; // > 0: anticlockwise (left), < 0: clockwise (right)
+        int degrees = Math.Min(Math.Abs(turn), MaxAimDegrees);
+        var direction = turn > 0 ? TurnDirection.Left : TurnDirection.Right;
+        int ms = (int)Math.Round((TurnDeadZonePx + TurnPxPerDegree * degrees) / _settings.Phone.SwipePxPerTurnMs);
+        if (!HoldKey(direction, ms))
+        {
+            _waitUntil = now + 300;
+            return true;
+        }
+
+        _northAims++;
+        Log?.Invoke(LogLevel.Info,
+            $"Searchlight {Math.Abs(signed)} degrees {(signed > 0 ? "clockwise" : "anticlockwise")} of {template} (score {found.Score:0.00}) - " +
+            $"one long turn {(direction == TurnDirection.Left ? "left" : "right")} of ~{degrees} degrees ({_northAims}/{MaxNorthAims}).");
+        _detail = $"long turn {_northAims}/{MaxNorthAims} towards the searchlight's heading";
+        _waitUntil = Environment.TickCount64 + _settings.Sequence.RotateSettleMs + 200;
+        return true;
     }
 
     /// <summary>
@@ -2794,6 +2938,7 @@ public sealed partial class AutomationPilot
             _earlyNorth = false;
             _compassAnchored = false;
             _bestFlashlightScore = 0;
+            _northAims = 0;
             _bestFlashlightStep = 0;
             _tapsSinceBest.Clear();
             return PilotPhase.WaitForGate;
@@ -3061,6 +3206,10 @@ public sealed partial class AutomationPilot
             return;
         }
 
+        // The Labyrinth's first gate opens on a fixed timer after arriving (the phone opens the map by it if the banner is missed).
+        if (!_arrivalConfirmed && !IsLod && !IsBlossom)
+            _gateDueAt = Environment.TickCount64 + LabyFirstGateMs;
+
         // Once confirmed, a blocked zoom below must not re-check and re-log every tick.
         _arrivalConfirmed = true;
         _zoneConfirmedAt = Environment.TickCount64;
@@ -3098,6 +3247,7 @@ public sealed partial class AutomationPilot
             _earlyNorth = true;
             _compassAnchored = false;
             _bestFlashlightScore = 0;
+            _northAims = 0;
             _bestFlashlightStep = 0;
             _tapsSinceBest.Clear();
             Advance(PilotPhase.FaceNorth, 400);
@@ -3164,23 +3314,33 @@ public sealed partial class AutomationPilot
         }
 
         long elapsed = Environment.TickCount64 - _phaseStart;
-        if (_stageIndex > 0 && dungeon.GateFallbackMs > 0 && elapsed > dungeon.GateFallbackMs)
+        // Phone: the gate keeps a fixed timer (30 s after arriving, 5 s after a kill; open for 60 s) - a missed banner
+        // costs nothing once that time has passed.
+        bool timerDue = Profile == PlatformProfile.Phone && _gateDueAt is long due && Environment.TickCount64 >= due + PhoneGateGraceMs;
+        if (timerDue || (_stageIndex > 0 && dungeon.GateFallbackMs > 0 && elapsed > dungeon.GateFallbackMs))
         {
             // Opening the map while the last boss still fights would skip it: look first.
-            var previous = await FindBossAsync(frame, _stageIndex - 1);
-            if (previous.Found)
+            if (_stageIndex > 0)
             {
-                _stageIndex--;
-                Log?.Invoke(LogLevel.Warning,
-                    $"No gate banner, but the stage {_stageIndex + 1} boss is still up ({previous.Text}) - watching it again.");
-                ResetBossState();
-                Advance(PilotPhase.WatchBoss, 0);
-                return;
+                var previous = await FindBossAsync(frame, _stageIndex - 1);
+                if (previous.Found)
+                {
+                    _stageIndex--;
+                    _gateDueAt = null;
+                    Log?.Invoke(LogLevel.Warning,
+                        $"No gate banner, but the stage {_stageIndex + 1} boss is still up ({previous.Text}) - watching it again.");
+                    ResetBossState();
+                    Advance(PilotPhase.WatchBoss, 0);
+                    return;
+                }
             }
 
-            Log?.Invoke(LogLevel.Warning,
-                $"No gate banner seen {elapsed / 1000.0:0}s after the stage {_stageIndex} boss died - opening the map anyway.");
+            Log?.Invoke(LogLevel.Warning, timerDue
+                ? $"No gate banner read, but the stage {_stageIndex + 1} gate is open by its fixed timer " +
+                  $"({(_stageIndex == 0 ? "30 s after arriving" : "5 s after the kill")}) - opening the map."
+                : $"No gate banner seen {elapsed / 1000.0:0}s after the stage {_stageIndex} boss died - opening the map anyway.");
             DebugArtifacts.SaveFrame(frame, _overlays, $"nogate_s{_stageIndex + 1}");
+            _gateDueAt = null;
             _mapReopens = 0;
             _mapVisibleMisses = 0;
             Advance(PilotPhase.ClickMap, 0);
@@ -3258,6 +3418,7 @@ public sealed partial class AutomationPilot
 
     private void GateOpened(string how)
     {
+        _gateDueAt = null;
         int total = Math.Max(1, _settings.Dungeon.Stages.Count);
         Log?.Invoke(LogLevel.Success, $"Gate open - stage {_stageIndex + 1}/{total} ({how}).");
 
@@ -4079,10 +4240,13 @@ public sealed partial class AutomationPilot
         // engaged there before the character was at the boss (user).
         if (!IsFinalBoss && !_autohuntPressed && !HoldBeforeAutohunt && elapsed >= spawnWait)
         {
-            if (_controls.Has(GameAction.ToggleAutohunt) && _controls.Press(GameAction.ToggleAutohunt))
+            bool already = AutohuntShows(true);
+            if (_controls.Has(GameAction.ToggleAutohunt) && (already || _controls.Press(GameAction.ToggleAutohunt)))
             {
                 _autohuntPressed = true;
-                Log?.Invoke(LogLevel.Success, $"Pressed '{dungeon.AutohuntKey}' to turn the autohunt on (stage {_stageIndex + 1}).");
+                Log?.Invoke(LogLevel.Success, already
+                    ? $"The autohunt is on already (the HUNT button shows the '+') - not tapped (stage {_stageIndex + 1})."
+                    : $"Pressed '{dungeon.AutohuntKey}' to turn the autohunt on (stage {_stageIndex + 1}).");
                 _waitUntil = Environment.TickCount64 + 600;
                 return;
             }
@@ -4148,7 +4312,7 @@ public sealed partial class AutomationPilot
         // to the boss coordinates; arriving there starts this wait again.
         if (IsFinalBoss && _fromWaypoint && _runToTargetPending == false && spawnWaitOver && dungeon.WaypointWalkFallback)
         {
-            if (_autohuntPressed && _controls.Has(GameAction.ToggleAutohunt) && !_controls.Press(GameAction.ToggleAutohunt))
+            if (_autohuntPressed && _controls.Has(GameAction.ToggleAutohunt) && !AutohuntShows(false) && !_controls.Press(GameAction.ToggleAutohunt))
             {
                 _waitUntil = Environment.TickCount64 + 300;
                 return;
@@ -4254,15 +4418,18 @@ public sealed partial class AutomationPilot
             {
                 if (_holdUntil == null)
                 {
-                    if (!StartHeldSkill())
+                    if (StartHeldSkill())
+                    {
+                        Log?.Invoke(LogLevel.Info,
+                            $"Holding '{dungeon.SkillKey}' for {dungeon.HoldSkillMs} ms on the stage {_stageIndex + 1} boss before the autohunt.");
                         return;
+                    }
 
-                    Log?.Invoke(LogLevel.Info,
-                        $"Holding '{dungeon.SkillKey}' for {dungeon.HoldSkillMs} ms on the stage {_stageIndex + 1} boss before the autohunt.");
-                    return;
+                    // Phone, no attack icon: the autohunt without the held press.
+                    if (!PhoneSkillGivenUp(frame))
+                        return;
                 }
-
-                if (!TickHeldSkill())
+                else if (!TickHeldSkill())
                     return;
 
                 _heldBeforeHunt = true;
@@ -4412,6 +4579,29 @@ public sealed partial class AutomationPilot
         Log?.Invoke(LogLevel.Info, $"Select click {_selectTries}/{dungeon.BossSelectMaxTries} at {x},{y}.");
         _selectClickedAt = Environment.TickCount64;
         _waitUntil = _selectClickedAt.Value + 300;
+    }
+
+    /// <summary>
+    /// Phone: a skill press (hold or tap) was refused. The loop only ticks with the game in front, so that means no attack
+    /// icon was found on the hotbar or the skill wheel (live 2026-10-30: the hotbar box cut the icon off at interface scale
+    /// 1.10, and the pilot retried the stage 1 hold silently for minutes - the autohunt never went on and the gate banner
+    /// was never looked for). True once it has been refused <see cref="PhoneHoldTries"/> times for this boss (a warning and
+    /// a <c>noskill_s&lt;N&gt;</c> snapshot the first time): the caller goes on without the press. Always false on the desktop,
+    /// where a refused key means the game is behind another window (wait).
+    /// </summary>
+    private bool PhoneSkillGivenUp(Mat frame)
+    {
+        if (Profile != PlatformProfile.Phone || ++_holdRefusals < PhoneHoldTries)
+            return false;
+
+        if (_holdRefusals == PhoneHoldTries)
+        {
+            Log?.Invoke(LogLevel.Warning,
+                $"No attack skill icon on the hotbar or the skill wheel ({PhoneHoldTries} tries) - going on without the skill press (stage {_stageIndex + 1}).");
+            DebugArtifacts.SaveFrame(frame, _overlays, $"noskill_s{_stageIndex + 1}");
+        }
+
+        return true;
     }
 
     private void StartManualAttack(string why)
@@ -4570,11 +4760,19 @@ public sealed partial class AutomationPilot
 
             if (_manualPresses == 0 && hold)
             {
-                StartHeldSkill();
+                if (StartHeldSkill() || !PhoneSkillGivenUp(frame))
+                    return;
+
+                // Phone, no attack icon: the round goes on without the hold.
+                _manualPresses = 1;
+                _lastManualPressAt = now;
+                _waitUntil = now + ManualAttackIntervalMs;
                 return;
             }
 
-            if (!_controls.SkillTap(dungeon.SkillKey))
+            // Phone, no attack icon (PhoneSkillGivenUp): the press counts as made, so the round ends and the no-hit rules
+            // (Tab, another round, nohit_s5) take over instead of retrying forever.
+            if (!_controls.SkillTap(dungeon.SkillKey) && !PhoneSkillGivenUp(frame))
             {
                 _detail = "skill key blocked - waiting for the game to be in front";
                 _waitUntil = now + 300;
@@ -4743,8 +4941,8 @@ public sealed partial class AutomationPilot
             return;
         }
 
-        // Autohunt off again (J is a toggle).
-        if (_autohuntPressed && _controls.Has(GameAction.ToggleAutohunt) && !_controls.Press(GameAction.ToggleAutohunt))
+        // Autohunt off again (J is a toggle; not when the phone's HUNT button shows it off already).
+        if (_autohuntPressed && _controls.Has(GameAction.ToggleAutohunt) && !AutohuntShows(false) && !_controls.Press(GameAction.ToggleAutohunt))
         {
             _detail = "autohunt key blocked - waiting for the game to be in front";
             _waitUntil = now + 300;
@@ -4772,12 +4970,25 @@ public sealed partial class AutomationPilot
         ArriveAtFinalBoss();
     }
 
+    /// <summary>
+    /// The phone's HUNT button already shows the autohunt <paramref name="on"/> (yellow swords = off, "+" = on): a toggle
+    /// tap would undo it. Always false on the desktop (J is a blind toggle there).
+    /// </summary>
+    private bool AutohuntShows(bool on) => _controls.AutohuntOn == on;
+
     /// <summary>Autohunt on (J is a toggle) unless it already is. False while the key is blocked.</summary>
     private bool EngageAutohunt()
     {
         var dungeon = _settings.Dungeon;
         if (_autohuntPressed || !_controls.Has(GameAction.ToggleAutohunt))
             return true;
+        if (AutohuntShows(true))
+        {
+            _autohuntPressed = true;
+            Log?.Invoke(LogLevel.Info, $"The autohunt is on already (the HUNT button shows the '+') - not tapped (stage {_stageIndex + 1}).");
+            return true;
+        }
+
         if (!_controls.Press(GameAction.ToggleAutohunt))
             return false;
 
@@ -4907,7 +5118,7 @@ public sealed partial class AutomationPilot
                 }
                 else if (now - _watchAttackAt >= dungeon.AutohuntStallMs)
                 {
-                    if (_controls.Has(GameAction.ToggleAutohunt) && !_controls.Press(GameAction.ToggleAutohunt))
+                    if (_controls.Has(GameAction.ToggleAutohunt) && !AutohuntShows(false) && !_controls.Press(GameAction.ToggleAutohunt))
                     {
                         _detail = "autohunt key blocked - waiting for the game to be in front";
                         _waitUntil = now + 300;
@@ -4941,6 +5152,8 @@ public sealed partial class AutomationPilot
         {
             Log?.Invoke(LogLevel.Success,
                 $"Boss for stage {_stageIndex + 1} is gone ({missingMs / 1000:0}s without its name/marker, Tab pressed {_watchTabs}x).");
+            // It died about when its name went: the next gate opens 5 s after that (fixed timer).
+            _gateDueAt = _bossMissingSince.Value + LabyNextGateAfterKillMs;
             OnLabyBossDead(frame);
             NextStageOrFinish();
             return;
@@ -4993,13 +5206,20 @@ public sealed partial class AutomationPilot
             // (user): off for the run, on again at the final boss (ArriveAtFinalBoss -> WaitBoss).
             if (dungeon.FinalBossPressAutohunt && _controls.Has(GameAction.ToggleAutohunt))
             {
-                if (!_controls.Press(GameAction.ToggleAutohunt))
+                if (AutohuntShows(false))
                 {
-                    _waitUntil = Environment.TickCount64 + 300;
-                    return;
+                    Log?.Invoke(LogLevel.Info, "The autohunt is off already for the run to the final boss (the HUNT button shows the yellow swords).");
                 }
+                else
+                {
+                    if (!_controls.Press(GameAction.ToggleAutohunt))
+                    {
+                        _waitUntil = Environment.TickCount64 + 300;
+                        return;
+                    }
 
-                Log?.Invoke(LogLevel.Info, $"Pressed '{dungeon.AutohuntKey}' - autohunt off for the run to the final boss.");
+                    Log?.Invoke(LogLevel.Info, $"Pressed '{dungeon.AutohuntKey}' - autohunt off for the run to the final boss.");
+                }
             }
 
             Log?.Invoke(LogLevel.Success, $"All {dungeon.Stages.Count} stages cleared - lining up the searchlight for the run.");
@@ -5201,6 +5421,7 @@ public sealed partial class AutomationPilot
                 _turnWest = true;
                 _compassAnchored = false;
                 _bestFlashlightScore = 0;
+                _northAims = 0;
                 _bestFlashlightStep = 0;
                 _tapsSinceBest.Clear();
                 _refineDir = 0;
@@ -5589,7 +5810,8 @@ public sealed partial class AutomationPilot
         var dungeon = _settings.Dungeon;
         if (!_autohuntOff)
         {
-            if (_controls.Has(GameAction.ToggleAutohunt) && !_controls.Press(GameAction.ToggleAutohunt))
+            bool already = AutohuntShows(false);
+            if (_controls.Has(GameAction.ToggleAutohunt) && !already && !_controls.Press(GameAction.ToggleAutohunt))
             {
                 _detail = "autohunt-off key blocked - waiting for the game to be in front";
                 _waitUntil = Environment.TickCount64 + 300;
@@ -5597,7 +5819,9 @@ public sealed partial class AutomationPilot
             }
 
             _autohuntOff = true;
-            Log?.Invoke(LogLevel.Success, $"Pressed '{dungeon.AutohuntKey}' to turn the autohunt off.");
+            Log?.Invoke(LogLevel.Success, already
+                ? "The autohunt is off already (the HUNT button shows the yellow swords)."
+                : $"Pressed '{dungeon.AutohuntKey}' to turn the autohunt off.");
             _waitUntil = Environment.TickCount64 + 800;
             return;
         }

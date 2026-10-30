@@ -77,13 +77,39 @@ public sealed class ShortcutMap(ScreenAnalyzer analyzer, double threshold = Shor
     // The search zones (see ZonesFor), measured at 1920x1080.
     private static readonly (int X, int Y, int W, int H, PhoneAnchor Anchor) Ring = (0, 540, 560, 540, PhoneAnchor.Left);
     private static readonly (int X, int Y, int W, int H, PhoneAnchor Anchor) RightCluster = (1280, 480, 640, 600, PhoneAnchor.Right);
-    private static readonly (int X, int Y, int W, int H, PhoneAnchor Anchor) Hotbar = (630, 975, 660, 105, PhoneAnchor.Centre);
+    // The hotbar grows with the game's interface scale: at 1.10 (the Settings visit's default) its first slot starts at
+    // x 625, y 983 (MuMu 2026-10-30) - the 1.00 box (630, 975, 660, 105) cut 5 px off the icon, and the attack icon
+    // scored 0.83 instead of 0.99, under the 0.85 gate: the held skill never went down. Room for 1.00-1.20.
+    private static readonly (int X, int Y, int W, int H, PhoneAnchor Anchor) Hotbar = (560, 935, 800, 145, PhoneAnchor.Centre);
     // The ☰ keeps its distance from the right edge, not from the middle: 734 px from the right at 1920x1080 (MuMu) and
     // 815 px = 734 x 1200/1080 at 2608x1200 (Xiaomi 17 Pro Max, 2026-10-30) - centred it would be at x 1555 there, it is at 1794.
     private static readonly (int X, int Y, int W, int H, PhoneAnchor Anchor) TopStrip = (600, 0, 900, 110, PhoneAnchor.Right);
 
     private static readonly string[] AllTemplates =
-        ActionTemplates.Values.Concat(SkillTemplates.Values).Append(JoystickTemplate).Append(MenuTemplate).ToArray();
+        ActionTemplates.Values.Concat(SkillTemplates.Values).Append(JoystickTemplate).Append(MenuTemplate).Append(AutohuntOnTemplate).ToArray();
+
+    /// <summary>
+    /// HUNT while the autohunt runs: the yellow swords turn into a "+" in a yellow glow (user, 2026-10-30: "when autohunt
+    /// button (yellow blades) it changes to a cross button"; cropped from MuMu at 1920x1080, interface scale 1.10). The
+    /// same button: a tap turns the autohunt off.
+    /// </summary>
+    public const string AutohuntOnTemplate = "phone_autohunt_on";
+
+    /// <summary>The HUNT button's two pictures are looked at again this often, so <see cref="AutohuntOn"/> follows the game.</summary>
+    public const int AutohuntRecheckMs = 1000;
+
+    /// <summary>
+    /// After a tap of HUNT the state is unknown until a search this much later: the captured frame lags the game, and a
+    /// search of a frame from before the tap would read the old state (and a second tap would undo the first).
+    /// </summary>
+    public const int AutohuntSettleMs = 1200;
+
+    /// <summary>
+    /// Of the ring round a "+" hit (1.6-2.6 half-widths from its centre; the glow sits at ~2.2), at least this share must be
+    /// yellow: the autohunt-on glow. Measured 2026-10-30 on 13 MuMu frames (1920x1080): 0.23-0.37 round the "+" while the
+    /// autohunt ran, 0.00-0.04 round the yellow swords (off) and the white AUTO BUFF swords.
+    /// </summary>
+    public const double OnGlowMin = 0.12;
 
     /// <summary>
     /// HUNT and AUTO BUFF are the same crossed swords, HUNT drawn yellow, AUTO BUFF white (user, 2026-10-30); in grey the
@@ -106,14 +132,21 @@ public sealed class ShortcutMap(ScreenAnalyzer analyzer, double threshold = Shor
     private readonly HashSet<string> _stale = new(StringComparer.OrdinalIgnoreCase);
     private bool _allStale = true;
 
+    // The HUNT button's pictures: when both were last searched, and when it was last tapped (clock ms; null = never).
+    private long? _autohuntSearchedAt;
+    private long? _autohuntPressedAt;
+
     public (int Width, int Height) FrameSize { get; private set; }
 
     /// <summary>A copy of the best hit of every template found so far (for logs and the probe).</summary>
     public IReadOnlyDictionary<string, TemplateMatch> Matches =>
         new Dictionary<string, TemplateMatch>(_found, StringComparer.OrdinalIgnoreCase);
 
-    /// <summary>How many template searches have run (diagnostics; each one is a full scale search).</summary>
+    /// <summary>How many template searches have run (diagnostics; each one is a full scale search), without HUNT's state re-reads.</summary>
     public int SearchCount { get; private set; }
+
+    /// <summary>How many times HUNT's two pictures were looked at again for <see cref="AutohuntOn"/> (every <see cref="AutohuntRecheckMs"/>).</summary>
+    public int HuntRereads { get; private set; }
 
     /// <summary>
     /// Searches everything on a new frame size or after <see cref="Invalidate()"/>; otherwise only the shortcuts
@@ -131,24 +164,60 @@ public sealed class ShortcutMap(ScreenAnalyzer analyzer, double threshold = Shor
             _absentSince.Clear();
             _stale.Clear();
             _allStale = false;
+            _autohuntSearchedAt = _clock();
             foreach (string template in AllTemplates)
                 Search(frame, template);
             return;
         }
 
         long now = _clock();
+        // HUNT's two pictures follow the game's state (AutohuntOn): every AutohuntRecheckMs, and once more as soon as a tap
+        // has settled.
+        bool huntDue = _autohuntSearchedAt is not long searched
+                       || now - searched >= AutohuntRecheckMs
+                       || (_autohuntPressedAt is long pressed && searched < pressed + AutohuntSettleMs && now >= pressed + AutohuntSettleMs);
+        if (huntDue)
+            _autohuntSearchedAt = now;
         foreach (string template in AllTemplates)
         {
             // An absent attack icon is not looked for on the cool-down by itself: only a skill press that found none
             // asks again (MissedAttackSkill) - seven full searches every 10 s would cost the loop for nothing.
+            // HUNT's pictures come back on their own schedule (huntDue), not on the absent cool-down.
             bool due = _stale.Contains(template)
-                       || (!IsAttack(template) && _absentSince.TryGetValue(template, out long since) && now - since >= AbsentRetryMs);
+                       || (!IsAttack(template) && !IsHuntPicture(template) && _absentSince.TryGetValue(template, out long since) && now - since >= AbsentRetryMs);
             if (due)
                 Search(frame, template);
+            else if (huntDue && IsHuntPicture(template))
+                Search(frame, template, reread: true);
         }
 
         _stale.Clear();
     }
+
+    /// <summary>
+    /// Whether the autohunt runs, from the HUNT button (the phone's only way to tell; the desktop's J is a blind toggle):
+    /// the yellow swords = off, the "+" in a yellow glow = on. Null = cannot tell: neither (or both) on the last search,
+    /// not searched yet, or a tap of it not settled yet (<see cref="AutohuntSettleMs"/>).
+    /// </summary>
+    public bool? AutohuntOn
+    {
+        get
+        {
+            if (_autohuntSearchedAt is not long searched)
+                return null;
+            if (_autohuntPressedAt is long pressed && searched < pressed + AutohuntSettleMs)
+                return null;
+            bool off = _found.ContainsKey(AutohuntTemplate);
+            bool on = _found.ContainsKey(AutohuntOnTemplate);
+            return on == off ? null : on;
+        }
+    }
+
+    /// <summary>HUNT was tapped: its state is unknown until a search <see cref="AutohuntSettleMs"/> later.</summary>
+    public void AutohuntPressed() => _autohuntPressedAt = _clock();
+
+    private static bool IsHuntPicture(string template) =>
+        template.Equals(AutohuntTemplate, StringComparison.OrdinalIgnoreCase) || template.Equals(AutohuntOnTemplate, StringComparison.OrdinalIgnoreCase);
 
     /// <summary>
     /// Where a template is looked for on a <paramref name="width"/> x <paramref name="height"/> frame. The picker's
@@ -162,7 +231,7 @@ public sealed class ShortcutMap(ScreenAnalyzer analyzer, double threshold = Shor
         (int X, int Y, int W, int H, PhoneAnchor Anchor)[] zones = template.ToLowerInvariant() switch
         {
             MenuTemplate => [TopStrip],
-            JoystickTemplate or "phone_teleportscroll" or "phone_pickup" or "phone_autohunt" => [Ring],
+            JoystickTemplate or "phone_teleportscroll" or "phone_pickup" or AutohuntTemplate or AutohuntOnTemplate => [Ring],
             "phone_autobuff" => [RightCluster, Ring],
             "phone_runskill" => [RightCluster, Hotbar],
             "phone_shura" => [Hotbar, RightCluster],
@@ -176,8 +245,11 @@ public sealed class ShortcutMap(ScreenAnalyzer analyzer, double threshold = Shor
     public static PixelRect RingZone(int width, int height) =>
         PhoneLayout.ToPixels(Ring.X, Ring.Y, Ring.W, Ring.H, Ring.Anchor, width, height);
 
+    /// <summary>The action's button; HUNT in either picture (yellow swords or the "+" while the autohunt runs).</summary>
     public PixelRect? Find(GameAction action) =>
-        ActionTemplates.TryGetValue(action, out string? template) ? Box(template) : null;
+        action == GameAction.ToggleAutohunt
+            ? Box(AutohuntTemplate) ?? Box(AutohuntOnTemplate)
+            : ActionTemplates.TryGetValue(action, out string? template) ? Box(template) : null;
 
     public PixelRect? Skill(string skill) =>
         SkillTemplates.TryGetValue(skill, out string? template) ? Box(template) : null;
@@ -226,6 +298,8 @@ public sealed class ShortcutMap(ScreenAnalyzer analyzer, double threshold = Shor
     {
         if (ActionTemplates.TryGetValue(action, out string? template))
             Forget(template);
+        if (action == GameAction.ToggleAutohunt)
+            Forget(AutohuntOnTemplate);
     }
 
     public void InvalidateSkill(string skill)
@@ -243,6 +317,8 @@ public sealed class ShortcutMap(ScreenAnalyzer analyzer, double threshold = Shor
     {
         if (ActionTemplates.TryGetValue(action, out string? template))
             ForgetUnlessAbsent(template);
+        if (action == GameAction.ToggleAutohunt)
+            ForgetUnlessAbsent(AutohuntOnTemplate);
     }
 
     /// <inheritdoc cref="Missed(GameAction)"/>
@@ -269,7 +345,7 @@ public sealed class ShortcutMap(ScreenAnalyzer analyzer, double threshold = Shor
     }
 
     private static bool NeedsColour(string template) =>
-        template.Equals(AutohuntTemplate, StringComparison.OrdinalIgnoreCase) || template.Equals(AutoBuffTemplate, StringComparison.OrdinalIgnoreCase);
+        IsHuntPicture(template) || template.Equals(AutoBuffTemplate, StringComparison.OrdinalIgnoreCase);
 
     /// <summary>
     /// HUNT must be yellow and AUTO BUFF must not (<see cref="YellowSwordsMin"/>); every other template passes. A hit
@@ -278,6 +354,10 @@ public sealed class ShortcutMap(ScreenAnalyzer analyzer, double threshold = Shor
     /// </summary>
     private static bool ColourFits(Mat frame, string template, PixelRect box)
     {
+        // The "+" of a running autohunt sits in a yellow glow; a plain "+" (an empty slot, the ring editor) does not.
+        if (template.Equals(AutohuntOnTemplate, StringComparison.OrdinalIgnoreCase))
+            return GlowFraction(frame, box) >= OnGlowMin;
+
         bool hunt = template.Equals(AutohuntTemplate, StringComparison.OrdinalIgnoreCase);
         if (!hunt && !template.Equals(AutoBuffTemplate, StringComparison.OrdinalIgnoreCase))
             return true;
@@ -329,18 +409,66 @@ public sealed class ShortcutMap(ScreenAnalyzer analyzer, double threshold = Shor
         return CvInvoke.CountNonZero(yellow) / (double)brightCount;
     }
 
+    /// <summary>
+    /// The share of yellow / gold pixels (H 8-40, S &gt;= 90, V &gt;= 130 on OpenCV's 0-180 hue) in the ring 1.6-2.6 half-widths
+    /// from <paramref name="box"/>'s centre, inside the frame: the glow round HUNT's "+" while the autohunt runs. 0 when
+    /// no pixel of the ring is inside the frame.
+    /// </summary>
+    public static double GlowFraction(Mat frame, PixelRect box)
+    {
+        double half = Math.Max(box.Width, box.Height) / 2.0;
+        int cx = box.CenterX, cy = box.CenterY;
+        int reach = (int)Math.Ceiling(half * 2.6);
+        var area = PixelRect.FromBounds(cx - reach, cy - reach, cx + reach + 1, cy + reach + 1).Clamp(frame.Width, frame.Height);
+        if (area.Width < 2 || area.Height < 2)
+            return 0;
+
+        using var crop = new Mat(frame, new Rectangle(area.X, area.Y, area.Width, area.Height));
+        using var bgr = new Mat();
+        if (crop.NumberOfChannels == 4)
+            CvInvoke.CvtColor(crop, bgr, ColorConversion.Bgra2Bgr);
+        else
+            crop.CopyTo(bgr);
+        using var hsv = new Mat();
+        CvInvoke.CvtColor(bgr, hsv, ColorConversion.Bgr2Hsv);
+        using var yellow = new Mat();
+        CvHelpers.InRange(hsv, new MCvScalar(8, 90, 130), new MCvScalar(40, 255, 255), yellow);
+        byte[] mask = CvHelpers.Bytes(yellow);
+
+        double inner = half * 1.6, outer = half * 2.6;
+        int ring = 0, gold = 0;
+        for (int y = 0; y < area.Height; y++)
+        {
+            for (int x = 0; x < area.Width; x++)
+            {
+                double dx = area.X + x - cx, dy = area.Y + y - cy;
+                double d = Math.Sqrt(dx * dx + dy * dy);
+                if (d < inner || d > outer)
+                    continue;
+                ring++;
+                if (mask[y * area.Width + x] != 0)
+                    gold++;
+            }
+        }
+
+        return ring == 0 ? 0 : gold / (double)ring;
+    }
+
     private static bool IsAttack(string template) => template.StartsWith("phone_attack", StringComparison.OrdinalIgnoreCase);
 
     private PixelRect? Box(string template) => _found.TryGetValue(template, out var m) ? m.Bounds : null;
 
-    private void Search(Mat frame, string template)
+    private void Search(Mat frame, string template, bool reread = false)
     {
         _found.Remove(template);
         _absentSince.Remove(template);
         if (analyzer.Library.Get(template) == null)
             return; // no crop yet: never found, never searched
 
-        SearchCount++;
+        if (reread)
+            HuntRereads++;
+        else
+            SearchCount++;
         TemplateMatch? best = null;
         var zones = ZonesFor(template, frame.Width, frame.Height);
         for (int i = 0; i < zones.Count; i++)

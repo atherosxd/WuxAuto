@@ -66,6 +66,13 @@ public interface IGameControls
     /// </summary>
     bool SkillStillHeld(string skill) => true;
 
+    /// <summary>
+    /// Whether the game's autohunt runs, when the controls can see it: the phone's HUNT button shows yellow swords while it
+    /// is off and a "+" in a yellow glow while it runs (user, 2026-10-30). Null = cannot tell; default null (the desktop's
+    /// J is a blind toggle, read through the combat log).
+    /// </summary>
+    bool? AutohuntOn => null;
+
     /// <summary>Walks to the point; <paramref name="forceWalk"/> walks even onto a monster (desktop: Ctrl + click) instead of attacking it.</summary>
     bool WalkTo(int x, int y, bool forceWalk);
 

@@ -84,9 +84,18 @@ public sealed class TouchControls(AppSettings settings, ITouchInput touch, IShor
 
     /// <summary>Taps the action's shortcut icon; the inventory, settings and autohunt settings live behind ☰, so only the menu is tapped (the entry is the pilot's job).</summary>
     public bool Press(GameAction action) =>
-        Send(() => IsMenuAction(action)
-            ? TapCentre(shortcuts.Menu, shortcuts.InvalidateMenu)
-            : TapCentre(shortcuts.Find(action), () => shortcuts.Missed(action)));
+        Send(() =>
+        {
+            if (IsMenuAction(action))
+                return TapCentre(shortcuts.Menu, shortcuts.InvalidateMenu);
+            bool tapped = TapCentre(shortcuts.Find(action), () => shortcuts.Missed(action));
+            if (tapped && action == GameAction.ToggleAutohunt)
+                shortcuts.AutohuntPressed();
+            return tapped;
+        });
+
+    /// <inheritdoc/>
+    public bool? AutohuntOn => shortcuts.AutohuntOn;
 
     /// <summary>Holds the action's shortcut icon; actions behind ☰ cannot be held.</summary>
     public bool ActionDown(GameAction action) =>

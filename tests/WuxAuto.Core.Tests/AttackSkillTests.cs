@@ -199,7 +199,7 @@ public class AttackSkillTests : AppPathsScope
         {
             var zones = ShortcutMap.ZonesFor(t, 1920, 1080);
             Assert.Equal(2, zones.Count);
-            Assert.Contains(zones, z => z.Y >= 960 && z.X > 500 && z.Right < 1400); // the hotbar
+            Assert.Contains(zones, z => z.Y >= 930 && z.X > 500 && z.Right < 1400); // the hotbar (room for interface scale 1.00-1.20)
             Assert.Contains(zones, z => z.X >= 1200 && z.Right == 1920);           // the cluster round the sword
         }
 

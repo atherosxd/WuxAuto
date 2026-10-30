@@ -284,12 +284,39 @@ the 30-text-height band (label 14 px high, band end 1199, chevron at 1200) - the
 `ReadSettingRowAsync(..., chevronReach: 10)` (10 heights past the value); the desktop keeps the 30-height band (its
 same 1920x1080 cut-off is still open, §4.1). A menu button that is not found ends the visit after 10 tries.
 Review round (same day): HUNT is **not** a required shortcut (used where found, never added) and the town autohunt-off
-check does not run on the phone (its log read is unverified there); a hit whose colour cannot be told (dark middle) is
+check does not run on the phone (its log read is unverified there; since M5 it does while HUNT shows the "+", below); a hit whose colour cannot be told (dark middle) is
 neither HUNT nor AUTO BUFF; the buff check counts a miss only when timers that read did not go up **and** the first row
 of buff icons (0,125 340x55 at 1080) did not change - then one more buff through `TryLodBuff` (Shura + 400 ms mid-fight),
 else it only logs; no check in a dry run. The shortcut check's two misses are >= 1.5 s apart, and 20 looks without the
 zone title stop the check ("the game screen (zone title) was not seen") instead of deciding. A tap during a hold does not
 press the old hold again after a Halt / ReleaseAll / another hold (generation counter).
+
+**Phone Laby, MuMu 1920x1080 live run (2026-10-30, M5):** stage 1 picked and the boss seen, then the pilot went silent:
+(1) **attack icon cut off** - at interface scale 1.10 the hotbar's first slot spans 625-687 x 983-1045 and the old hotbar
+search box (630, 975, 660, 105) cut it: the icon scored 0.83 (< 0.85), the held press before J was refused every tick
+without a log line, so the autohunt never went on and the gate banner was never looked for. Box now (560, 935, 800, 145)
+(room for scale 1.00-1.20; the icon reads 0.99 on all 9 game frames of the run). A refused skill press on the phone gives
+up after `PhoneHoldTries` 10 (~3 s; `PhoneSkillGivenUp`, warning + `noskill_s<N>`): stages 1-4 turn the autohunt on
+without the hold, stage 5 counts the press as made. (2) **HUNT shows the state** (user: "when autohunt button (yellow
+blades) it changes to a cross button"): yellow swords = off, a "+" in a yellow glow = on (`phone_autohunt_on`, 34x34;
+the glow = `ShortcutMap.GlowFraction` in the ring 1.6-2.6 half-widths out >= `OnGlowMin` 0.12 - 13 run frames: 0.23-0.37
+on, <= 0.04 off, so a plain "+" is not HUNT). `ShortcutMap.AutohuntOn` re-reads both pictures every `AutohuntRecheckMs`
+1 s (`HuntRereads`, not in `SearchCount`) and is null for `AutohuntSettleMs` 1.2 s after a tap (the capture lags);
+`IGameControls.AutohuntOn` (desktop: always null). Every J of the pilot looks first and skips a tap that would undo the
+wanted state; `EnsureAutohuntAsync` reads the button instead of the combat log; the town autohunt-off check runs on the
+phone only while the button shows the "+" (the run's town frames had it on); a Start inside the Labyrinth takes the
+autohunt for on only while the button does not show the yellow swords (a resume with it off took 14 min over a stage 1
+boss at 1 %). (3) **Fast north turn** (user: "it is too
+slow to rotate", 27 taps + 4 fine ~ 28 s): `ScreenAnalyzer.BeamAngle` turns the box round the searchlight in 15 degree
+steps and matches the straight template in each (a turned, padded template scored a lined-up beam 0.60 - the minimap's
+marker under it counted as black); `PhoneAimBeam` then drags `20 + 4.8 x degrees` px (<= 100 degrees, <= 3 turns, each
+re-read) to leave the beam 15 degrees clockwise of the heading, and the usual taps finish. Offline: 0 degrees on a
+lined-up run frame, exactly 90 / 180 / 270 on its turned copies. (4) **Gate timers** (Wuxen wiki, user): the first gate
+opens 30 s after arriving (alone or a full party), each stays open 60 s, the boss comes 5 s after it closes, the next gate
+opens 5 s after a kill, and after the last boss there are 40 s to loot. Phone: no banner read 3 s past the gate's timer
+(`_gateDueAt`) -> the map anyway, after checking the old boss is gone. Seen live the same night (MuMu, stages 1-3): the
+held press on the hotbar icon, J, the centre-click selection and the gate banner at every stage; a Bohai war dialog
+cancelled mid-fight. Not yet seen live: the resume read, the long north turn, the gate timer.
 
 ---
 

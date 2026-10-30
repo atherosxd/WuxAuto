@@ -57,4 +57,13 @@ public interface IShortcutSource
 
     /// <summary>A skill press found no button (<see cref="AttackSkill"/> null). Default: <see cref="MissedSkill"/>.</summary>
     void MissedAttackSkill(string skill) => MissedSkill(skill);
+
+    /// <summary>
+    /// Whether the autohunt runs, read from the HUNT button's picture (<see cref="ShortcutMap.AutohuntOn"/>); null = cannot
+    /// tell. Default: null (a source that only knows positions).
+    /// </summary>
+    bool? AutohuntOn => null;
+
+    /// <summary>HUNT was tapped (<see cref="ShortcutMap.AutohuntPressed"/>). Default: nothing.</summary>
+    void AutohuntPressed() { }
 }

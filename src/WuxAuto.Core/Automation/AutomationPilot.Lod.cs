@@ -366,6 +366,7 @@ public sealed partial class AutomationPilot
         _earlyNorth = false;
         _compassAnchored = false;
         _bestFlashlightScore = 0;
+        _northAims = 0;
         _bestFlashlightStep = 0;
         _tapsSinceBest.Clear();
         _refineDir = 0;

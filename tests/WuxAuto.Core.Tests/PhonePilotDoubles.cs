@@ -89,6 +89,21 @@ sealed class ScriptedShortcuts : IShortcutSource
     public void InvalidateSkill(string skill) => Invalidated.Add($"skill:{skill}");
     public void InvalidateJoystick() => Invalidated.Add("joystick");
     public void InvalidateMenu() => Invalidated.Add("menu");
+
+    /// <summary>What the HUNT button shows (null = cannot tell); <see cref="OnAutohuntPressed"/> may flip it.</summary>
+    public bool? AutohuntOn { get; set; }
+
+    /// <summary>HUNT taps the controls reported (<see cref="IShortcutSource.AutohuntPressed"/>).</summary>
+    public int AutohuntPresses { get; private set; }
+
+    /// <summary>Runs on every reported HUNT tap (a test can turn the button's picture over).</summary>
+    public Action? OnAutohuntPressed { get; set; }
+
+    public void AutohuntPressed()
+    {
+        AutohuntPresses++;
+        OnAutohuntPressed?.Invoke();
+    }
 }
 
 /// <summary>

@@ -977,6 +977,56 @@ public sealed class ScreenAnalyzer : IDisposable
         return blobs;
     }
 
+    /// <summary>
+    /// Phone: which way the searchlight points, in degrees clockwise from the way <paramref name="templateName"/> points
+    /// (0 = lined up, 90 = a quarter turn clockwise of it). The box round <paramref name="roi"/> is turned back in
+    /// <paramref name="stepDeg"/> steps and the straight template matched in each at <paramref name="scale"/> (the scale it
+    /// matched at); the turn that scores best is the beam's angle. Turning the picture rather than the template keeps the
+    /// minimap's own marker under the beam as it is (a padded, turned template scored it as black - 0.60 for a lined-up
+    /// beam, MuMu 1920x1080). Null when nothing could be scored.
+    /// </summary>
+    public (int AngleCw, double Score)? BeamAngle(Mat frame, string templateName, PixelRect roi, double scale, int stepDeg = 15)
+    {
+        if (Library.Get(templateName) is not { } source)
+            return null;
+
+        // Room round the box for the turned picture: half the template's diagonal at this scale.
+        int margin = (int)Math.Ceiling(Math.Sqrt((double)source.Width * source.Width + (double)source.Height * source.Height) * scale / 2);
+        var area = PixelRect.FromBounds(roi.X - margin, roi.Y - margin, roi.Right + margin, roi.Bottom + margin).Clamp(frame.Width, frame.Height);
+        if (area.Width < 8 || area.Height < 8)
+            return null;
+
+        // Grey once (the matcher works in grey anyway): a quarter of the work per turned copy.
+        using var gray = TemplateMatcher.ToGray(frame, area);
+        int side = (int)Math.Ceiling(Math.Sqrt((double)area.Width * area.Width + (double)area.Height * area.Height)) + 2;
+        using var square = new Mat();
+        CvInvoke.CopyMakeBorder(gray, square, (side - area.Height) / 2, side - area.Height - (side - area.Height) / 2,
+            (side - area.Width) / 2, side - area.Width - (side - area.Width) / 2, BorderType.Constant, new MCvScalar(0));
+        var whole = new PixelRect(0, 0, side, side);
+        var centre = new PointF(side / 2f, side / 2f);
+
+        int step = Math.Clamp(stepDeg, 5, 45);
+        double best = double.MinValue;
+        int bestAngle = 0;
+        using var rotation = new Mat();
+        using var turned = new Mat();
+        for (int angle = 0; angle < 360; angle += step)
+        {
+            // OpenCV turns anticlockwise for a positive angle: a beam that points angle degrees clockwise stands upright.
+            CvInvoke.GetRotationMatrix2D(centre, angle, 1.0, rotation);
+            CvInvoke.WarpAffine(square, turned, rotation, new Size(side, side), Inter.Linear, Warp.Default,
+                BorderType.Constant, new MCvScalar(0));
+            var hit = Matcher.FindBest(turned, templateName, whole, scale, 0.0);
+            if (hit != null && hit.Score > best)
+            {
+                best = hit.Score;
+                bestAngle = angle;
+            }
+        }
+
+        return best > double.MinValue ? (bestAngle, best) : null;
+    }
+
     public CompassReading? ReadCompass(Mat frame)
     {
         double scale = ScaleFor(frame.Height);

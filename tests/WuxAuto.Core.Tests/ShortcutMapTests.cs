@@ -497,7 +497,7 @@ public class ShortcutMapTests : AppPathsScope
         {
             map.Refresh(hud);
             int expected = ShortcutMap.ActionTemplates.Values.Concat(ShortcutMap.SkillTemplates.Values)
-                .Append(ShortcutMap.JoystickTemplate).Append(ShortcutMap.MenuTemplate)
+                .Append(ShortcutMap.JoystickTemplate).Append(ShortcutMap.MenuTemplate).Append(ShortcutMap.AutohuntOnTemplate)
                 .Count(t => analyzer.Library.Get(t) != null);
             Assert.Equal(expected, map.SearchCount);
 
@@ -656,6 +656,127 @@ public class ShortcutMapTests : AppPathsScope
         PhoneRegions.Apply(measured, 1920, 1080);
 
         Assert.Equal(RegionsJson(measured), RegionsJson(unknown));
+    }
+
+    // HUNT at 1920x1080, interface scale 1.10 (MuMu 2026-10-30): the "+" crop's top-left, the glow round it.
+    const int PlusX = 151, PlusY = 968, GlowCx = 168, GlowCy = 985, GlowRadius = 37;
+
+    static Mat HuntFrame(bool plus, bool glow, bool swords)
+    {
+        var frame = PhoneFrames.Grey();
+        if (plus)
+            PhoneFrames.Paste(frame, ShortcutMap.AutohuntOnTemplate, PlusX, PlusY);
+        if (glow)
+            CvInvoke.Circle(frame, new Point(GlowCx, GlowCy), GlowRadius, new MCvScalar(110, 200, 230, 255), 4); // gold (BGR)
+        if (swords)
+            PhoneFrames.Paste(frame, ShortcutMap.AutohuntTemplate, PlusX, PlusY);
+        return frame;
+    }
+
+    [Fact]
+    public void Hunt_PlusInAYellowGlow_ReadsOn_YellowSwordsReadOff()
+    {
+        using var analyzer = NewAnalyzer();
+
+        var on = new ShortcutMap(analyzer);
+        using (var frame = HuntFrame(plus: true, glow: true, swords: false))
+            on.Refresh(frame);
+        Assert.True(on.AutohuntOn);
+        var box = Assert.NotNull(on.Find(GameAction.ToggleAutohunt));
+        Assert.InRange(box.CenterX, GlowCx - 4, GlowCx + 4);
+        Assert.InRange(box.CenterY, GlowCy - 4, GlowCy + 4);
+
+        var off = new ShortcutMap(analyzer);
+        using (var frame = HuntFrame(plus: false, glow: false, swords: true))
+            off.Refresh(frame);
+        Assert.False(off.AutohuntOn);
+        Assert.NotNull(off.Find(GameAction.ToggleAutohunt));
+    }
+
+    [Fact]
+    public void Hunt_PlusWithoutTheGlow_IsNotHunt()
+    {
+        // A plain "+" (an empty ring slot, the ring editor) is not the running autohunt's button.
+        using var analyzer = NewAnalyzer();
+        var map = new ShortcutMap(analyzer);
+        using var frame = HuntFrame(plus: true, glow: false, swords: false);
+        map.Refresh(frame);
+
+        Assert.Null(map.AutohuntOn);
+        Assert.Null(map.Find(GameAction.ToggleAutohunt));
+    }
+
+    [Fact]
+    public void Hunt_AfterATap_UnknownUntilASearchHasSettled_ThenFollowsTheButton()
+    {
+        using var analyzer = NewAnalyzer();
+        long now = 1_000_000;
+        var map = new ShortcutMap(analyzer, clock: () => now);
+        using var onFrame = HuntFrame(plus: true, glow: true, swords: false);
+        using var offFrame = HuntFrame(plus: false, glow: false, swords: true);
+        map.Refresh(onFrame);
+        Assert.True(map.AutohuntOn);
+
+        map.AutohuntPressed();
+        Assert.Null(map.AutohuntOn);
+
+        // The capture still shows the old picture shortly after the tap: a search before the tap has settled (the
+        // one-second re-read at 1.1 s) is not trusted.
+        now += 300;
+        map.Refresh(onFrame);
+        now += 800;
+        map.Refresh(onFrame);
+        Assert.Null(map.AutohuntOn);
+
+        // The first search once the tap has settled reads the button again.
+        now += ShortcutMap.AutohuntSettleMs;
+        map.Refresh(offFrame);
+        Assert.False(map.AutohuntOn);
+    }
+
+    [Fact]
+    public void Hunt_ReReadEverySecond_WithoutBeingInvalidated()
+    {
+        using var analyzer = NewAnalyzer();
+        long now = 1_000_000;
+        var map = new ShortcutMap(analyzer, clock: () => now);
+        using var onFrame = HuntFrame(plus: true, glow: true, swords: false);
+        using var offFrame = HuntFrame(plus: false, glow: false, swords: true);
+        map.Refresh(offFrame);
+        Assert.False(map.AutohuntOn);
+
+        // The player turns the autohunt on by hand: not read within the second, read after it.
+        now += 200;
+        map.Refresh(onFrame);
+        Assert.False(map.AutohuntOn);
+        now += ShortcutMap.AutohuntRecheckMs;
+        map.Refresh(onFrame);
+        Assert.True(map.AutohuntOn);
+    }
+
+    [Fact]
+    public void AttackIcon_OnTheHotbarAtInterfaceScale110_IsFound()
+    {
+        // Live 2026-10-30 (MuMu 1920x1080, interface scale 1.10): the first hotbar slot's icon spans 625-687 x 983-1045;
+        // the 1.00 hotbar box started at x 630 and cut it, the icon scored 0.83 (< 0.85) and no skill was ever held.
+        using var analyzer = NewAnalyzer();
+        var map = new ShortcutMap(analyzer);
+        using var frame = PhoneFrames.Grey();
+        using (var crop = CvInvoke.Imread(Path.Combine(PhoneAssets, "phone_attack2.png"), ImreadModes.ColorBgr))
+        using (var scaled = new Mat())
+        using (var bgra = new Mat())
+        {
+            CvInvoke.Resize(crop, scaled, new Size(62, 62), 0, 0, Inter.Area);
+            CvInvoke.CvtColor(scaled, bgra, ColorConversion.Bgr2Bgra);
+            using var target = new Mat(frame, new Rectangle(625, 983, 62, 62));
+            bgra.CopyTo(target);
+        }
+
+        map.Refresh(frame);
+
+        var icon = Assert.NotNull(map.AttackSkill("1"));
+        Assert.InRange(icon.CenterX, 650, 662);
+        Assert.InRange(icon.CenterY, 1008, 1020);
     }
 
     static void AssertCovers(NormRect region, int w, int h, int left, int top, int right, int bottom)
