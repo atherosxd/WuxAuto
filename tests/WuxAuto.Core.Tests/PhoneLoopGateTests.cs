@@ -154,6 +154,16 @@ public class PhoneLoopGateTests
     public void WorldPhases_NeedTheTitle(PilotPhase phase) =>
         Assert.False(PhoneLoopGate.RunsWithoutTitle(phase));
 
+    [Theory]
+    [InlineData(PilotPhase.ClickMap, true)]
+    [InlineData(PilotPhase.ReadStage, true)]
+    [InlineData(PilotPhase.AdvanceStage, true)]
+    [InlineData(PilotPhase.WaitBoss, false)]
+    [InlineData(PilotPhase.WatchBoss, false)]
+    [InlineData(PilotPhase.FindDestination, false)]
+    public void MapPick_IsTheMapsThreePhases(PilotPhase phase, bool mapPick) =>
+        Assert.Equal(mapPick, PhoneLoopGate.IsMapPick(phase));
+
     [Fact]
     public void TitleCheck_DueOncePerInterval()
     {

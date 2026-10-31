@@ -680,7 +680,11 @@ public sealed partial class AutomationPilot
         bool watchWarDialog = IsWar && _phase is (PilotPhase.WarWait or PilotPhase.WarRemember) && !_warMonsterConfirmed;
         bool warBehind = IsWar && !_controls.IsGameInFront;
         bool afkWatch = BlossomAfkWatch;
-        if ((_settings.Sequence.AutoReconnect || cancelDialogs || watchWarDialog || afkWatch) && !warBehind && _phase != PilotPhase.Reconnect && now >= _nextDisconnectCheckAt)
+        // Phone: not during the map pick - the stage gate stays open 60 s only, and a whole-screen read costs ~0.5 s (more
+        // on a loaded MuMu, where reads timed out after 5 s). The map is shut again within seconds; the check resumes then.
+        bool phoneMapPick = Profile == PlatformProfile.Phone && PhoneLoopGate.IsMapPick(_phase);
+        if ((_settings.Sequence.AutoReconnect || cancelDialogs || watchWarDialog || afkWatch) && !warBehind && !phoneMapPick
+            && _phase != PilotPhase.Reconnect && now >= _nextDisconnectCheckAt)
         {
             _nextDisconnectCheckAt = now + 5000;
             try
@@ -3820,7 +3824,9 @@ public sealed partial class AutomationPilot
         // Regions.MapBossList. Not in Auto War: that wide band also holds the game world, where the
         // cave's monsters (and a targeted player) show their name tags - a click there walks the
         // character, and a player's name would pass Start's check.
-        if (hit == null && _attempts == 0 && _mapScrolls == 0 && !IsWar)
+        // Not on the phone: its map window covers the whole screen and the list region is fixed - the wide read (two thirds
+        // of the screen at x1.5) only costs time there.
+        if (hit == null && _attempts == 0 && _mapScrolls == 0 && !IsWar && Profile != PlatformProfile.Phone)
         {
             var wide = new NormRect(0.32, 0.08, 0.68, 0.86).ToPixels(frame.Width, frame.Height);
             var (wideHit, _, _) = await _analyzer.FindTextAsync(frame, wide, expected);
@@ -6170,14 +6176,14 @@ public sealed partial class AutomationPilot
     /// </summary>
     private async Task<string?> ReadZoneTitleAsync(Mat frame)
     {
-        string? title = await ReadMinimapTitleAsync(frame);
-        if (title != null || Profile != PlatformProfile.Phone
-            || _phase is not (PilotPhase.ClickMap or PilotPhase.ReadStage or PilotPhase.AdvanceStage))
-            return title;
+        if (Profile != PlatformProfile.Phone || !PhoneLoopGate.IsMapPick(_phase))
+            return await ReadMinimapTitleAsync(frame);
 
+        // The map window's title first (one small read): while the map is open the minimap is hidden under it.
         var roi = PhoneMapTitle.ToPixels(frame.Width, frame.Height);
         var lines = (await _analyzer.Ocr.RecognizeAsync(frame, roi, 2.0)).Select(w => w.LineText.Trim()).Distinct().ToList();
-        return lines.FirstOrDefault(l => ZoneMatches(l, Destination)) ?? lines.FirstOrDefault(l => TownIn(l) != null);
+        return lines.FirstOrDefault(l => ZoneMatches(l, Destination)) ?? lines.FirstOrDefault(l => TownIn(l) != null)
+               ?? await ReadMinimapTitleAsync(frame);
     }
 
     /// <summary>

@@ -176,6 +176,13 @@ public sealed class PhoneLoopGate
         or PilotPhase.FindDestination or PilotPhase.RegularWarOn or PilotPhase.Done or PilotPhase.Failed
         or PilotPhase.ClickMap or PilotPhase.ReadStage or PilotPhase.AdvanceStage;
 
+    /// <summary>
+    /// The Labyrinth's map pick: the map window covers the whole phone screen, minimap included, and the stage gate is open
+    /// 60 s only - the engine skips its minimap title read then (it cannot read and costs ~0.1-0.5 s a second), and the
+    /// pilot its 5 s whole-screen read.
+    /// </summary>
+    public static bool IsMapPick(PilotPhase phase) => phase is PilotPhase.ClickMap or PilotPhase.ReadStage or PilotPhase.AdvanceStage;
+
     /// <summary>True when one of the OCR lines of the minimap crop is a zone title ("[Piercing City]").</summary>
     public static bool TitleReads(IEnumerable<string> lines) => lines.Select(WarText.PhoneTitleLine).Any(WarText.IsZoneTitleLine);
 

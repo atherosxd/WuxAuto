@@ -356,7 +356,13 @@ an empty read paged the list away from a name that was on screen (Sanctified Uni
 Wielder"), and after the name tap the re-reads took ~30 s. Phone now: a list read with fewer than 3 rows is read again
 (<= `PhoneEmptyListReads` 5) instead of paging, and the row's '>' is tapped at once (`ClickRowChevronFallback`: the light
 glyph right of the name, else the '>' column) - no name tap first. Pinned by `PhoneMapPickTests` (the fake OCR's
-`SceneFor` reads the list region empty three times; without the retry it pages). **Keys:** the pilot's restarts teleport in again on their own: that night
+`SceneFor` reads the list region empty three times; without the retry it pages). (11) **Cheaper reads in the map pick**
+(user: "do cheaper reads then" - over swapping ML Kit for Emgu's Tesseract, which is slower on phones). Measured in MuMu
+(town, idle PC): an ML Kit read takes 0.07-0.6 s, the whole screen ~0.5 s, and x1 / x1.5 / x2 hardly differ; the 5 s
+timeouts came with this PC at 100% CPU (the desktop Wuxen2 client, Parsec and MuMu at once). During ClickMap / ReadStage /
+AdvanceStage (`PhoneLoopGate.IsMapPick`) the phone now skips the 5 s whole-screen read (disconnect / dialog check), the
+engine's 1 s minimap-title read (the map hides the minimap) and ReadStage's wide fallback read; the zone guard reads the
+map window's title first there. **Keys:** the pilot's restarts teleport in again on their own: that night
 it entered the Labyrinth at 13:58, 14:07, 14:09 and 14:39 (a 16:14 click did not take); stop it before a restart when
 the key budget is spent. Not yet seen live: the resume read, the long north turn, the gate timer, (5) and (6).
 

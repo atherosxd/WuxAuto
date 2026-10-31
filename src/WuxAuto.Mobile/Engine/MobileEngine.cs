@@ -378,7 +378,8 @@ public sealed class MobileEngine : IDisposable
             if (frame != null)
             {
                 ApplyRegionsFor(frame);
-                if (_gate.TitleCheckDue(now))
+                // Not during the map pick: the map window hides the minimap (PhoneLoopGate.IsMapPick).
+                if (_gate.TitleCheckDue(now) && !PhoneLoopGate.IsMapPick(_pilot.Phase))
                     _gate.TitleChecked(now, await TitleReadsAsync(frame));
 
                 // Again for the frame the pilot would get. The clock is read after the copy: a frame stamped between an

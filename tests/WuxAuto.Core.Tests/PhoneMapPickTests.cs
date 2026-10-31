@@ -38,7 +38,7 @@ public class PhoneMapPickTests : AppPathsScope
 
         // The map window: its title, "Spawns", one '>' per row. The first three reads of the monster list see no rows (a
         // timed-out OCR, the wide fallback read too) - the list region is the only area wide enough to hold both the names and the '>' column.
-        int listReads = 0;
+        int listReads = 0, screenReads = 0, wideReads = 0;
         bool mapOpen = true;
         phone.Touch.OnTap = (x, _) =>
         {
@@ -47,6 +47,10 @@ public class PhoneMapPickTests : AppPathsScope
         };
         phone.Ocr.SceneFor = area =>
         {
+            if (area.Width >= 1900 && area.Height >= 1000)
+                screenReads++;
+            else if (area.X < 700 && area.Width > 1200)
+                wideReads++;
             if (!mapOpen)
                 return [FakeOcrEngine.Line("[The Labyrinth (Adept)]", 1600, 60)];
             List<OcrWord> lines = [FakeOcrEngine.Line("The Labyrinth (Adept)", 310, 85, 350, 30), FakeOcrEngine.Line("Spawns", 1560, 220, 60, 16)];
@@ -82,6 +86,9 @@ public class PhoneMapPickTests : AppPathsScope
         var phase = phone.Pilot.Phase;
         phone.Pilot.Stop("test over");
         Assert.True(phase == PilotPhase.WaitBoss, phone.Log);
+        // Cheaper reads (user, 2026-10-31): no whole-screen read and no wide fallback read during the phone's map pick.
+        Assert.Equal(0, screenReads);
+        Assert.Equal(0, wideReads);
         Assert.DoesNotContain(phone.Lines, l => l.Contains("is not visible", StringComparison.Ordinal)); // never paged (arrow or swipe)
         Assert.DoesNotContain(phone.Touch.Calls, c => c.StartsWith("Swipe", StringComparison.Ordinal) || c.StartsWith("Drag", StringComparison.Ordinal));
         Assert.DoesNotContain(phone.Lines, l => l.Contains("Selected the", StringComparison.Ordinal)); // no name tap on the phone
