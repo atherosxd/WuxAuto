@@ -111,6 +111,7 @@ public sealed partial class AutomationPilot
     private int _rowSnapshots;
     private bool _chevronClicked;
     private int _chevronTaps;                // phone: '>' taps on this map pick (a map gone after one = the pick went through)
+    private int _emptyListReads;             // phone: map list reads in a row that read no rows (slow / timed-out OCR) - not a reason to page
 
     /// <summary>
     /// Phone: the captured frame shows a tap's effect only this long after it (MuMu 2026-10-30: a teleport-list page
@@ -3659,6 +3660,7 @@ public sealed partial class AutomationPilot
 
         Log?.Invoke(LogLevel.Success, $"Clicked the map button (score {match.Score:0.00}, match {ms:0.0}ms).");
         _mapScrolls = 0;
+        _emptyListReads = 0;
         bool pick = IsWar || _settings.Dungeon.Enabled;
         Advance(pick ? PilotPhase.ReadStage : PilotPhase.Done,
             pick ? PhoneLag(_settings.Dungeon.MapOpenDelayMs) : _settings.Input.AfterClickMs);
@@ -3788,7 +3790,24 @@ public sealed partial class AutomationPilot
         }
         else
         {
-            hit = (await _analyzer.FindTextAsync(frame, roi, expected)).Hit;
+            var (found, _, listWords) = await _analyzer.FindTextAsync(frame, roi, expected);
+            hit = found;
+
+            // Phone: a read that saw no rows at all (live MuMu 2026-10-30: the OCR timed out after 5 s) is no sign that the
+            // boss is on another page - paging then moved the list away from a name that was on screen, and the stage
+            // gate closed during the hunt. Read again, up to PhoneEmptyListReads times.
+            if (found == null && Profile == PlatformProfile.Phone)
+            {
+                int rows = listWords.Select(w => w.LineText).Distinct().Count(l => l.Count(char.IsLetter) >= 4);
+                if (rows < 3 && ++_emptyListReads <= PhoneEmptyListReads)
+                {
+                    _detail = $"the map list read {rows} row(s) - reading it again ({_emptyListReads}/{PhoneEmptyListReads})";
+                    _waitUntil = Environment.TickCount64 + 300;
+                    return;
+                }
+            }
+
+            _emptyListReads = 0;
         }
 
         // Only a (nearly) whole boss name counts: the fuzzy matcher accepts fragments, and the
@@ -4015,12 +4034,17 @@ public sealed partial class AutomationPilot
     }
 
 
+    /// <summary>Phone: map list reads in a row that may read no rows before the list is paged anyway.</summary>
+    private const int PhoneEmptyListReads = 5;
+
     /// <summary>Clicks the '>' at the right edge of the row the boss name is on.</summary>
     private void ClickStageRow(Mat frame, PixelRect nameBounds, string text)
     {
         // Selecting the row (a click on the boss name) makes the game highlight it, which is what
         // rightchevronfoc.png is cropped from - that is what the next step clicks.
-        if (_settings.Dungeon.ClickBossName)
+        // Phone: the row's '>' at once (it is what walks the character there; the name tap only highlighted the row, and
+        // the re-read after it took ~30 s on a slow MuMu - live 2026-10-30, the stage gate closed meanwhile).
+        if (_settings.Dungeon.ClickBossName && Profile != PlatformProfile.Phone)
         {
             int x = nameBounds.CenterX;
             int y = nameBounds.CenterY;
@@ -4182,8 +4206,10 @@ public sealed partial class AutomationPilot
         _lastClick = (clickX, clickY, Environment.TickCount64);
         // A '>' click (glyph or column) is expected to close the map; a click on the name is not.
         _chevronClicked = glyph != null || hits.Count > 0;
+        if (_chevronClicked)
+            _chevronTaps++;
         _rowNameMisses = 0;
-        Advance(PilotPhase.AdvanceStage, dungeon.BossNameClickDelayMs);
+        Advance(PilotPhase.AdvanceStage, PhoneLag(dungeon.BossNameClickDelayMs));
     }
 
     /// <summary>

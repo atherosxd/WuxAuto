@@ -16,6 +16,9 @@ sealed class FakeOcrEngine : IOcrEngine
 {
     public Func<IReadOnlyList<OcrWord>> Scene { get; set; } = () => [];
 
+    /// <summary>When set, the scene for the asked area (a test that reads one region differently); else <see cref="Scene"/>.</summary>
+    public Func<PixelRect, IReadOnlyList<OcrWord>>? SceneFor { get; set; }
+
     /// <summary>How many reads were asked for so far.</summary>
     public int Reads { get; private set; }
 
@@ -27,7 +30,7 @@ sealed class FakeOcrEngine : IOcrEngine
     public Task<IReadOnlyList<OcrWord>> RecognizeAsync(Mat bgra, PixelRect area, double upscale)
     {
         Reads++;
-        IReadOnlyList<OcrWord> hits = Scene()
+        IReadOnlyList<OcrWord> hits = (SceneFor?.Invoke(area) ?? Scene())
             .Where(w => w.Bounds.X < area.Right && w.Bounds.Right > area.X
                         && w.Bounds.Y < area.Bottom && w.Bounds.Bottom > area.Y)
             .ToList();

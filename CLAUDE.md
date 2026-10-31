@@ -349,7 +349,14 @@ finished during the stage 1 boss wait (`_northPending` -> FaceNorth -> back to W
 `_northForWaitBoss`). And the angle read: at the entrance the marker sits on the minimap's bottom edge and the beam is cut
 short - it read 95 degrees (right) at x1.2 with 0.79 but a wrong 5 degrees at x1.5 with 0.69, under the 0.85 gate. It now
 reads at x1.1 / 1.3 / 1.5 on a half-size picture (~1.5 s on the PC) and trusts the best read at 0.85, or at 0.72 with a 0.04
-lead over every read 30+ degrees away (`TrustedBeam`); the long turn is re-read after each drag. **Keys:** the pilot's restarts teleport in again on their own: that night
+lead over every read 30+ degrees away (`TrustedBeam`); the long turn is re-read after each drag. Seen live the next night
+(MuMu, 4 entries): the long turns fired (75 degrees, 0.84) and the turn gave way to the gate (timer twice, banner twice).
+(10) **The stage 1 map pick on a slow OCR:** all four of those entries were then lost at the map - the OCR timed out (5 s),
+an empty read paged the list away from a name that was on screen (Sanctified Unicorn is row 8 from the list's top, "Sicus
+Wielder"), and after the name tap the re-reads took ~30 s. Phone now: a list read with fewer than 3 rows is read again
+(<= `PhoneEmptyListReads` 5) instead of paging, and the row's '>' is tapped at once (`ClickRowChevronFallback`: the light
+glyph right of the name, else the '>' column) - no name tap first. Pinned by `PhoneMapPickTests` (the fake OCR's
+`SceneFor` reads the list region empty three times; without the retry it pages). **Keys:** the pilot's restarts teleport in again on their own: that night
 it entered the Labyrinth at 13:58, 14:07, 14:09 and 14:39 (a 16:14 click did not take); stop it before a restart when
 the key budget is spent. Not yet seen live: the resume read, the long north turn, the gate timer, (5) and (6).
 
