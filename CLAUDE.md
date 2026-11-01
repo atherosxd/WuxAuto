@@ -179,7 +179,7 @@ words and the map scroll-arrow result. `--crop` writes `<frame>.crop.png` next t
 Core tests and the refactor parity gate (M1, 2026-10-27):
 
 ```powershell
-dotnet test tests\WuxAuto.Core.Tests        # xUnit, platform-free Core only (971 tests, ~4-8 min; the pilot tests tick a
+dotnet test tests\WuxAuto.Core.Tests        # xUnit, platform-free Core only (972 tests, ~4-8 min; the pilot tests tick a
                                            # blank Mat with a scripted OCR scene - see tests/ in section 3)
 # probe baseline: runs every SelfTest probe over a frozen, local-only frame set (never committed)
 # and writes normalised output; run it before and after a refactor and diff the two
@@ -1186,8 +1186,11 @@ teleport in again (LOD's rule); still in town after the teleport = "destination 
   No sword: a full figure is clicked at `JasoClickPoint` (centre, 60 % down) anyway (the v0.25.0 floor), a partial one never;
   look-alikes only -> no hovering for `JasoHoverPauseMs` 2 s. After a click `JasoClickWaitMs` **7000** with no walk clicks and
   no scans while the character runs to her (the usual target read starts the fight); `JasoMaxMisses` 3 clicks without a
-  fight -> Jasos ignored `JasoIgnoreMs` 5 s + `blossom_jaso_miss`. The walk tries it at every target check (700 ms) with
-  nothing in the target bar. Live v0.25.0 (11:35-11:39): clicks on full figures far up the screen (y 300-440) targeted
+  fight -> Jasos ignored `JasoIgnoreMs` 5 s + `blossom_jaso_miss`. The walk searches **on every tick, about every frame**
+  (`JasoLookEveryMs` 80 caps the walk's wait while `ClickToTarget` is on, also in a waypoint pause; user, 2026-11-02: "why so
+  long to click can it be faster? like below 100ms?" - it searched only with the target-bar read, every 700 ms and after
+  that whole-screen OCR; the search itself is ~15-50 ms a frame at 2048x1152); the target read keeps its own 700 ms timer and
+  comes 300 ms after a click (`AJasoComingIntoView_IsClickedOnTheNextFrame_*`). Live v0.25.0 (11:35-11:39): clicks on full figures far up the screen (y 300-440) targeted
   nothing, one at y 618 did; 3 kills. Live 0.25.1 test (12:23-12:36): the sword shows over far Jasos (y 160-430), 6 kills,
   each targeted **3-6 s after the click** (the character runs there first) - the 1.5 s wait then let the walk click on and
   the 4 s scan turn the camera away, which made most far clicks "nothing targeted"; hence the 7 s. The normal cursor's handle

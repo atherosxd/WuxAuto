@@ -1379,6 +1379,32 @@ public class BlossomPilotTests
     }
 
     [Fact]
+    public async Task AJasoComingIntoView_IsClickedOnTheNextFrame_NotOnTheNextTargetRead()
+    {
+        // User, 2026-11-02: "why so long to click can it be faster? like below 100ms?" - the Jaso search ran only with the
+        // target bar's read, every 700 ms and after that whole-screen read. Now it runs on every frame.
+        var (settings, input, ocr) = Harness(MovingNorth());
+        using var frame = Blank.Bgra(Height, Width);
+        long drawnAt = 0;
+
+        var run = await PilotRun.RunAsync(settings, input, ocr, frame, PilotPhase.BlossomWalk,
+            (_, _) => ClickedJasoAt(input, 900, 250), 8000,
+            beforeTick: () =>
+            {
+                if (drawnAt == 0 && input.Calls.Any(c => c.StartsWith("Click ", StringComparison.Ordinal)))
+                {
+                    drawnAt = Environment.TickCount64;   // right after the walk's first click (and its target read)
+                    DrawJaso(frame, 900, 250);
+                }
+            });
+
+        long clickedAt = Environment.TickCount64;
+        string log = string.Join("\n", run.Lines) + "\n" + string.Join("\n", input.Calls);
+        Assert.True(drawnAt > 0 && ClickedJasoAt(input, 900, 250), log);
+        Assert.True(clickedAt - drawnAt < 300, $"clicked {clickedAt - drawnAt} ms after she showed\n{log}");
+    }
+
+    [Fact]
     public async Task LookAside_StaysThatWayWhileTheWalkGoesOn_ThenTurnsBack_MeasuringTheHeadingEachTime()
     {
         // User, 18:10: "actively walk to the waypoints but randomly do left or right, stay on any direction longer than 5s then

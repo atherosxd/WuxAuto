@@ -50,6 +50,7 @@ public sealed partial class AutomationPilot
     private const int JasoClickShotsKept = 300;      // debug\jaso-clicks keeps the newest this many
     private const int BlossomScanSettleMs = 300;     // after a camera step, before looking
     private const int BlossomTurnSteps = 3;          // a look aside's turn: ScanSideMs in this many holds, a look after each
+    private const int JasoLookEveryMs = 80;          // the walk's Jaso search: about every captured frame (~12 a second)
     private const int BlossomTiltDragMs = 300;       // one camera tilt drag ...
     private const int BlossomTiltSettleMs = 400;     // ... and the wait after it
     private const double BlossomHeadingMissRad = 0.6;
@@ -871,18 +872,21 @@ public sealed partial class AutomationPilot
                 BeginBlossomFight(target);
                 return;
             }
+        }
 
-            // No target: a Jaso seen on screen is clicked (2026-11-01: Tab no longer targets in Blossom Garden).
-            string where = _blossomAside is TurnDirection side ? $"looking {TurnName(side)}" : "on the walk";
-            if (now >= _blossomIgnoreTargetsUntil && now - _blossomJasoClickedAt >= JasoClickWaitMs && TryClickJaso(frame, now, where))
-            {
-                // Clicked mid-turn: the turn ends where she is (live 18:37, 0.25.11: it carried on after the 7 s wait, away
-                // from her).
-                if (_blossomTurning is TurnDirection midTurn)
-                    EndBlossomTurn(goingBack: midTurn != _blossomAside, now);
-                _waitUntil = now + 200;
-                return;
-            }
+        // No target: a Jaso seen on screen is clicked (2026-11-01: Tab no longer targets in Blossom Garden) - on every frame,
+        // not only with the target read above (user, 2026-11-02: "why so long to click can it be faster? like below 100ms?" -
+        // it waited up to 700 ms plus that whole-screen read; the search itself takes ~15-50 ms).
+        string where = _blossomAside is TurnDirection lookingTo ? $"looking {TurnName(lookingTo)}" : "on the walk";
+        if (now >= _blossomIgnoreTargetsUntil && now - _blossomJasoClickedAt >= JasoClickWaitMs && TryClickJaso(frame, now, where))
+        {
+            // Clicked mid-turn: the turn ends where she is (live 18:37, 0.25.11: it carried on after the 7 s wait, away from
+            // her). The target read comes right after, so the fight starts as soon as the bar shows her.
+            if (_blossomTurning is TurnDirection midTurn)
+                EndBlossomTurn(goingBack: midTurn != _blossomAside, now);
+            _blossomTargetAt = Math.Min(_blossomTargetAt, now + 300);
+            _waitUntil = now + 200;
+            return;
         }
 
         // Just clicked a Jaso: no walk clicks while the character runs to her and the target bar comes up.
@@ -990,7 +994,7 @@ public sealed partial class AutomationPilot
             if (now - _blossomPauseSince < b.WaypointWaitMs)
             {
                 _detail = $"at waypoint {_blossomWaypoint + 1}, tabbing ({(now - _blossomPauseSince) / 1000.0:0.0}s of {b.WaypointWaitMs / 1000.0:0.#}s)";
-                _waitUntil = Math.Min(now + 300, _blossomPauseSince + b.WaypointWaitMs);
+                _waitUntil = Math.Min(now + (b.ClickToTarget ? JasoLookEveryMs : 300), _blossomPauseSince + b.WaypointWaitMs);
                 return;
             }
 
@@ -1040,6 +1044,8 @@ public sealed partial class AutomationPilot
         }
 
         long next = Math.Min(Math.Min(_blossomClickAt, _blossomReadAt), Math.Min(_blossomTargetAt, _blossomTabAt + b.TabEveryMs));
+        if (b.ClickToTarget)
+            next = Math.Min(next, now + JasoLookEveryMs);   // the Jaso search on (about) every frame
         _waitUntil = Math.Max(now + 50, next);
     }
 
