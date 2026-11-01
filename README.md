@@ -294,7 +294,7 @@ nearest figures, and clicks where the cursor becomes the sword - right on her, e
 or a player that only looks alike. A figure with her whole look is clicked in her middle even when no sword showed. After
 the click it waits up to 7 s, without walking on or turning the camera, while the character runs to her (from afar the
 target bar shows 3-6 s after the click). When the target bar shows "[S]Jaso Practitioner" the fight starts; three clicks
-that target nothing and it leaves Jasos alone for 5 s. On the walk, after 4 s without seeing one it turns the camera right in 6 steps, looking after each, and keeps
+that target nothing and it leaves Jasos alone for 5 s. On the walk, after 1.5 s without seeing one it turns the camera right in 6 steps, looking after each, and keeps
 walking to the waypoint meanwhile (standing still brings the AFK Checker fast); in a fight it turns the camera one step
 every 3 s, remembers the next Jaso it sees and clicks her right after the kill. After any camera turn the walk learns the
 direction again. A Jaso right next to your character (fighting it) is found too, and clicked only on the sword cursor (your

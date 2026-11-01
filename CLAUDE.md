@@ -179,7 +179,7 @@ words and the map scroll-arrow result. `--crop` writes `<frame>.crop.png` next t
 Core tests and the refactor parity gate (M1, 2026-10-27):
 
 ```powershell
-dotnet test tests\WuxAuto.Core.Tests        # xUnit, platform-free Core only (949 tests, ~4-8 min; the pilot tests tick a
+dotnet test tests\WuxAuto.Core.Tests        # xUnit, platform-free Core only (950 tests, ~4-8 min; the pilot tests tick a
                                            # blank Mat with a scripted OCR scene - see tests/ in section 3)
 # probe baseline: runs every SelfTest probe over a frozen, local-only frame set (never committed)
 # and writes normalised output; run it before and after a refactor and diff the two
@@ -1158,7 +1158,7 @@ teleport in again (LOD's rule); still in town after the teleport = "destination 
   each targeted **3-6 s after the click** (the character runs there first) - the 1.5 s wait then let the walk click on and
   the 4 s scan turn the camera away, which made most far clicks "nothing targeted"; hence the 7 s. The normal cursor's handle
   changes over time, hence the picture fingerprint. **Walk scan** ("also add when running, to rotate the camera to scan for
-  the mob"): no Jaso seen for `ScanEveryMs` **4000** (0 = off) -> `ScanTaps` **6** taps of `D` `ScanTapMs` **250**, one every
+  the mob"): no Jaso seen for `ScanEveryMs` **1500** (0 = off; 4000 until settings v27 - user: "can it not scan fast while running") -> `ScanTaps` **6** taps of `D` `ScanTapMs` **250**, one every
   ~0.55 s (`_blossomScanStepAt`), a look before each; **the walk goes on in between** (user 13:50: "always try to move to the
   waypoint while tracking", "the AFK Checker is fast" - the scan used to stand still ~3 s; the heading drifts while the camera
   turns and the walk's own correction / re-learn takes it back); a Jaso -> click, scan over; none -> "Scanned N step(s) - no

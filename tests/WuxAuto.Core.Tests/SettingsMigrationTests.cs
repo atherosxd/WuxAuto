@@ -134,6 +134,17 @@ public class SettingsMigrationTests : AppPathsScope
     }
 
     [Fact]
+    public void V27_TheWalkScanStartsAfter1500ms_ASetValueStays()
+    {
+        // User, 2026-11-01: "can it not scan fast while running" - the scan no longer stops the walk, so it starts after
+        // 1.5 s without a Jaso instead of 4 s.
+        Assert.Equal(1500, new AppSettings().Blossom.ScanEveryMs);
+        Assert.Equal(1500, LoadAfterEdit(version: 26, "Blossom", b => b["ScanEveryMs"] = 4000).Blossom.ScanEveryMs);
+        Assert.Equal(2500, LoadAfterEdit(version: 26, "Blossom", b => b["ScanEveryMs"] = 2500).Blossom.ScanEveryMs);
+        Assert.Equal(4000, LoadAfterEdit(version: 27, "Blossom", b => b["ScanEveryMs"] = 4000).Blossom.ScanEveryMs);
+    }
+
+    [Fact]
     public void AfterV24_TheOldValuesPutBackByTheUser_Stay()
     {
         var loaded = LoadAfterEdit(version: 24, "Blossom", b =>

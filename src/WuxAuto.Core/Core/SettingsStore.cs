@@ -73,7 +73,7 @@ public static class AppPaths
 public static class SettingsStore
 {
     /// <summary>Bump when an existing settings.json must be migrated (see <see cref="Migrate"/>).</summary>
-    private const int CurrentVersion = 26;
+    private const int CurrentVersion = 27;
 
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
@@ -262,6 +262,11 @@ public static class SettingsStore
         // the check box still turns the hold back on.
         if (s.Version < 26 && s.Dungeon != null)
             s.Dungeon.HoldBeforeAutohunt = false;
+
+        // v27: the Blossom walk scan starts after 1.5 s without a Jaso, not 4 s (user, 2026-11-01: "can it not scan fast while
+        // running") - it no longer stops the walk. Only the old default moves; a value set by hand stays.
+        if (s.Version < 27 && s.Blossom is { ScanEveryMs: 4000 } scan)
+            scan.ScanEveryMs = 1500;
 
         s.Version = CurrentVersion;
         return true;

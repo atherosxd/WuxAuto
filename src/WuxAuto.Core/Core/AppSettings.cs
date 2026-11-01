@@ -393,10 +393,11 @@ public sealed class BlossomSettings
     public bool ClickToTarget { get; set; } = true;
 
     /// <summary>
-    /// On the walk, no Jaso seen this long -> stand and turn the camera ScanTaps steps of ScanTapMs, looking after each
-    /// (user, same day: "when running, rotate the camera to scan for the mob"). 0 = off.
+    /// On the walk, no Jaso seen this long -> turn the camera ScanTaps steps of ScanTapMs, looking before each, while the walk
+    /// goes on (user, same day: "when running, rotate the camera to scan for the mob", "can it not scan fast while running";
+    /// 4000 until settings v27). 0 = off.
     /// </summary>
-    public int ScanEveryMs { get; set; } = 4000;
+    public int ScanEveryMs { get; set; } = 1500;
 
     public int ScanTaps { get; set; } = 6;
 
