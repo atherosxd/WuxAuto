@@ -295,14 +295,14 @@ feet), so it is never clicked even when the camera is pulled in close and it is 
 body), not the middle of her outline.
 After the click it waits up to 7 s, without walking on or turning the camera, while the character runs to her (from afar
 the target bar shows 3-6 s after the click). When the target bar shows "[S]Jaso Practitioner" the fight starts; three
-clicks that target nothing and it leaves Jasos alone for 5 s. On the walk, after 1.5 s without seeing one it clicks once
-far ahead on the way to the waypoint (the character keeps running), then holds `A` 0.7 s to look left, `D` to look right,
-and `A` again to look ahead as before (`Blossom.ScanSideMs` in settings.json, default 700). It clicks on the way again when
-the camera passes the middle, so the character keeps running, but never while the camera looks left or right - a "forward"
-click then would send the character sideways - and walks on the same way afterwards. The camera never comes back exactly,
-so the next step checks the walking direction again before another scan may start.
+clicks that target nothing and it leaves Jasos alone for 5 s. On the walk, after 6 s looking ahead without seeing one, the
+camera looks left or right (at random) for 6 s while the character keeps walking the route and clicking any Jaso that comes
+into view, then turns back. Each turn is three short holds of `A` (left) or `D` (right) with a look after each: a Jaso
+seen mid-turn stops the turn right there and is clicked. After every turn the walk checks its direction again, since the
+camera never turns back exactly. (`Blossom.ScanEveryMs`, `LookAsideMs` and `ScanSideMs` in settings.json: 6000, 6000 and
+700 ms.) Stuck, it steps round and heads back to the nearest waypoint, then on along the route.
 In a fight it turns the camera one step every 3 s, remembers the next Jaso it sees and clicks her right after the kill;
-after that turn (or a Jaso clicked while looking left or right) the walk learns the direction again. One far off at the horizon is left alone - the
+after that turn the walk learns the direction again. One far off at the horizon is left alone - the
 game ignores a click that far - until the walk brings her closer. Inside her green AOE dome her colours change and she is
 not always found. (`Blossom.UseSwordCursor` in settings.json turns on an extra check that hovers the pointer and clicks
 only where the game's cursor becomes a sword; it is off, because the cursor read from outside the game was unreliable.)

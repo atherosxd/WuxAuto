@@ -138,10 +138,22 @@ public class SettingsMigrationTests : AppPathsScope
     {
         // User, 2026-11-01: "can it not scan fast while running" - the scan no longer stops the walk, so it starts after
         // 1.5 s without a Jaso instead of 4 s.
-        Assert.Equal(1500, new AppSettings().Blossom.ScanEveryMs);
-        Assert.Equal(1500, LoadAfterEdit(version: 26, "Blossom", b => b["ScanEveryMs"] = 4000).Blossom.ScanEveryMs);
+        // v28 then moves that 1500 on to 6000 (below).
+        Assert.Equal(6000, LoadAfterEdit(version: 26, "Blossom", b => b["ScanEveryMs"] = 4000).Blossom.ScanEveryMs);
         Assert.Equal(2500, LoadAfterEdit(version: 26, "Blossom", b => b["ScanEveryMs"] = 2500).Blossom.ScanEveryMs);
         Assert.Equal(4000, LoadAfterEdit(version: 27, "Blossom", b => b["ScanEveryMs"] = 4000).Blossom.ScanEveryMs);
+    }
+
+    [Fact]
+    public void V28_TheWalkLooksAheadSixSecondsBetweenLooksAside_ASetValueStays()
+    {
+        // User, 18:10: "randomly do left or right, stay on any direction longer than 5s then return back" - the camera now
+        // looks aside LookAsideMs (6 s), and ahead ScanEveryMs between two looks aside: 6 s too, not the 1.5 s of v27.
+        Assert.Equal(6000, new AppSettings().Blossom.ScanEveryMs);
+        Assert.Equal(6000, new AppSettings().Blossom.LookAsideMs);
+        Assert.Equal(6000, LoadAfterEdit(version: 27, "Blossom", b => b["ScanEveryMs"] = 1500).Blossom.ScanEveryMs);
+        Assert.Equal(2500, LoadAfterEdit(version: 27, "Blossom", b => b["ScanEveryMs"] = 2500).Blossom.ScanEveryMs);
+        Assert.Equal(1500, LoadAfterEdit(version: 28, "Blossom", b => b["ScanEveryMs"] = 1500).Blossom.ScanEveryMs);
     }
 
     [Fact]

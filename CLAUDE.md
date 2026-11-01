@@ -179,7 +179,7 @@ words and the map scroll-arrow result. `--crop` writes `<frame>.crop.png` next t
 Core tests and the refactor parity gate (M1, 2026-10-27):
 
 ```powershell
-dotnet test tests\WuxAuto.Core.Tests        # xUnit, platform-free Core only (964 tests, ~4-8 min; the pilot tests tick a
+dotnet test tests\WuxAuto.Core.Tests        # xUnit, platform-free Core only (966 tests, ~4-8 min; the pilot tests tick a
                                            # blank Mat with a scripted OCR scene - see tests/ in section 3)
 # probe baseline: runs every SelfTest probe over a frozen, local-only frame set (never committed)
 # and writes normalised output; run it before and after a refactor and diff the two
@@ -1186,38 +1186,46 @@ teleport in again (LOD's rule); still in town after the teleport = "destination 
   nothing, one at y 618 did; 3 kills. Live 0.25.1 test (12:23-12:36): the sword shows over far Jasos (y 160-430), 6 kills,
   each targeted **3-6 s after the click** (the character runs there first) - the 1.5 s wait then let the walk click on and
   the 4 s scan turn the camera away, which made most far clicks "nothing targeted"; hence the 7 s. The normal cursor's handle
-  changes over time, hence the picture fingerprint. **Walk scan** ("also add when running, to rotate the camera to scan for
-  the mob"): no Jaso seen for `ScanEveryMs` **1500** (0 = off; 4000 until settings v27 - user: "can it not scan fast while
-  running"), not during a waypoint pause -> **look left, then right, then back** (user 16:30: "instead of D tap, hold D or A
-  longer, Actually better to look Left(A) and then right(D), still follow the waypoints before as it always goes right where
-  there is a wall near the entrance"; 16:32: "the current clicks trying to go forward but also rotates it, so it goes to the
-  right"): one walk click stretched to the edge of the click area (`BlossomWalkClick(far: true)`; the character runs on to
-  that world point while the camera turns), A held `ScanSideMs` **700** (clamp 100-3000), look; D held `ScanSideMs` twice
-  (equal holds, so a key's start-up lag turns left and right alike), look; A held `ScanSideMs` - back where it started
-  (`TickBlossomScan`, stages 0-4, `BlossomScanSettleMs` 300 before each look). **No coordinate read during the sweep, and walk
-  clicks only with the camera in the middle** - before it, and again between the two D holds (live 17:31, 0.25.9: with the one
-  click before it the character stood still for most of the scan, the AFK Checker counted up and sent it to town); **no Tab
-  and no target-bar read either** (each whole-screen read made every scan step wait: 7-9 s a scan instead of ~4). Back, the
-  walk clicks on the same way and **its next step re-measures the heading** (`_blossomRemeasure` -> `SetBlossomHeading(...,
-  "re-measured after the scan")`; `_lastCoords` cleared, so the ~4 s of running teaches nothing and is no jump), and **no scan
-  starts before the heading is known and measured since the last scan** (live 17:35-17:48, 0.25.9: the camera does not come
-  back exactly - the minimap beam went from north-west to east - and with every tick waiting for the target read the next
-  scan always started before the walk's next coordinate read, so the heading was learnt once in 13 min and the walk ran
-  ~2700 units east of the route into a wall). Blocked (no step >= 60) = no scans, which leaves the unblock steps alone.
-  A Jaso while looking away -> clicked, and the walk then learns the heading again from a click straight up. Until 16:30 it was `ScanTaps` 6 taps of `D` with the walk clicking on in between: every "forward"
-  click went right in the world, into the wall near the entrance (`ScanTaps` is gone; a saved value is ignored).
+  changes over time, hence the picture fingerprint. **Look aside** (user, 18:10: "actively walk to the waypoints but randomly
+  do left or right, stay on any direction longer than 5s then return back, as when you are trying to rotate there is a jaso
+  but it continued to rotate back and never target it" / "it should be still similar to when tab is allowed"): looking ahead
+  with no Jaso seen for `ScanEveryMs` **6000** (0 = off; settings v28 moves the v27 1500), heading known and measured since
+  the last turn, not in a waypoint pause -> left or right at random (`Random.Shared`), **one turn of `ScanSideMs` 700**
+  (clamp 100-3000) in `BlossomTurnSteps` **3** short holds with a look after each (`BlossomScanSettleMs` 300; user 18:20:
+  "rotating to right, sees jaso rotates left then continues instead of going back and retargeting" - a Jaso in view stops the
+  turn right there and is clicked, on the way out or back), then **`LookAsideMs` 6000** (clamp 1000-60000) of the normal walk
+  with the camera that way - walk clicks, coordinate reads, the target read every 700 ms, a Jaso clicked as soon as she is in
+  view - then the same number of steps back (`_blossomAside`, `_blossomTurning`, `_blossomAsideSteps`; `EndBlossomTurn`; a
+  target mid-turn ends the turn where it is). **After every turn step the next walk step re-measures the heading**
+  (`TurnBlossomCamera` -> `_blossomRemeasure` -> `SetBlossomHeading(..., "re-measured after the camera turned")`;
+  `_lastCoords` cleared) - the walk's clicks are screen directions, and the camera never turns back exactly (live
+  17:35-17:48, 0.25.9: the minimap beam went from north-west to east; with every tick waiting for the target read the next
+  scan always started before the walk's next coordinate read, the heading was learnt once in 13 min and the walk ran ~2700
+  units east of the route into a wall; live 0.25.10 re-measures read 139 -> 159 -> 131 deg, 20-30 deg off per turn).
+  Blocked (no step >= 60) = no new look aside, which leaves the unblock steps alone. History: 16:30-18:10 the scan looked
+  left, right and back in one go (one walk click before it and one in the middle, no Tab and no target read during it,
+  4.5 s with 0.25.10) and looked each way only once, for an instant; until 16:30 it was `ScanTaps` 6 taps of `D` with the
+  walk clicking on in between, so every "forward" click went right in the world, into the wall near the entrance
+  (`ScanTaps` is gone; a saved value is ignored). **Stuck -> the nearest waypoint** (user, 18:10: "if stuck try to sidestep
+  and return back to nearest waypoint"): at the 5th still step (`BlossomMaxStalls`) the walk retargets the nearest waypoint
+  (`BlossomRoute.Nearest`, the leg from the spot) while the sidesteps go on, then on along the route from there; once per
+  waypoint (`_blossomReturnedFrom`, cleared when the walk leaves that waypoint behind) - stuck on its way again, the steps and
+  the no-progress skip carry on, so it cannot loop. **No heading + blocked** (live 18:08, 0.25.10: after a fight the heading
+  was unknown, straight up was a wall, 20 s still until the AFK step moved it): the unblock ways now also run round the
+  straight-up step, and the step that moves teaches the heading.
   `WindowInput.KeyUp` now lets go of any key it sent down even after an F10 unbind or Dry run ticked mid-hold (it refused an
   unbound window, so a held A could stick for every program; checked with a scratch probe: A held, unbind, released).
   **Fight scan**
   ("do the rotate also even when attacking the current mob, and set that as a second subject"): every `FightScanEveryMs`
   **3000** (0 = off) one `D` tap and a look 300 ms later until a Jaso is in view (the one fought is at the feet, left out) ->
   remembered ("The next Jaso is in view ..."); at the kill (`LootWhileFighting`) the frame is searched again and the nearest
-  clicked at once, the rebuff then waits for the next pause. A camera left turned (fight scan, a walk scan stopped by a
-  Jaso) -> `ForgetBlossomHeading`: the next walk step clicks straight up and learns the heading. Pinned by `JasoDetectorTests` (drawn Jasos: found, nearest
+  clicked at once, the rebuff then waits for the next pause. A camera left turned by the fight scan ->
+  `ForgetBlossomHeading`: the next walk step clicks straight up and learns the heading. Pinned by `JasoDetectorTests` (drawn Jasos: found, nearest
   first, own spot, a red-brown post, a fan without the skirt, under the UI; candidates: far small, fan only, a flower dot, the
-  own spot as partial) and `BlossomPilotTests` (`NoTab_*`, `NoJasoInView_*`, `ScanFindsNothing_*`, `InAFight_*`,
-  `SwordCursor_*`, `FarPartialJaso_*`, `AJasoNextToTheCharacter_*`, `SideOnJaso_*`, `AJasoAtTheHorizon_*`,
-  `TheWalkScan_KeepsTheCharacterMoving`, `TheWalkScan_PressesNoTab_*`, `NoScan_BeforeTheWalkKnowsItsHeading`, `LearntSword_*`).
+  own spot as partial) and `BlossomPilotTests` (`NoTab_*`, `NoJasoInView_TheCameraLooksAside_*`, `LookAside_*`,
+  `AJasoSeenWhileTurningBack_*`, `NoLookAside_BeforeTheWalkKnowsItsHeading`, `Stuck_GoesBackToTheNearestWaypoint_*`,
+  `Blocked_BeforeTheHeadingIsKnown_*`, `InAFight_*`, `SwordCursor_*`, `FarPartialJaso_*`, `AJasoNextToTheCharacter_*`,
+  `SideOnJaso_*`, `AJasoAtTheHorizon_*`, `LearntSword_*`) and `SettingsMigrationTests.V28_*`.
   Probe: `--jaso <dir>` (full / partial figures + click points, `<frame>.jaso.png`: green full, yellow partial). **Click
   snapshots** (user, 2026-11-01 15:55: "Yes, add snapshots" - live 0.25.7 15:49-15:50, three clicks around the character
   targeted nothing): every click on a Jaso saves `debug\jaso-clicks\<time>_jaso_click_<x>_<y>.jpg`

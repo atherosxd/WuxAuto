@@ -73,7 +73,7 @@ public static class AppPaths
 public static class SettingsStore
 {
     /// <summary>Bump when an existing settings.json must be migrated (see <see cref="Migrate"/>).</summary>
-    private const int CurrentVersion = 27;
+    private const int CurrentVersion = 28;
 
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
@@ -268,6 +268,11 @@ public static class SettingsStore
         if (s.Version < 27 && s.Blossom is { ScanEveryMs: 4000 } scan)
             scan.ScanEveryMs = 1500;
 
+        // v28 (user, 2026-11-01 18:10: "randomly do left or right, stay on any direction longer than 5s then return back"): the
+        // walk scan became a look aside of LookAsideMs (6 s), and the time looking ahead between two of them 6 s too, not 1.5 s.
+        if (s.Version < 28 && s.Blossom is { ScanEveryMs: 1500 } ahead)
+            ahead.ScanEveryMs = 6000;
+
         s.Version = CurrentVersion;
         return true;
     }
@@ -411,6 +416,7 @@ public static class SettingsStore
         b.RandomSkipMax = Math.Clamp(b.RandomSkipMax, 0, 20);
         b.ScanEveryMs = b.ScanEveryMs <= 0 ? 0 : Math.Clamp(b.ScanEveryMs, 1000, 60000);
         b.ScanSideMs = Math.Clamp(b.ScanSideMs, 100, 3000);
+        b.LookAsideMs = Math.Clamp(b.LookAsideMs, 1000, 60000);
         b.ScanTapMs = Math.Clamp(b.ScanTapMs, 30, 2000);
         b.FightScanEveryMs = b.FightScanEveryMs <= 0 ? 0 : Math.Clamp(b.FightScanEveryMs, 1000, 60000);
         b.CameraTiltPx = Math.Clamp(b.CameraTiltPx, 0, 400);

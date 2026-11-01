@@ -393,13 +393,17 @@ public sealed class BlossomSettings
     public bool ClickToTarget { get; set; } = true;
 
     /// <summary>
-    /// On the walk, no Jaso seen this long -> one long walk click on the way, then look left (A held ScanSideMs), look right
-    /// (D held 2x ScanSideMs) and turn back (user, same day: "when running, rotate the camera to scan for the mob", "can it not
-    /// scan fast while running"; 4000 until settings v27; "look Left(A) and then right(D)" replaced the 6 D taps). 0 = off.
+    /// On the walk, looking ahead with no Jaso seen this long -> the camera looks left or right at random for LookAsideMs
+    /// while the walk goes on, then turns back (user, same day: "when running, rotate the camera to scan for the mob"; 18:10:
+    /// "randomly do left or right, stay on any direction longer than 5s then return back"). 4000 until settings v27, 1500
+    /// until v28. 0 = off.
     /// </summary>
-    public int ScanEveryMs { get; set; } = 1500;
+    public int ScanEveryMs { get; set; } = 6000;
 
-    /// <summary>How long the walk scan holds A to look left, and D (twice) to look right; the same A again turns it back.</summary>
+    /// <summary>How long the walk looks aside before it turns back (user, 18:10: "stay on any direction longer than 5s").</summary>
+    public int LookAsideMs { get; set; } = 6000;
+
+    /// <summary>The look aside's camera turn: A (left) or D (right) held this long, and the other key as long to turn back.</summary>
     public int ScanSideMs { get; set; } = 700;
 
     /// <summary>The fight scan's camera step (one D tap of this length).</summary>
