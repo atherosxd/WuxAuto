@@ -105,6 +105,7 @@ public sealed partial class AutomationPilot
     private long _blossomAsideSince;
     private long _blossomAsideUntil;
     private int _blossomAsideSteps;              // turn steps taken aside (the turn back undoes as many)
+    private double? _blossomHeadingBeforeAside;  // the walk's heading when the look aside began (restored when back)
     private TurnDirection? _blossomTurning;      // a look aside's turn in progress (out or back), one step per tick
     private int _blossomTurnStepsLeft;
     private long _blossomScanEndedAt;            // the last look aside ended (looking ahead since)
@@ -182,6 +183,7 @@ public sealed partial class AutomationPilot
         _blossomJasoSeenAt = 0;
         _blossomAside = null;
         _blossomAsideSteps = 0;
+        _blossomHeadingBeforeAside = null;
         _blossomTurning = null;
         _blossomTurnStepsLeft = 0;
         _blossomScanEndedAt = 0;
@@ -588,6 +590,21 @@ public sealed partial class AutomationPilot
         }
     }
 
+    /// <summary>
+    /// Turned back as far as it went: the walk takes the heading it had before looking aside - learnt over many steps with
+    /// the camera ahead - instead of one step measured right after the turn (live 18:44-18:48, 0.25.11: those read 19 -> -11 ->
+    /// 169 -> 27 deg in a walled stretch, sliding along walls, and the walk lost the route). What the turn left over is small:
+    /// the walk's own correction takes it, a bigger one is re-learnt after BlossomHeadingMissesToRelearn steps.
+    /// </summary>
+    private void RestoreBlossomHeading()
+    {
+        if (_blossomHeadingBeforeAside is not double before || !_blossomHeadingKnown)
+            return;   // the heading was lost meanwhile (a fight's camera turn): the next step learns it
+
+        _blossomHeadingBeforeAside = null;
+        SetBlossomHeading(before, "restored after looking aside");
+    }
+
     private static TurnDirection Opposite(TurnDirection direction)
         => direction == TurnDirection.Left ? TurnDirection.Right : TurnDirection.Left;
 
@@ -854,6 +871,10 @@ public sealed partial class AutomationPilot
             string where = _blossomAside is TurnDirection side ? $"looking {TurnName(side)}" : "on the walk";
             if (now >= _blossomIgnoreTargetsUntil && now - _blossomJasoClickedAt >= JasoClickWaitMs && TryClickJaso(frame, now, where))
             {
+                // Clicked mid-turn: the turn ends where she is (live 18:37, 0.25.11: it carried on after the 7 s wait, away
+                // from her).
+                if (_blossomTurning is TurnDirection midTurn)
+                    EndBlossomTurn(goingBack: midTurn != _blossomAside, now);
                 _waitUntil = now + 200;
                 return;
             }
@@ -900,7 +921,11 @@ public sealed partial class AutomationPilot
 
             _blossomAsideSteps += goingBack ? -1 : 1;
             if (--_blossomTurnStepsLeft <= 0)
+            {
                 EndBlossomTurn(goingBack, now);
+                if (goingBack)
+                    RestoreBlossomHeading();
+            }
             _detail = $"turning the camera {TurnName(turning)}";
             _waitUntil = now + BlossomScanSettleMs;
             return;
@@ -911,7 +936,8 @@ public sealed partial class AutomationPilot
             Log?.Invoke(LogLevel.Info, $"Looked {TurnName(aside)} for {(now - _blossomAsideSince) / 1000.0:0.#}s - turning back ('{TurnKey(Opposite(aside))}'), walking on.");
             if (_blossomAsideSteps <= 0)
             {
-                EndBlossomTurn(goingBack: true, now);
+                EndBlossomTurn(goingBack: true, now);   // never turned out (a Jaso stopped it first): the camera is where it was
+                RestoreBlossomHeading();
             }
             else
             {
@@ -929,6 +955,7 @@ public sealed partial class AutomationPilot
             var side = Random.Shared.Next(2) == 0 ? TurnDirection.Left : TurnDirection.Right;
             _blossomAside = side;
             _blossomAsideSteps = 0;
+            _blossomHeadingBeforeAside = _headingError;
             _blossomTurning = side;
             _blossomTurnStepsLeft = BlossomTurnSteps;
             Log?.Invoke(LogLevel.Info, $"No Jaso seen for {(now - Math.Max(_blossomJasoSeenAt, _blossomScanEndedAt)) / 1000.0:0.#}s - " +

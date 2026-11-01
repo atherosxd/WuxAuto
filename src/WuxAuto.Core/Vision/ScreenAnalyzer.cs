@@ -1004,6 +1004,16 @@ public sealed class ScreenAnalyzer : IDisposable
                 : IsOwnSpot(new PixelRect(x0, y0, bw, bh), w, h);
             if (ownSpot && !partialToo && Reject("the character's own spot"))
                 continue;
+            // Standing as near as the character or nearer, she is about as tall as it (live 18:37-18:45, 0.25.11: looking
+            // aside showed the character side-on, and its small red pet trotting beside it - ~0.07 h against ~0.17 h - and a
+            // red rose in front of it were clicked as Jasos a dozen times). Further up the screen (further off) all are small.
+            if (own is { } me && !ownSpot)
+            {
+                double meTall = (me.Height - 0.01 * h) / 1.15, feetY = me.Bottom - 0.01 * h;
+                if (y0 + bh >= feetY - 0.08 * h && bh < 0.6 * meTall
+                    && Reject($"too small for its depth ({bh / meTall:0.00} of the character's height - its pet, a flower)"))
+                    continue;
+            }
             // The character's wings: dark navy with red flame edges - 26-54 % navy in their box beside the character (live
             // 2026-10-30), 0-0.3 % on four real Jasos. A figure with that much navy is not her, wherever it stands.
             int navy = Count(new MCvScalar(95, 60, 15), new MCvScalar(130, 255, 150), x0, y0, bw, bh);

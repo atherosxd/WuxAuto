@@ -179,7 +179,7 @@ words and the map scroll-arrow result. `--crop` writes `<frame>.crop.png` next t
 Core tests and the refactor parity gate (M1, 2026-10-27):
 
 ```powershell
-dotnet test tests\WuxAuto.Core.Tests        # xUnit, platform-free Core only (966 tests, ~4-8 min; the pilot tests tick a
+dotnet test tests\WuxAuto.Core.Tests        # xUnit, platform-free Core only (968 tests, ~4-8 min; the pilot tests tick a
                                            # blank Mat with a scripted OCR scene - see tests/ in section 3)
 # probe baseline: runs every SelfTest probe over a frozen, local-only frame set (never committed)
 # and writes normalised output; run it before and after a refactor and diff the two
@@ -1147,7 +1147,12 @@ teleport in again (LOD's rule); still in town after the teleport = "destination 
   the same edge 2 px to 0.02 h below (2048x1152: 108x8 red, 4 px gap, 92x6 blue, left edge w/2 - 54); the box above it is
   `tall = clamp(0.15 h + 1.33 (barY - 0.556 h), 0.12 h, 0.5 h) x 1.15` high, 0.35 x that each side (>= 0.05 h). A figure
   centred in it is `JasoCandidate.AtOwnSpot` (never full); no bar -> the `IsOwnSpot` column below. The click snapshots draw
-  it in orange ("you"). **Click point** `JasoCandidate.Body` = the middle of the skirt's orange pixels (user: "it click on its
+  it in orange ("you"). **Too small for its depth** (live 18:37-18:45, 0.25.11: looking aside showed the character side-on,
+  and its small red pet trotting beside it - ~0.07 h against ~0.17 h - and a red rose in front of it were clicked as Jasos
+  a dozen times, 0 kills in 20 min): with the HP bar found, a figure whose feet are at the character's depth or nearer
+  (bottom >= the bar - 0.08 h) and shorter than 0.6 of the character's height ((own box - 0.01 h) / 1.15) is rejected,
+  partial or full. On that run's 16 click snapshots it removed the pet hits; a big rose right in front of the camera and a
+  close-up of another player still pass. **Click point** `JasoCandidate.Body` = the middle of the skirt's orange pixels (user: "it click on its
   right not the body of the monster" - the box's middle was off her body). Result: video 1 every frame she shows in but two
   inside her green dome (22/42 frames, the rest without her), video 2 17/24 (was 13); the saved Blossom frames give only the
   real Jasos (3 in debug, incl. one beside the character at 14:52). `--jaso <dir> --why` prints every figure's size, shape,
@@ -1196,7 +1201,13 @@ teleport in again (LOD's rule); still in town after the teleport = "destination 
   turn right there and is clicked, on the way out or back), then **`LookAsideMs` 6000** (clamp 1000-60000) of the normal walk
   with the camera that way - walk clicks, coordinate reads, the target read every 700 ms, a Jaso clicked as soon as she is in
   view - then the same number of steps back (`_blossomAside`, `_blossomTurning`, `_blossomAsideSteps`; `EndBlossomTurn`; a
-  target mid-turn ends the turn where it is). **After every turn step the next walk step re-measures the heading**
+  target or **any Jaso click** mid-turn ends the turn where it is - live 18:37, 0.25.11: the walk's own check clicked one
+  mid-turn and after the 7 s wait the turn carried on, away from her). **Turned all the way back, the heading the walk had
+  before looking aside is restored** (`_blossomHeadingBeforeAside`, `RestoreBlossomHeading`, "Heading restored after looking
+  aside"; live 18:44-18:48, 0.25.11: single steps measured right after a turn read 19 -> -11 -> 169 -> 27 deg in a walled
+  stretch, sliding along walls, and the walk lost the route - the "taking too long" skips ran the target on from waypoint 22
+  to 30 while the character stayed put); while looking aside, and after a turn back stopped early by a Jaso,
+  **the next walk step re-measures the heading**
   (`TurnBlossomCamera` -> `_blossomRemeasure` -> `SetBlossomHeading(..., "re-measured after the camera turned")`;
   `_lastCoords` cleared) - the walk's clicks are screen directions, and the camera never turns back exactly (live
   17:35-17:48, 0.25.9: the minimap beam went from north-west to east; with every tick waiting for the target read the next
@@ -1221,9 +1232,9 @@ teleport in again (LOD's rule); still in town after the teleport = "destination 
   remembered ("The next Jaso is in view ..."); at the kill (`LootWhileFighting`) the frame is searched again and the nearest
   clicked at once, the rebuff then waits for the next pause. A camera left turned by the fight scan ->
   `ForgetBlossomHeading`: the next walk step clicks straight up and learns the heading. Pinned by `JasoDetectorTests` (drawn Jasos: found, nearest
-  first, own spot, a red-brown post, a fan without the skirt, under the UI; candidates: far small, fan only, a flower dot, the
-  own spot as partial) and `BlossomPilotTests` (`NoTab_*`, `NoJasoInView_TheCameraLooksAside_*`, `LookAside_*`,
-  `AJasoSeenWhileTurningBack_*`, `NoLookAside_BeforeTheWalkKnowsItsHeading`, `Stuck_GoesBackToTheNearestWaypoint_*`,
+  first, own spot, a red-brown post, a fan without the skirt, under the UI, too small for its depth; candidates: far small,
+  fan only, a flower dot, the own spot as partial) and `BlossomPilotTests` (`NoTab_*`, `NoJasoInView_TheCameraLooksAside_*`, `LookAside_*`,
+  `AJasoSeenWhileTurningBack_*`, `AJasoClickedMidTurn_*`, `NoLookAside_BeforeTheWalkKnowsItsHeading`, `Stuck_GoesBackToTheNearestWaypoint_*`,
   `Blocked_BeforeTheHeadingIsKnown_*`, `InAFight_*`, `SwordCursor_*`, `FarPartialJaso_*`, `AJasoNextToTheCharacter_*`,
   `SideOnJaso_*`, `AJasoAtTheHorizon_*`, `LearntSword_*`) and `SettingsMigrationTests.V28_*`.
   Probe: `--jaso <dir>` (full / partial figures + click points, `<frame>.jaso.png`: green full, yellow partial). **Click

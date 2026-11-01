@@ -291,15 +291,16 @@ default) the pilot looks for the Jaso Practitioner itself: a dark magenta fan ov
 screen's panels. Attacking or turned away (her fan glows green), her red dress alone is enough on a standing figure; the
 pilot tells it apart from wooden pillars, reeds and tulips by its redder colour, and from your own wings by their navy. A
 Jaso right beside your character is found too; your own character is told apart by its HP bar (red over blue, under its
-feet), so it is never clicked even when the camera is pulled in close and it is drawn big. The click goes on her dress (her
+feet), so it is never clicked even when the camera is pulled in close and it is drawn big. Next to the character a Jaso is
+about as tall as it, so a small red figure there - its pet, a flower - is left alone. The click goes on her dress (her
 body), not the middle of her outline.
 After the click it waits up to 7 s, without walking on or turning the camera, while the character runs to her (from afar
 the target bar shows 3-6 s after the click). When the target bar shows "[S]Jaso Practitioner" the fight starts; three
 clicks that target nothing and it leaves Jasos alone for 5 s. On the walk, after 6 s looking ahead without seeing one, the
 camera looks left or right (at random) for 6 s while the character keeps walking the route and clicking any Jaso that comes
 into view, then turns back. Each turn is three short holds of `A` (left) or `D` (right) with a look after each: a Jaso
-seen mid-turn stops the turn right there and is clicked. After every turn the walk checks its direction again, since the
-camera never turns back exactly. (`Blossom.ScanEveryMs`, `LookAsideMs` and `ScanSideMs` in settings.json: 6000, 6000 and
+seen mid-turn stops the turn right there and is clicked. While looking aside the walk measures its direction again; back
+ahead, it takes the direction it had before. (`Blossom.ScanEveryMs`, `LookAsideMs` and `ScanSideMs` in settings.json: 6000, 6000 and
 700 ms.) Stuck, it steps round and heads back to the nearest waypoint, then on along the route.
 In a fight it turns the camera one step every 3 s, remembers the next Jaso it sees and clicks her right after the kill;
 after that turn the walk learns the direction again. One far off at the horizon is left alone - the

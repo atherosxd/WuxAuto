@@ -1239,6 +1239,44 @@ public class BlossomPilotTests
     }
 
     [Fact]
+    public async Task AJasoClickedMidTurn_EndsTheTurn_ItDoesNotTurnOnAfterTheWait()
+    {
+        // Live 18:37 (0.25.11): the walk's own Jaso check clicked one while the camera was still turning out; nothing was
+        // targeted, and after the 7 s wait the turn carried on with its remaining steps - away from where she was.
+        var (settings, input, ocr) = Harness(MovingNorth());
+        settings.Blossom.ScanEveryMs = 1000;
+        settings.Blossom.ScanSideMs = 1500;   // 500 ms a step: the walk's 700 ms check comes round mid-turn
+        settings.Blossom.LookAsideMs = 1000;
+        using var frame = Blank.Bgra(Height, Width);
+        bool drawn = false, erased = false;
+        string? outKey = null;
+
+        var run = await PilotRun.RunAsync(settings, input, ocr, frame, PilotPhase.BlossomWalk,
+            (_, lines) => lines.Any(l => l.Contains("turning back", StringComparison.Ordinal))
+                          && input.Calls.Any(c => IsTurn(c) && c != outKey), 20000,
+            beforeTick: () =>
+            {
+                outKey ??= input.Calls.FirstOrDefault(IsTurn);
+                if (!drawn && outKey != null)
+                {
+                    drawn = true;
+                    DrawJaso(frame, 900, 250);
+                }
+
+                if (drawn && !erased && ClickedJasoAt(input, 900, 250))
+                {
+                    erased = true;   // she walks off - nothing is targeted
+                    frame.SetTo(new MCvScalar(0, 0, 0, 255));
+                }
+            });
+
+        string log = string.Join("\n", run.Lines) + "\n" + string.Join("\n", input.Calls);
+        Assert.True(erased, log);
+        Assert.Equal(1, input.Calls.Count(c => c == outKey));                       // the turn stopped at the click
+        Assert.Equal(1, input.Calls.Count(c => IsTurn(c) && c != outKey));          // and goes back as far as it went
+    }
+
+    [Fact]
     public async Task AJasoSeenWhileTurningBack_StopsTheTurnThere_AndIsClicked()
     {
         // User, 18:20: "rotating to right, sees jaso rotates left then continues instead of going back and retargeting".
@@ -1282,7 +1320,7 @@ public class BlossomPilotTests
         settings.Blossom.LookAsideMs = 1500;
 
         var run = await RunAsync(settings, input, ocr, PilotPhase.BlossomWalk,
-            (_, lines) => lines.Count(l => l.Contains("re-measured after the camera turned", StringComparison.Ordinal)) >= 2, 15000);
+            (_, lines) => lines.Any(l => l.Contains("restored after looking aside", StringComparison.Ordinal)), 15000);
 
         string log = string.Join("\n", run.Lines) + "\n" + string.Join("\n", input.Calls);
         var turns = input.Calls.Select((c, i) => (c, i)).Where(t => IsTurn(t.c)).Take(6).ToList();
@@ -1296,7 +1334,14 @@ public class BlossomPilotTests
         int aside = run.Lines.FindIndex(l => l.Contains("while walking on", StringComparison.Ordinal));
         int measured = run.Lines.FindIndex(l => l.Contains("re-measured after the camera turned", StringComparison.Ordinal));
         int turnBack = run.Lines.FindIndex(l => l.Contains("turning back", StringComparison.Ordinal));
-        Assert.True(learnt >= 0 && aside > learnt && measured > aside && turnBack > aside, log);
+        int restored = run.Lines.FindIndex(l => l.Contains("restored after looking aside", StringComparison.Ordinal));
+        Assert.True(learnt >= 0 && aside > learnt && measured > aside && turnBack > aside && restored > turnBack, log);
+        // Live 18:44-18:48 (0.25.11): one step measured right after a turn read 19 -> -11 -> 169 -> 27 deg in the walled
+        // stretch (sliding along walls). Turned back as far as it went, the walk takes the heading it had before - learnt over
+        // many steps with the camera ahead - and the usual rules correct what the turn left over.
+        Assert.Equal(Degrees(run.Lines[learnt]), Degrees(run.Lines[restored]));
+
+        static string Degrees(string line) => line[(line.IndexOf("turned ", StringComparison.Ordinal) + 7)..];
     }
 
     [Fact]
