@@ -103,6 +103,7 @@ public sealed partial class AutomationPilot
     private int _blossomScanStage = -1;          // walk scan step (TickBlossomScan): 1 looking left, 3 looking right; -1 = none
     private long _blossomScanStepAt;             // walk scan: the next step (no walk click while the camera looks away)
     private long _blossomScanEndedAt;
+    private bool _blossomRemeasure;              // a walk scan ended: the next step measures the heading again; no scan before it
     private long _blossomFightScanAt;            // fight: the last camera step looking for the next Jaso
     private long _blossomFightLookAt;
     private bool _blossomFightTurned;            // fight: the camera turned - the walk learns the heading again after it
@@ -175,6 +176,7 @@ public sealed partial class AutomationPilot
         _blossomJasoSeenAt = 0;
         _blossomScanStage = -1;
         _blossomScanEndedAt = 0;
+        _blossomRemeasure = false;
         _blossomFightTurned = false;
         _blossomNextJasoSeen = false;
         _blossomTiltDue = false;
@@ -544,9 +546,9 @@ public sealed partial class AutomationPilot
 
     /// <summary>
     /// One step of the walk scan, at <see cref="_blossomScanStepAt"/>: 0 turn left; 1 look there, turn right (back to the
-    /// middle); 2 turn right; 3 look there, turn left; 4 back in the middle = done. Every turn is one ScanSideMs hold, so
-    /// the left and the right turns match hold for hold (a key's own start-up lag would make one 2x hold turn further than
-    /// two 1x holds). False when it clicked a Jaso or the input was refused (the caller returns).
+    /// middle); 2 a walk click on the way, turn right; 3 look there, turn left; 4 back in the middle = done. Every turn is
+    /// one ScanSideMs hold, so the left and the right turns match hold for hold (a key's own start-up lag would make one 2x
+    /// hold turn further than two 1x holds). False when it clicked a Jaso or the input was refused (the caller returns).
     /// </summary>
     private bool TickBlossomScan(Mat frame, long now)
     {
@@ -564,6 +566,10 @@ public sealed partial class AutomationPilot
                     return Refused();
                 break;
             case 2:
+                // The camera passes the middle: the walk's own way again - one more long click, so the character keeps running
+                // through the scan (live 17:31, 0.25.9: one click before it was not enough, it stood still for most of it).
+                if (_blossomDir is (double wx, double wy))
+                    BlossomWalkClick(frame, wx, wy, now, far: !_blossomNear);
                 if (!_controls.Turn(TurnDirection.Right, side))
                     return Refused();
                 break;
@@ -599,7 +605,10 @@ public sealed partial class AutomationPilot
 
     /// <summary>
     /// A walk scan is over. Stopped with the camera looking away (a Jaso clicked, a fight started) -> the next walk step
-    /// learns the heading again; back where it was -> the heading holds, and the time spent looking teaches nothing.
+    /// learns the heading again from a click straight up. Back in the middle -> the walk clicks on the same way, and its
+    /// next step measures the heading again (<see cref="_blossomRemeasure"/>): the camera does not come back exactly, and
+    /// live 17:35-17:48 (0.25.9) the small turns added up until the walk ran ~2700 units off the route into a wall. The
+    /// time spent looking teaches nothing (the next read only takes the spot).
     /// </summary>
     private void EndBlossomScan(bool found, long now)
     {
@@ -610,11 +619,17 @@ public sealed partial class AutomationPilot
         _blossomScanStage = -1;
         _blossomScanEndedAt = now;
         if (away)
+        {
             ForgetBlossomHeading();
+        }
         else
+        {
             _lastCoords = null;
+            _blossomRemeasure = _blossomHeadingKnown;
+        }
+
         if (!found)
-            Log?.Invoke(LogLevel.Info, "Looked left and right - no Jaso in view; walking on the same way.");
+            Log?.Invoke(LogLevel.Info, "Looked left and right - no Jaso in view; walking on the same way, the next step checks the heading.");
     }
 
     /// <summary>
@@ -690,6 +705,7 @@ public sealed partial class AutomationPilot
     private void ForgetBlossomHeading()
     {
         _blossomHeadingKnown = false;
+        _blossomRemeasure = false;
         _blossomHeadingMisses = 0;
         _lastCoords = null;
         _simpleClick = null;
@@ -858,11 +874,16 @@ public sealed partial class AutomationPilot
             return;
         }
 
-        TapBlossomTab(now);
+        // During a walk scan neither Tab nor the target bar's whole-screen read: nothing can be targeted while the camera looks
+        // away (only the scan's own looks click a Jaso, and that ends it), and each read made every scan step wait (live 17:31,
+        // 0.25.9: a scan took 7-9 s instead of ~4).
+        bool scanning = _blossomScanStage >= 0;
+        if (!scanning)
+            TapBlossomTab(now);
 
         // The target bar every BlossomTargetCheckMs (a whole-screen read), not on every click. After a fight given up,
         // targets are ignored for a while: the same one would only start the same fight again.
-        if (now >= _blossomTargetAt)
+        if (!scanning && now >= _blossomTargetAt)
         {
             _blossomTargetAt = now + BlossomTargetCheckMs;
             if (now >= _blossomIgnoreTargetsUntil && await FindBlossomTargetAsync(frame) is { } target && BlossomTargetAtFullHealth(target, now))
@@ -900,7 +921,11 @@ public sealed partial class AutomationPilot
         // heading. Not while standing at a waypoint: the click would walk it off, and the pause is kept short (AFK checker).
         if (_blossomJasoSeenAt == 0)
             _blossomJasoSeenAt = now;   // the first scan comes ScanEveryMs into the walk
+        // And only with the heading known and measured since the last scan: each tick waits for the target bar's read, so the
+        // next scan (1.5 s on) used to start before the walk's next coordinate read - live 17:35-17:48 the heading was learnt
+        // once in 13 minutes and the camera's drift was never seen.
         if (b.ClickToTarget && b.ScanEveryMs > 0 && _blossomScanStage < 0 && _blossomPauseSince == 0
+            && _blossomHeadingKnown && !_blossomRemeasure
             && _blossomDir is (double sx, double sy) && now - Math.Max(_blossomJasoSeenAt, _blossomScanEndedAt) >= b.ScanEveryMs)
         {
             Log?.Invoke(LogLevel.Info, $"No Jaso seen for {(now - Math.Max(_blossomJasoSeenAt, _blossomScanEndedAt)) / 1000.0:0.#}s - Scanning: " +
@@ -1076,6 +1101,11 @@ public sealed partial class AutomationPilot
                 {
                     SetBlossomHeading(angle, "learnt from the first step");
                 }
+                else if (_blossomRemeasure)
+                {
+                    // The first step after a walk scan: the camera is back only roughly where it was (EndBlossomScan).
+                    SetBlossomHeading(angle, "re-measured after the scan");
+                }
                 else if (Math.Abs(Math.IEEERemainder(angle - _headingError, 2 * Math.PI)) > BlossomHeadingMissRad)
                 {
                     // Far from what the heading says: a wall or a mob pushed one step - or the first step was such a push
@@ -1214,6 +1244,7 @@ public sealed partial class AutomationPilot
         _blossomHeadingKnown = true;
         _blossomHeadingMisses = 0;
         _blossomHeadingAge = 0;
+        _blossomRemeasure = false;
         Log?.Invoke(LogLevel.Info, $"Heading {how}: the view is turned {angle * 180 / Math.PI:0} deg from north.");
     }
 

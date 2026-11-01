@@ -179,7 +179,7 @@ words and the map scroll-arrow result. `--crop` writes `<frame>.crop.png` next t
 Core tests and the refactor parity gate (M1, 2026-10-27):
 
 ```powershell
-dotnet test tests\WuxAuto.Core.Tests        # xUnit, platform-free Core only (962 tests, ~4-8 min; the pilot tests tick a
+dotnet test tests\WuxAuto.Core.Tests        # xUnit, platform-free Core only (964 tests, ~4-8 min; the pilot tests tick a
                                            # blank Mat with a scripted OCR scene - see tests/ in section 3)
 # probe baseline: runs every SelfTest probe over a frozen, local-only frame set (never committed)
 # and writes normalised output; run it before and after a refactor and diff the two
@@ -1194,10 +1194,17 @@ teleport in again (LOD's rule); still in town after the teleport = "destination 
   right"): one walk click stretched to the edge of the click area (`BlossomWalkClick(far: true)`; the character runs on to
   that world point while the camera turns), A held `ScanSideMs` **700** (clamp 100-3000), look; D held `ScanSideMs` twice
   (equal holds, so a key's start-up lag turns left and right alike), look; A held `ScanSideMs` - back where it started
-  (`TickBlossomScan`, stages 0-4, `BlossomScanSettleMs` 300 before each look). **No walk click and no coordinate read during
-  the sweep**; back, the heading holds (`_lastCoords` cleared only, so the ~4 s of running teaches nothing and is no jump) -
-  "Looked left and right - no Jaso in view; walking on the same way." A Jaso while looking away -> clicked, and the walk then
-  learns the heading again. Until 16:30 it was `ScanTaps` 6 taps of `D` with the walk clicking on in between: every "forward"
+  (`TickBlossomScan`, stages 0-4, `BlossomScanSettleMs` 300 before each look). **No coordinate read during the sweep, and walk
+  clicks only with the camera in the middle** - before it, and again between the two D holds (live 17:31, 0.25.9: with the one
+  click before it the character stood still for most of the scan, the AFK Checker counted up and sent it to town); **no Tab
+  and no target-bar read either** (each whole-screen read made every scan step wait: 7-9 s a scan instead of ~4). Back, the
+  walk clicks on the same way and **its next step re-measures the heading** (`_blossomRemeasure` -> `SetBlossomHeading(...,
+  "re-measured after the scan")`; `_lastCoords` cleared, so the ~4 s of running teaches nothing and is no jump), and **no scan
+  starts before the heading is known and measured since the last scan** (live 17:35-17:48, 0.25.9: the camera does not come
+  back exactly - the minimap beam went from north-west to east - and with every tick waiting for the target read the next
+  scan always started before the walk's next coordinate read, so the heading was learnt once in 13 min and the walk ran
+  ~2700 units east of the route into a wall). Blocked (no step >= 60) = no scans, which leaves the unblock steps alone.
+  A Jaso while looking away -> clicked, and the walk then learns the heading again from a click straight up. Until 16:30 it was `ScanTaps` 6 taps of `D` with the walk clicking on in between: every "forward"
   click went right in the world, into the wall near the entrance (`ScanTaps` is gone; a saved value is ignored).
   `WindowInput.KeyUp` now lets go of any key it sent down even after an F10 unbind or Dry run ticked mid-hold (it refused an
   unbound window, so a held A could stick for every program; checked with a scratch probe: A held, unbind, released).
@@ -1210,7 +1217,7 @@ teleport in again (LOD's rule); still in town after the teleport = "destination 
   first, own spot, a red-brown post, a fan without the skirt, under the UI; candidates: far small, fan only, a flower dot, the
   own spot as partial) and `BlossomPilotTests` (`NoTab_*`, `NoJasoInView_*`, `ScanFindsNothing_*`, `InAFight_*`,
   `SwordCursor_*`, `FarPartialJaso_*`, `AJasoNextToTheCharacter_*`, `SideOnJaso_*`, `AJasoAtTheHorizon_*`,
-  `TheWalkScan_KeepsTheCharacterMoving`, `LearntSword_*`).
+  `TheWalkScan_KeepsTheCharacterMoving`, `TheWalkScan_PressesNoTab_*`, `NoScan_BeforeTheWalkKnowsItsHeading`, `LearntSword_*`).
   Probe: `--jaso <dir>` (full / partial figures + click points, `<frame>.jaso.png`: green full, yellow partial). **Click
   snapshots** (user, 2026-11-01 15:55: "Yes, add snapshots" - live 0.25.7 15:49-15:50, three clicks around the character
   targeted nothing): every click on a Jaso saves `debug\jaso-clicks\<time>_jaso_click_<x>_<y>.jpg`

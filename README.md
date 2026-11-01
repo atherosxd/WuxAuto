@@ -297,8 +297,10 @@ After the click it waits up to 7 s, without walking on or turning the camera, wh
 the target bar shows 3-6 s after the click). When the target bar shows "[S]Jaso Practitioner" the fight starts; three
 clicks that target nothing and it leaves Jasos alone for 5 s. On the walk, after 1.5 s without seeing one it clicks once
 far ahead on the way to the waypoint (the character keeps running), then holds `A` 0.7 s to look left, `D` to look right,
-and `A` again to look ahead as before (`Blossom.ScanSideMs` in settings.json, default 700). It clicks nothing else while
-the camera looks away - a "forward" click then would send the character sideways - and walks on the same way afterwards.
+and `A` again to look ahead as before (`Blossom.ScanSideMs` in settings.json, default 700). It clicks on the way again when
+the camera passes the middle, so the character keeps running, but never while the camera looks left or right - a "forward"
+click then would send the character sideways - and walks on the same way afterwards. The camera never comes back exactly,
+so the next step checks the walking direction again before another scan may start.
 In a fight it turns the camera one step every 3 s, remembers the next Jaso it sees and clicks her right after the kill;
 after that turn (or a Jaso clicked while looking left or right) the walk learns the direction again. One far off at the horizon is left alone - the
 game ignores a click that far - until the walk brings her closer. Inside her green AOE dome her colours change and she is

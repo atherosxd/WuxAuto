@@ -1158,7 +1158,7 @@ public class BlossomPilotTests
     {
         // User, 2026-11-01: "also add when running, to rotate the camera to scan for the mob".
         // User, 16:30: "instead of D tap, hold D or A longer, Actually better to look Left(A) and then right(D)".
-        var (settings, input, ocr) = Harness(() => "15000 , 15000");
+        var (settings, input, ocr) = Harness(MovingNorth());
         settings.Blossom.ScanEveryMs = 1000;
         settings.Blossom.ScanSideMs = 100;
         using var frame = Blank.Bgra(Height, Width);
@@ -1182,25 +1182,51 @@ public class BlossomPilotTests
     }
 
     [Fact]
-    public async Task ScanFindsNothing_LooksLeftThenRight_ComesBack_AndKeepsTheHeading()
+    public async Task ScanFindsNothing_LooksLeftThenRight_ComesBack_AndMeasuresTheHeadingBeforeTheNextScan()
     {
         // User, 16:30: "still follow the waypoints before as it always goes right where there is a wall near the entrance" -
         // the old scan turned right only and the walk then took the new view as its way; now the camera comes back.
-        var (settings, input, ocr) = Harness(() => "15000 , 15000");
+        // Live 17:35-17:48 (0.25.9): it does not come back exactly. The heading was learnt once and never again - every scan
+        // started before the walk's next coordinate read - and the small turns added up until the walk ran east, ~2700 units
+        // off the route, into a wall. So the first step after a scan measures the heading again, and no scan comes before it.
+        var (settings, input, ocr) = Harness(MovingNorth());
         settings.Blossom.ScanEveryMs = 1000;
         settings.Blossom.ScanSideMs = 100;
 
         var run = await RunAsync(settings, input, ocr, PilotPhase.BlossomWalk,
-            (_, lines) => lines.Any(l => l.Contains("no Jaso", StringComparison.Ordinal)), 12000);
+            (_, lines) => lines.Any(l => l.Contains("re-measured after the scan", StringComparison.Ordinal)), 12000);
 
         string log = string.Join("\n", run.Lines) + "\n" + string.Join("\n", input.Calls);
         // Every turn is one ScanSideMs hold: left, right twice (past the middle), left - back where it started.
         var turns = input.Calls.Where(c => c is "KeyDown A" or "KeyDown D").Take(4).ToList();
         Assert.Equal(["KeyDown A", "KeyDown D", "KeyDown D", "KeyDown A"], turns);
+        int learnt = run.Lines.FindIndex(l => l.Contains("Heading learnt from the first step", StringComparison.Ordinal));
         int scan = run.Lines.FindIndex(l => l.Contains("Scanning", StringComparison.Ordinal));
-        Assert.True(scan >= 0, log);
-        Assert.DoesNotContain(run.Lines.Skip(scan), l => l.Contains("learns the heading", StringComparison.Ordinal)
-                                                         || l.Contains("Heading learnt from the first step", StringComparison.Ordinal));
+        int back = run.Lines.FindIndex(l => l.Contains("no Jaso", StringComparison.Ordinal));
+        int measured = run.Lines.FindIndex(l => l.Contains("re-measured after the scan", StringComparison.Ordinal));
+        Assert.True(learnt >= 0 && scan > learnt && back > scan && measured > back, log);   // no scan before the heading is known
+        Assert.DoesNotContain(run.Lines.Skip(back).Take(measured - back), l => l.Contains("Scanning", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task NoScan_BeforeTheWalkKnowsItsHeading()
+    {
+        // The coordinates never move, so the heading is never learnt: a scan then would only turn a camera nothing can steer by.
+        var (settings, input, ocr) = Harness(() => "15000 , 15000");
+        settings.Blossom.ScanEveryMs = 1000;
+        settings.Blossom.ScanSideMs = 100;
+
+        var run = await RunAsync(settings, input, ocr, PilotPhase.BlossomWalk, (_, _) => false, 4000);
+
+        Assert.DoesNotContain(run.Lines, l => l.Contains("Scanning", StringComparison.Ordinal));
+        Assert.DoesNotContain("KeyDown A", input.Calls);
+    }
+
+    /// <summary>Coordinates that move north 200 units a second from 15000, 15000: the walk learns its heading from them.</summary>
+    private static Func<string> MovingNorth()
+    {
+        long start = Environment.TickCount64;
+        return () => $"15000 , {15000 - (Environment.TickCount64 - start) / 5}";
     }
 
     [Fact]
@@ -1410,7 +1436,7 @@ public class BlossomPilotTests
         // User, 2026-11-01: "as the AFK Checker is fast" / "always try to move to the waypoint while tracking": a long walk
         // click goes out right before the camera looks away (the character runs on while it looks left and right), and the
         // walk clicks start again once it is back.
-        var (settings, input, ocr) = Harness(() => "15000 , 15000");
+        var (settings, input, ocr) = Harness(MovingNorth());
         settings.Blossom.ScanEveryMs = 1000;
         settings.Blossom.ScanSideMs = 100;
 
@@ -1422,9 +1448,38 @@ public class BlossomPilotTests
         int look = input.Calls.IndexOf("KeyDown A");
         Assert.True(look > 0, log);
         Assert.StartsWith("Click ", input.Calls.Take(look).Last(c => !c.StartsWith("Key", StringComparison.Ordinal)));   // a walk click right before
-        int back = input.Calls.LastIndexOf("KeyDown A");
-        Assert.DoesNotContain(input.Calls.Skip(look).Take(back - look), c => c.StartsWith("Click ", StringComparison.Ordinal));   // none while looking away
-        Assert.Contains(input.Calls.Skip(back), c => c.StartsWith("Click ", StringComparison.Ordinal));   // walking on after
+        int right1 = input.Calls.IndexOf("KeyDown D"), right2 = input.Calls.IndexOf("KeyDown D", right1 + 1);
+        int back = input.Calls.IndexOf("KeyDown A", right2 + 1);
+        Assert.True(right1 > look && right2 > right1 && back > right2, log);
+        bool IsClick(string c) => c.StartsWith("Click ", StringComparison.Ordinal);
+        Assert.DoesNotContain(input.Calls.Skip(look).Take(right1 - look), IsClick);   // none while looking left
+        // Live 17:31 (0.25.9): one click before the scan was not enough - the character stood still for most of it. The camera
+        // passes the middle between the two right turns: the walk's own way again, so one more long click goes out there.
+        Assert.Contains(input.Calls.Skip(right1).Take(right2 - right1), IsClick);
+        Assert.DoesNotContain(input.Calls.Skip(right2).Take(back - right2), IsClick);   // none while looking right
+        Assert.Contains(input.Calls.Skip(back), IsClick);   // walking on after
+    }
+
+    [Fact]
+    public async Task TheWalkScan_PressesNoTab_AndReadsNoTargetBar_UntilItIsBack()
+    {
+        // Live 17:31 (0.25.9): a scan took 7-9 s instead of ~4 - each step also waited for the target bar's whole-screen read.
+        // Nothing can be targeted while the camera looks away (only the scan's own looks click a Jaso), so the scan skips
+        // both; Tab and the target read come back after it.
+        var (settings, input, ocr) = Harness(MovingNorth());
+        settings.Blossom.ScanEveryMs = 1000;
+        settings.Blossom.ScanSideMs = 300;
+        settings.Blossom.TabEveryMs = 300;
+
+        var run = await RunAsync(settings, input, ocr, PilotPhase.BlossomWalk,
+            (_, lines) => lines.Any(l => l.Contains("no Jaso", StringComparison.Ordinal)) && input.Calls.LastIndexOf("KeyTap Tab") > input.Calls.LastIndexOf("KeyUp A"), 12000);
+
+        string log = string.Join("\n", run.Lines) + "\n" + string.Join("\n", input.Calls);
+        int look = input.Calls.IndexOf("KeyDown A");
+        int back = input.Calls.IndexOf("KeyUp A", input.Calls.IndexOf("KeyDown A", input.Calls.IndexOf("KeyDown D") + 1));
+        Assert.True(look > 0 && back > look, log);
+        Assert.DoesNotContain(input.Calls.Skip(look).Take(back - look), c => c == "KeyTap Tab");
+        Assert.Contains(input.Calls.Skip(back), c => c == "KeyTap Tab");
     }
 
     [Fact]
