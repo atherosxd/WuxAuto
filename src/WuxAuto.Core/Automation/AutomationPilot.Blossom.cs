@@ -287,6 +287,7 @@ public sealed partial class AutomationPilot
     {
         var b = _settings.Blossom;
         long now = Environment.TickCount64;
+
         // User, 2026-11-01: "upon arrival tilt up a little bit" - before the turn's first tap.
         if (_blossomTurnTaps == 0 && _blossomFineTaps == 0)
             QueueBlossomTilt();

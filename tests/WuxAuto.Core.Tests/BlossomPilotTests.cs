@@ -223,6 +223,38 @@ public class BlossomPilotTests
     }
 
     [Fact]
+    public async Task InTown_TheAutohuntLinesComeLate_TheCheckWaitsForThem_AndEndsWithItOff()
+    {
+        // Live 22:31 (0.25.13): each autohunt line showed ~2.5-3 s after its 'J'. The check pressed again after 2 s with no
+        // line, read press 1's late "started" as press 2's answer, pressed a third time, and gave up "cannot tell" with the
+        // log reading started -> ended -> started: the autohunt was on, and its Smart Farm journey pulled the character back to
+        // town 12 s after it arrived in Blossom Garden (also 17:30). User, 22:40: "you can't activate autohunt inside, so make
+        // sure it is off in the city".
+        bool on = false;
+        int seen = 0;
+        var shown = new List<(long At, string Text)>();
+        var (settings, input, ocr) = Harness(() => "10362 , 13793", titleText: "[Piercing City]", log: i =>
+        {
+            long now = Environment.TickCount64;
+            for (; seen < i.Calls.Count(c => c == "KeyTap J"); seen++)
+            {
+                on = !on;
+                shown.Add((now, on ? "Auto hunt started." : "Auto hunt stopped; Smart Farm journey cancelled."));
+            }
+
+            return shown.Where(s => now - s.At >= 2500).Select(s => s.Text).ToArray();
+        });
+
+        var run = await RunAsync(settings, input, ocr, PilotPhase.AutohuntOff,
+            (p, _) => p.Phase != PilotPhase.AutohuntOff, 25000);
+
+        string log = string.Join("\n", run.Lines) + "\n" + string.Join("\n", input.Calls);
+        Assert.False(on, log);                                               // off when the check let it go
+        Assert.Equal(2, input.Calls.Count(c => c == "KeyTap J"));            // on, then off - no blind presses in between
+        Assert.Contains(run.Lines, l => l.Contains("Autohunt is off", StringComparison.Ordinal));
+    }
+
+    [Fact]
     public async Task StartInside_SkipsThePillars_AndWalks()
     {
         // User, 2026-10-30: "it is possible to start it already in the map and no need to look for the pillar" - away from

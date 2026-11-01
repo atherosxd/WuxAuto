@@ -1388,7 +1388,15 @@ public sealed partial class AutomationPilot
         _huntOffPresses = 0;
         _huntOffPressedAt = 0;
         _huntOffBaseline = [];
+        _huntOffLinesSeen = string.Empty;
+        _huntOffLinesChangedAt = 0;
     }
+
+    private const int AutohuntLineWaitMs = 4500;     // no autohunt line this long after a tap -> the key was eaten
+    private const int AutohuntQuietMs = 1200;        // a new line: the combat log unchanged this long before deciding
+    private const int AutohuntDecideMaxMs = 7000;    // ... but no longer than this after the tap
+    private string _huntOffLinesSeen = string.Empty;
+    private long _huntOffLinesChangedAt;
 
     /// <summary>
     /// Makes the autohunt <paramref name="wantOn"/> (on / off), confirmed in the combat log - J is a
@@ -1458,6 +1466,24 @@ public sealed partial class AutomationPilot
         }
 
         bool? on = AutohuntLog.NewState(_huntOffBaseline, lines, seq.AutohuntStartedText, seq.AutohuntEndedText, out string? line, seq.AutohuntStoppedText);
+
+        // A new line: decide only once the log has settled (live 2026-11-01 22:31: each line showed ~2.5-3 s after its tap,
+        // and a decision on the first new line took press 1's late "started" for press 2's answer - a third press left the
+        // autohunt on, and its Smart Farm journey pulled the character back to town from Blossom Garden).
+        string seen = string.Join("\n", lines);
+        if (seen != _huntOffLinesSeen)
+        {
+            _huntOffLinesSeen = seen;
+            _huntOffLinesChangedAt = now;
+        }
+
+        if (on != null && now - _huntOffLinesChangedAt < AutohuntQuietMs && now - _huntOffPressedAt < AutohuntDecideMaxMs)
+        {
+            _detail = $"'{key}' x{_huntOffPresses}: waiting for the combat log to settle";
+            _waitUntil = now + 300;
+            return false;
+        }
+
         if (on == wantOn)
         {
             Log?.Invoke(LogLevel.Success, $"Autohunt is {want} {where} ('{line}' after '{key}' x{_huntOffPresses}).");
@@ -1479,7 +1505,8 @@ public sealed partial class AutomationPilot
             return true;
         }
 
-        if (now - _huntOffPressedAt < 2000)
+        // The line shows ~2.5-3 s after the tap (live 22:31): a second tap after 2 s took a slow line for an eaten key.
+        if (now - _huntOffPressedAt < AutohuntLineWaitMs)
         {
             _detail = $"waiting for an autohunt line in the combat log ('{key}' x{_huntOffPresses})";
             _waitUntil = now + 400;
