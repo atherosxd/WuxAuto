@@ -290,13 +290,17 @@ Blossom Garden needs no key.
 default) the pilot looks for the Jaso Practitioner itself: a dark magenta fan over a red-orange dress, not under the
 screen's panels. Attacking or turned away (her fan glows green), her red dress alone is enough on a standing figure; the
 pilot tells it apart from wooden pillars, reeds and tulips by its redder colour, and from your own wings by their navy. A
-Jaso right beside your character is found too. The click goes on her dress (her body), not the middle of her outline.
+Jaso right beside your character is found too; your own character is told apart by its HP bar (red over blue, under its
+feet), so it is never clicked even when the camera is pulled in close and it is drawn big. The click goes on her dress (her
+body), not the middle of her outline.
 After the click it waits up to 7 s, without walking on or turning the camera, while the character runs to her (from afar
 the target bar shows 3-6 s after the click). When the target bar shows "[S]Jaso Practitioner" the fight starts; three
-clicks that target nothing and it leaves Jasos alone for 5 s. On the walk, after 1.5 s without seeing one it turns the
-camera right in 6 steps, looking after each, and keeps walking to the waypoint meanwhile (standing still brings the AFK
-Checker fast); in a fight it turns the camera one step every 3 s, remembers the next Jaso it sees and clicks her right
-after the kill. After any camera turn the walk learns the direction again. One far off at the horizon is left alone - the
+clicks that target nothing and it leaves Jasos alone for 5 s. On the walk, after 1.5 s without seeing one it clicks once
+far ahead on the way to the waypoint (the character keeps running), then holds `A` 0.7 s to look left, `D` to look right,
+and `A` again to look ahead as before (`Blossom.ScanSideMs` in settings.json, default 700). It clicks nothing else while
+the camera looks away - a "forward" click then would send the character sideways - and walks on the same way afterwards.
+In a fight it turns the camera one step every 3 s, remembers the next Jaso it sees and clicks her right after the kill;
+after that turn (or a Jaso clicked while looking left or right) the walk learns the direction again. One far off at the horizon is left alone - the
 game ignores a click that far - until the walk brings her closer. Inside her green AOE dome her colours change and she is
 not always found. (`Blossom.UseSwordCursor` in settings.json turns on an extra check that hovers the pointer and clicks
 only where the game's cursor becomes a sword; it is off, because the cursor read from outside the game was unreliable.)

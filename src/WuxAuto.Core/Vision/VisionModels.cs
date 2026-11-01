@@ -34,6 +34,9 @@ public sealed record JasoCandidate(PixelRect Box, bool Full)
 {
     /// <summary>Where to click her: the middle of her orange skirt (her body), else 60 % down the box's middle.</summary>
     public (int X, int Y) Body { get; init; } = (Box.CenterX, Box.Y + (int)(Box.Height * 0.6));
+
+    /// <summary>Where the character itself stands (its HP bar's box, else the fixed middle spot): never a full figure.</summary>
+    public bool AtOwnSpot { get; init; }
 }
 
 public sealed record TextHit(string Text, double Similarity, PixelRect Bounds, string LineText, PixelRect LineBounds, double OcrMs)

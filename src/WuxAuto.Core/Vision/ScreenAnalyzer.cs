@@ -823,9 +823,86 @@ public sealed class ScreenAnalyzer : IDisposable
         => JasoFigures(frame, excluded, partialToo: true);
 
     /// <summary>
+    /// The character itself, from its own HP bar (live 2026-11-01 16:23: near trees the game pulls the camera in and the
+    /// character is drawn big and low - its HP bar at 0.75 h instead of 0.56 h - and its red mask and legs were clicked as
+    /// Jasos). The bar sits under its feet, centred: a red strip (HP) over a blue one (MP), both starting at the same left
+    /// edge - at 2048x1152 108x8 red, 4 px gap, 92x6 blue, left edge at w/2 - 54. The character's height on screen follows
+    /// the bar's height (0.15 h tall with the bar at 0.556 h, 0.41 h with it at 0.752 h); the box covers it with a margin.
+    /// Null when no bar is found (a window over it, the character dead).
+    /// </summary>
+    public static PixelRect? FindOwnCharacter(Mat frame)
+    {
+        int w = frame.Width, h = frame.Height;
+        var roi = new PixelRect((int)(w / 2.0 - 0.08 * h), (int)(0.35 * h), (int)(0.16 * h), (int)(0.60 * h)).Clamp(w, h);
+        if (roi.Width < 16 || roi.Height < 16)
+            return null;
+
+        using var hsv = ToHsv(frame, roi);
+        using var red = new Mat();
+        using var red2 = new Mat();
+        using var blue = new Mat();
+        CvHelpers.InRange(hsv, new MCvScalar(0, 140, 110), new MCvScalar(10, 255, 255), red);
+        CvHelpers.InRange(hsv, new MCvScalar(170, 140, 110), new MCvScalar(180, 255, 255), red2);
+        CvInvoke.BitwiseOr(red, red2, red);
+        CvHelpers.InRange(hsv, new MCvScalar(95, 120, 100), new MCvScalar(130, 255, 255), blue);
+        byte[] r = CvHelpers.Bytes(red), b = CvHelpers.Bytes(blue);
+        int rw = roi.Width, minRun = Math.Max(6, (int)(0.012 * h)), maxGap = Math.Max(12, (int)(0.02 * h));
+
+        for (int y = 0; y < roi.Height; y++)
+        {
+            var (start, length) = LongestRun(r, y * rw, rw);
+            if (length < minRun)
+                continue;
+            double fromCentre = w / 2.0 - (roi.X + start);   // the bar's left edge, left of the centre line
+            if (fromCentre < 0.02 * h || fromCentre > 0.08 * h)
+                continue;
+
+            for (int dy = 2; dy <= maxGap && y + dy < roi.Height; dy++)
+            {
+                var (blueStart, blueLength) = LongestRun(b, (y + dy) * rw, rw);
+                if (blueLength < minRun || Math.Abs(blueStart - start) > 3)
+                    continue;
+
+                int barY = roi.Y + y;
+                double tall = Math.Clamp(0.15 * h + 1.33 * (barY - 0.556 * h), 0.12 * h, 0.5 * h) * 1.15;
+                double half = Math.Max(0.05 * h, 0.35 * tall);
+                return new PixelRect((int)(w / 2.0 - half), (int)(barY - tall), (int)(2 * half), (int)(tall + 0.01 * h));
+            }
+        }
+
+        return null;
+
+        // The longest run of set pixels in one row (gaps of 1-2 pixels bridged: JPEG / scaling noise).
+        static (int Start, int Length) LongestRun(byte[] mask, int offset, int width)
+        {
+            int bestStart = 0, bestLength = 0, start = -1, gap = 0;
+            for (int x = 0; x < width; x++)
+            {
+                if (mask[offset + x] != 0)
+                {
+                    if (start < 0)
+                        start = x;
+                    gap = 0;
+                    int length = x - start + 1;
+                    if (length > bestLength)
+                        (bestStart, bestLength) = (start, length);
+                }
+                else if (start >= 0 && ++gap > 2)
+                {
+                    start = -1;
+                    gap = 0;
+                }
+            }
+
+            return (bestStart, bestLength);
+        }
+    }
+
+    /// <summary>
     /// The character's own body column (centre within 0.035 h sideways and 0.08 h up or down of (0.5 w, 0.5 h)): a Jaso
     /// cannot stand there, beside it she can (user, 2026-11-01: "it doesn't detect the Jaso just beside the character" -
     /// this was 0.13 h by 0.16 h, which hid her). The character's wings spread wider; they are told apart by their navy.
+    /// The fallback when <see cref="FindOwnCharacter"/> finds no HP bar.
     /// </summary>
     public static bool IsOwnSpot(PixelRect box, int w, int h)
         => Math.Abs(box.X + box.Width / 2.0 - w / 2.0) < 0.035 * h && Math.Abs(box.Y + box.Height / 2.0 - 0.50 * h) < 0.08 * h;
@@ -846,6 +923,10 @@ public sealed class ScreenAnalyzer : IDisposable
         int w = frame.Width, h = frame.Height;
         if (w < 16 || h < 16)
             return [];
+
+        // The character itself, from its HP bar; without one, the fixed spot at the screen's middle (IsOwnSpot).
+        var own = FindOwnCharacter(frame);
+        why?.Add(own is { } ownBox ? $"own character (HP bar): {ownBox.X},{ownBox.Y} {ownBox.Width}x{ownBox.Height}" : "own character: no HP bar - the fixed spot");
 
         // The figures are found at half size (nearest pixel: the same mask a full-size pass shrunk would give) - the walk
         // looks every 0.7 s and a full-size pass (~130 ms at 2048x1152) held its clicks back. The fan and skirt shares are
@@ -917,7 +998,10 @@ public sealed class ScreenAnalyzer : IDisposable
                 continue;
             // The character's own spot (its dark wings with red flame edges read like a Jaso): never a full hit; a partial
             // candidate there (a Jaso fighting the character stands in it) is clicked only on a sword cursor.
-            bool ownSpot = IsOwnSpot(new PixelRect(x0, y0, bw, bh), w, h);
+            double fx = x0 + bw / 2.0, fy = y0 + bh / 2.0;
+            bool ownSpot = own is { } o
+                ? fx >= o.X && fx <= o.Right && fy >= o.Y && fy <= o.Bottom
+                : IsOwnSpot(new PixelRect(x0, y0, bw, bh), w, h);
             if (ownSpot && !partialToo && Reject("the character's own spot"))
                 continue;
             // The character's wings: dark navy with red flame edges - 26-54 % navy in their box beside the character (live
@@ -950,7 +1034,8 @@ public sealed class ScreenAnalyzer : IDisposable
                 var box2 = new PixelRect(x0, y0, bw, bh);
                 // User, 2026-11-01: "it click on its right not the body of the monster" - the box's middle can be off her body
                 // (her fan sticks out to one side); the middle of her orange skirt is on it.
-                hits.Add(body is { } b ? new JasoCandidate(box2, full) { Body = b } : new JasoCandidate(box2, full));
+                var found = new JasoCandidate(box2, full) { AtOwnSpot = ownSpot };
+                hits.Add(body is { } b ? found with { Body = b } : found);
             }
         }
 

@@ -179,7 +179,7 @@ words and the map scroll-arrow result. `--crop` writes `<frame>.crop.png` next t
 Core tests and the refactor parity gate (M1, 2026-10-27):
 
 ```powershell
-dotnet test tests\WuxAuto.Core.Tests        # xUnit, platform-free Core only (959 tests, ~4-8 min; the pilot tests tick a
+dotnet test tests\WuxAuto.Core.Tests        # xUnit, platform-free Core only (962 tests, ~4-8 min; the pilot tests tick a
                                            # blank Mat with a scripted OCR scene - see tests/ in section 3)
 # probe baseline: runs every SelfTest probe over a frozen, local-only frame set (never committed)
 # and writes normalised output; run it before and after a refactor and diff the two
@@ -1140,7 +1140,14 @@ teleport in again (LOD's rule); still in town after the teleport = "destination 
   tulip 0.043 h / 1.09 passed otherwise). **Wings**: a figure with >= 5 % navy (H 95-130, S >= 60, V 15-150) is never her -
   the character's wings were 26-54 % navy, four Jasos 0-0.3 %. **Own spot** shrunk to the body column (|dx| < 0.035 h,
   |cy - 0.5 h| < 0.08 h; was 0.13 h x 0.16 h and hid a Jaso fighting the character - user: "it doesn't detect the Jaso just
-  beside the character"). **Click point** `JasoCandidate.Body` = the middle of the skirt's orange pixels (user: "it click on its
+  beside the character"). **The character from its HP bar** (live 16:23, 0.25.8: near trees the game pulls the camera in and
+  the character is drawn big and low, its bar at 0.75 h instead of 0.56 h - its red mask and legs were clicked as Jasos):
+  `ScreenAnalyzer.FindOwnCharacter` looks in x w/2 ± 0.08 h, y 0.35-0.95 h for a red run (H 0-10 / 170-180, S >= 140,
+  V >= 110, >= 0.012 h long, left edge 0.02-0.08 h left of the centre line) with a blue run (H 95-130) starting within 3 px of
+  the same edge 2 px to 0.02 h below (2048x1152: 108x8 red, 4 px gap, 92x6 blue, left edge w/2 - 54); the box above it is
+  `tall = clamp(0.15 h + 1.33 (barY - 0.556 h), 0.12 h, 0.5 h) x 1.15` high, 0.35 x that each side (>= 0.05 h). A figure
+  centred in it is `JasoCandidate.AtOwnSpot` (never full); no bar -> the `IsOwnSpot` column below. The click snapshots draw
+  it in orange ("you"). **Click point** `JasoCandidate.Body` = the middle of the skirt's orange pixels (user: "it click on its
   right not the body of the monster" - the box's middle was off her body). Result: video 1 every frame she shows in but two
   inside her green dome (22/42 frames, the rest without her), video 2 17/24 (was 13); the saved Blossom frames give only the
   real Jasos (3 in debug, incl. one beside the character at 14:52). `--jaso <dir> --why` prints every figure's size, shape,
@@ -1169,8 +1176,8 @@ teleport in again (LOD's rule); still in town after the teleport = "destination 
   only that picture counts; `JasoMaxMisses` clicks in a row on the learnt picture without a target forget it. **At the
   character's own spot** (user 13:45: "doesn't
   target the moving monster / or making it's AOE attack. that is near the character and continues to rotate the cam"):
-  `ScreenAnalyzer.IsOwnSpot` figures are partial candidates now (never full, never clicked without the sword) - the own-spot
-  rule had hidden a Jaso fighting the character.
+  own-spot figures (`AtOwnSpot`: the HP-bar box, else `ScreenAnalyzer.IsOwnSpot`) are partial candidates now (never full,
+  never clicked without the sword) - the own-spot rule had hidden a Jaso fighting the character.
   No sword: a full figure is clicked at `JasoClickPoint` (centre, 60 % down) anyway (the v0.25.0 floor), a partial one never;
   look-alikes only -> no hovering for `JasoHoverPauseMs` 2 s. After a click `JasoClickWaitMs` **7000** with no walk clicks and
   no scans while the character runs to her (the usual target read starts the fight); `JasoMaxMisses` 3 clicks without a
@@ -1180,16 +1187,26 @@ teleport in again (LOD's rule); still in town after the teleport = "destination 
   each targeted **3-6 s after the click** (the character runs there first) - the 1.5 s wait then let the walk click on and
   the 4 s scan turn the camera away, which made most far clicks "nothing targeted"; hence the 7 s. The normal cursor's handle
   changes over time, hence the picture fingerprint. **Walk scan** ("also add when running, to rotate the camera to scan for
-  the mob"): no Jaso seen for `ScanEveryMs` **1500** (0 = off; 4000 until settings v27 - user: "can it not scan fast while running") -> `ScanTaps` **6** taps of `D` `ScanTapMs` **250**, one every
-  ~0.55 s (`_blossomScanStepAt`), a look before each; **the walk goes on in between** (user 13:50: "always try to move to the
-  waypoint while tracking", "the AFK Checker is fast" - the scan used to stand still ~3 s; the heading drifts while the camera
-  turns and the walk's own correction / re-learn takes it back); a Jaso -> click, scan over; none -> "Scanned N step(s) - no
-  Jaso in view". **Fight scan**
+  the mob"): no Jaso seen for `ScanEveryMs` **1500** (0 = off; 4000 until settings v27 - user: "can it not scan fast while
+  running"), not during a waypoint pause -> **look left, then right, then back** (user 16:30: "instead of D tap, hold D or A
+  longer, Actually better to look Left(A) and then right(D), still follow the waypoints before as it always goes right where
+  there is a wall near the entrance"; 16:32: "the current clicks trying to go forward but also rotates it, so it goes to the
+  right"): one walk click stretched to the edge of the click area (`BlossomWalkClick(far: true)`; the character runs on to
+  that world point while the camera turns), A held `ScanSideMs` **700** (clamp 100-3000), look; D held `ScanSideMs` twice
+  (equal holds, so a key's start-up lag turns left and right alike), look; A held `ScanSideMs` - back where it started
+  (`TickBlossomScan`, stages 0-4, `BlossomScanSettleMs` 300 before each look). **No walk click and no coordinate read during
+  the sweep**; back, the heading holds (`_lastCoords` cleared only, so the ~4 s of running teaches nothing and is no jump) -
+  "Looked left and right - no Jaso in view; walking on the same way." A Jaso while looking away -> clicked, and the walk then
+  learns the heading again. Until 16:30 it was `ScanTaps` 6 taps of `D` with the walk clicking on in between: every "forward"
+  click went right in the world, into the wall near the entrance (`ScanTaps` is gone; a saved value is ignored).
+  `WindowInput.KeyUp` now lets go of any key it sent down even after an F10 unbind or Dry run ticked mid-hold (it refused an
+  unbound window, so a held A could stick for every program; checked with a scratch probe: A held, unbind, released).
+  **Fight scan**
   ("do the rotate also even when attacking the current mob, and set that as a second subject"): every `FightScanEveryMs`
   **3000** (0 = off) one `D` tap and a look 300 ms later until a Jaso is in view (the one fought is at the feet, left out) ->
   remembered ("The next Jaso is in view ..."); at the kill (`LootWhileFighting`) the frame is searched again and the nearest
-  clicked at once, the rebuff then waits for the next pause. Every camera turn (scan, fight scan) -> `ForgetBlossomHeading`:
-  the next walk step clicks straight up and learns the heading. Pinned by `JasoDetectorTests` (drawn Jasos: found, nearest
+  clicked at once, the rebuff then waits for the next pause. A camera left turned (fight scan, a walk scan stopped by a
+  Jaso) -> `ForgetBlossomHeading`: the next walk step clicks straight up and learns the heading. Pinned by `JasoDetectorTests` (drawn Jasos: found, nearest
   first, own spot, a red-brown post, a fan without the skirt, under the UI; candidates: far small, fan only, a flower dot, the
   own spot as partial) and `BlossomPilotTests` (`NoTab_*`, `NoJasoInView_*`, `ScanFindsNothing_*`, `InAFight_*`,
   `SwordCursor_*`, `FarPartialJaso_*`, `AJasoNextToTheCharacter_*`, `SideOnJaso_*`, `AJasoAtTheHorizon_*`,
@@ -1321,9 +1338,10 @@ Input: `InputMode.ForegroundSendInput` (default) requires the bound HWND to be f
 otherwise the action is suppressed + logged and retried. `BackgroundMessages` posts to the HWND —
 works for some clicks, but **long key holds (the 5 s `A` sweep) only work in foreground mode**, and
 the sweep is skipped in background mode. Ctrl holds (`CtrlClick`, `CtrlKeyTap`, `CtrlWheel` for the
-zoom) all go through `WindowInput.WithCtrl`, which sends the foreground Ctrl key-up even when F10
-unbinds the window mid-hold (UI thread) — `KeyUp` refuses an unbound window, and an injected Ctrl
-left down sticks for every program.
+zoom) all go through `WindowInput.WithCtrl`. `KeyUp` lets go of every key this `WindowInput` sent
+down with SendInput even when F10 unbinds the window mid-hold (UI thread) or Dry run is ticked
+meanwhile (`_keysDown`; since 2026-11-01 - before, only `WithCtrl`'s Ctrl did, and `KeyUp` refused an
+unbound window): an injected key left down sticks for every program.
 
 ---
 

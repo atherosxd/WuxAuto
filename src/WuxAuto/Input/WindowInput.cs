@@ -13,10 +13,10 @@ namespace WuxAuto.Input;
 /// </summary>
 public sealed class WindowInput : IGameInput
 {
-    private const int VkLeftCtrl = 0xA2;
-
     private readonly AppSettings _settings;
     private readonly Dictionary<string, (int VirtualKey, int ScanCode)> _keyCache = new(StringComparer.OrdinalIgnoreCase);
+    // Keys sent down with SendInput and not let go yet: KeyUp releases them whatever changed meanwhile (see KeyUp).
+    private readonly Dictionary<string, (int VirtualKey, int ScanCode)> _keysDown = new(StringComparer.OrdinalIgnoreCase);
     private long _lastSuppressionLog;
 
     public WindowInput(AppSettings settings)
@@ -89,11 +89,28 @@ public sealed class WindowInput : IGameInput
         }
 
         SendKeyboard(key.Value.VirtualKey, key.Value.ScanCode, down: true);
+        lock (_keysDown)
+            _keysDown[keyName] = key.Value;
         return true;
     }
 
+    /// <summary>
+    /// Lets go of a key. One this instance pressed with SendInput is always let go, even when F10 unbinds the window (UI
+    /// thread) or Dry run is ticked during the hold: foreground input is global, and a key left down sticks for every
+    /// program (the Blossom walk scan holds A / D 0.7 s). False when the window is not bound.
+    /// </summary>
     public bool KeyUp(string keyName)
     {
+        bool wasDown;
+        (int VirtualKey, int ScanCode) held;
+        lock (_keysDown)
+            wasDown = _keysDown.Remove(keyName, out held);
+        if (wasDown)
+        {
+            SendKeyboard(held.VirtualKey, held.ScanCode, down: false);
+            return IsBound;
+        }
+
         if (!IsBound)
             return false;
 
@@ -151,16 +168,14 @@ public sealed class WindowInput : IGameInput
     public bool CtrlWheel(int clientX, int clientY, int notches) => WithCtrl(() => Wheel(clientX, clientY, notches));
 
     /// <summary>
-    /// Runs <paramref name="action"/> with the left Ctrl key down and always lets go of it. Foreground
-    /// input is global, so the release goes out even when F10 unbinds the window (UI thread) or Dry run
-    /// is ticked meanwhile - a Ctrl left down would stick for every program.
+    /// Runs <paramref name="action"/> with the left Ctrl key down and always lets go of it - KeyUp releases a
+    /// key sent down even when F10 unbinds the window (UI thread) or Dry run is ticked meanwhile.
     /// </summary>
     private bool WithCtrl(Func<bool> action)
     {
         if (!KeyDown("LeftCtrl"))
             return false;
 
-        bool global = !IsDryRun && _settings.Input.Mode != InputMode.BackgroundMessages;
         try
         {
             Thread.Sleep(40);
@@ -169,10 +184,7 @@ public sealed class WindowInput : IGameInput
         finally
         {
             Thread.Sleep(40);
-            if (global)
-                SendKeyboard(VkLeftCtrl, (int)NativeMethods.MapVirtualKey(VkLeftCtrl, NativeMethods.MAPVK_VK_TO_VSC), down: false);
-            else
-                KeyUp("LeftCtrl");
+            KeyUp("LeftCtrl");
         }
     }
 

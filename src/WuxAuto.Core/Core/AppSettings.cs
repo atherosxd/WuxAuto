@@ -393,14 +393,16 @@ public sealed class BlossomSettings
     public bool ClickToTarget { get; set; } = true;
 
     /// <summary>
-    /// On the walk, no Jaso seen this long -> turn the camera ScanTaps steps of ScanTapMs, looking before each, while the walk
-    /// goes on (user, same day: "when running, rotate the camera to scan for the mob", "can it not scan fast while running";
-    /// 4000 until settings v27). 0 = off.
+    /// On the walk, no Jaso seen this long -> one long walk click on the way, then look left (A held ScanSideMs), look right
+    /// (D held 2x ScanSideMs) and turn back (user, same day: "when running, rotate the camera to scan for the mob", "can it not
+    /// scan fast while running"; 4000 until settings v27; "look Left(A) and then right(D)" replaced the 6 D taps). 0 = off.
     /// </summary>
     public int ScanEveryMs { get; set; } = 1500;
 
-    public int ScanTaps { get; set; } = 6;
+    /// <summary>How long the walk scan holds A to look left, and D (twice) to look right; the same A again turns it back.</summary>
+    public int ScanSideMs { get; set; } = 700;
 
+    /// <summary>The fight scan's camera step (one D tap of this length).</summary>
     public int ScanTapMs { get; set; } = 250;
 
     /// <summary>

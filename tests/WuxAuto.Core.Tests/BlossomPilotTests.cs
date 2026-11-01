@@ -1157,9 +1157,10 @@ public class BlossomPilotTests
     public async Task NoJasoInView_TheCameraScans_AndOneThatComesIntoViewIsClicked()
     {
         // User, 2026-11-01: "also add when running, to rotate the camera to scan for the mob".
+        // User, 16:30: "instead of D tap, hold D or A longer, Actually better to look Left(A) and then right(D)".
         var (settings, input, ocr) = Harness(() => "15000 , 15000");
         settings.Blossom.ScanEveryMs = 1000;
-        settings.Blossom.ScanTaps = 6;
+        settings.Blossom.ScanSideMs = 100;
         using var frame = Blank.Bgra(Height, Width);
         bool drawn = false;
 
@@ -1167,32 +1168,39 @@ public class BlossomPilotTests
             (_, _) => ClickedJasoAt(input, 900, 250), 12000,
             beforeTick: () =>
             {
-                if (!drawn && input.Calls.Count(c => c == "KeyDown D") >= 2)
+                if (!drawn && input.Calls.Contains("KeyDown A"))
                 {
                     drawn = true;
-                    DrawJaso(frame, 900, 250);   // she comes into view after the second camera step
+                    DrawJaso(frame, 900, 250);   // she shows when the camera looks left
                 }
             });
 
         string calls = string.Join("\n", input.Calls);
         Assert.True(ClickedJasoAt(input, 900, 250), string.Join("\n", run.Lines) + "\n" + calls);
-        Assert.InRange(input.Calls.Count(c => c == "KeyDown D"), 2, 3);   // the scan stops at her
+        Assert.DoesNotContain("KeyDown D", input.Calls);   // found looking left: no look to the right
         Assert.Contains(run.Lines, l => l.Contains("Scanning", StringComparison.Ordinal));
     }
 
     [Fact]
-    public async Task ScanFindsNothing_TheWalkGoesOnAndRelearnsTheHeading()
+    public async Task ScanFindsNothing_LooksLeftThenRight_ComesBack_AndKeepsTheHeading()
     {
+        // User, 16:30: "still follow the waypoints before as it always goes right where there is a wall near the entrance" -
+        // the old scan turned right only and the walk then took the new view as its way; now the camera comes back.
         var (settings, input, ocr) = Harness(() => "15000 , 15000");
         settings.Blossom.ScanEveryMs = 1000;
-        settings.Blossom.ScanTaps = 3;
+        settings.Blossom.ScanSideMs = 100;
 
         var run = await RunAsync(settings, input, ocr, PilotPhase.BlossomWalk,
             (_, lines) => lines.Any(l => l.Contains("no Jaso", StringComparison.Ordinal)), 12000);
 
-        string log = string.Join("\n", run.Lines);
-        Assert.True(run.Lines.Any(l => l.Contains("no Jaso", StringComparison.Ordinal) && l.Contains("learns the heading", StringComparison.Ordinal)), log);
-        Assert.True(input.Calls.Count(c => c == "KeyDown D") >= 3, string.Join("\n", input.Calls));
+        string log = string.Join("\n", run.Lines) + "\n" + string.Join("\n", input.Calls);
+        // Every turn is one ScanSideMs hold: left, right twice (past the middle), left - back where it started.
+        var turns = input.Calls.Where(c => c is "KeyDown A" or "KeyDown D").Take(4).ToList();
+        Assert.Equal(["KeyDown A", "KeyDown D", "KeyDown D", "KeyDown A"], turns);
+        int scan = run.Lines.FindIndex(l => l.Contains("Scanning", StringComparison.Ordinal));
+        Assert.True(scan >= 0, log);
+        Assert.DoesNotContain(run.Lines.Skip(scan), l => l.Contains("learns the heading", StringComparison.Ordinal)
+                                                         || l.Contains("Heading learnt from the first step", StringComparison.Ordinal));
     }
 
     [Fact]
@@ -1399,20 +1407,24 @@ public class BlossomPilotTests
     [Fact]
     public async Task TheWalkScan_KeepsTheCharacterMoving()
     {
-        // User, 2026-11-01: "as the AFK Checker is fast" - a scan stood still ~3 s at a time. Now a walk click straight ahead
-        // after every camera step.
+        // User, 2026-11-01: "as the AFK Checker is fast" / "always try to move to the waypoint while tracking": a long walk
+        // click goes out right before the camera looks away (the character runs on while it looks left and right), and the
+        // walk clicks start again once it is back.
         var (settings, input, ocr) = Harness(() => "15000 , 15000");
         settings.Blossom.ScanEveryMs = 1000;
-        settings.Blossom.ScanTaps = 4;
+        settings.Blossom.ScanSideMs = 100;
 
         var run = await RunAsync(settings, input, ocr, PilotPhase.BlossomWalk,
-            (_, lines) => lines.Any(l => l.Contains("no Jaso", StringComparison.Ordinal)), 12000);
+            (_, lines) => lines.Any(l => l.Contains("no Jaso", StringComparison.Ordinal)) && input.Calls.Count(c => c.StartsWith("Click ", StringComparison.Ordinal)) > 0
+                          && input.Calls.FindLastIndex(c => c.StartsWith("Click ", StringComparison.Ordinal)) > input.Calls.LastIndexOf("KeyDown A"), 12000);
 
         string log = string.Join("\n", run.Lines) + "\n" + string.Join("\n", input.Calls);
-        int first = input.Calls.IndexOf("KeyDown D"), last = input.Calls.LastIndexOf("KeyDown D");
-        Assert.True(first >= 0, log);
-        int clicksDuringScan = input.Calls.Skip(first).Take(last - first + 1).Count(c => c.StartsWith("Click ", StringComparison.Ordinal));
-        Assert.True(clicksDuringScan >= 3, log);   // one after each of the first three steps at least
+        int look = input.Calls.IndexOf("KeyDown A");
+        Assert.True(look > 0, log);
+        Assert.StartsWith("Click ", input.Calls.Take(look).Last(c => !c.StartsWith("Key", StringComparison.Ordinal)));   // a walk click right before
+        int back = input.Calls.LastIndexOf("KeyDown A");
+        Assert.DoesNotContain(input.Calls.Skip(look).Take(back - look), c => c.StartsWith("Click ", StringComparison.Ordinal));   // none while looking away
+        Assert.Contains(input.Calls.Skip(back), c => c.StartsWith("Click ", StringComparison.Ordinal));   // walking on after
     }
 
     [Fact]

@@ -165,6 +165,63 @@ public class JasoDetectorTests
         Assert.Empty(Candidates(f));
     }
 
+    // ---- 2026-11-01 16:23 (live 0.25.8 click snapshots): near trees the game pulls the camera in, the character is drawn big
+    // and low (its HP bar at 0.75 h instead of 0.56 h) - its red mask and legs were clicked as Jasos. The character is found
+    // by its own HP bar: a red strip over a blue one, same left edge, centred under its feet.
+
+    /// <summary>The character's own HP / MP bar at <paramref name="y"/> (sizes of the 2048x1152 live bar, scaled to 900 h).</summary>
+    private static void DrawOwnBar(Mat bgr, int y)
+    {
+        CvInvoke.Rectangle(bgr, new Rectangle(W / 2 - 42, y, 84, 6), new MCvScalar(40, 40, 200), -1);        // HP, red
+        CvInvoke.Rectangle(bgr, new Rectangle(W / 2 - 42, y + 9, 72, 5), new MCvScalar(220, 110, 40), -1);   // MP, blue
+    }
+
+    [Fact]
+    public void TheOwnHpBar_GivesTheCharactersBox_BigWhenTheCameraIsClose()
+    {
+        using var near = Field();
+        DrawOwnBar(near, (int)(0.556 * H));
+        using var close = Field();
+        DrawOwnBar(close, (int)(0.752 * H));
+
+        var n = AsBgra(near, ScreenAnalyzer.FindOwnCharacter);
+        var c = AsBgra(close, ScreenAnalyzer.FindOwnCharacter);
+
+        Assert.NotNull(n);
+        Assert.NotNull(c);
+        Assert.InRange(n!.Value.Bottom, (int)(0.556 * H) - 4, (int)(0.556 * H) + 20);
+        Assert.InRange(n.Value.Height, (int)(0.15 * H), (int)(0.22 * H));     // drawn small
+        Assert.InRange(c!.Value.Height, (int)(0.40 * H), (int)(0.55 * H));    // drawn big
+        Assert.InRange(c.Value.CenterX, W / 2 - 10, W / 2 + 10);
+    }
+
+    [Fact]
+    public void CameraClose_AFigureOnTheCharacter_IsNotAJaso_OneBesideIs()
+    {
+        using var f = Field();
+        int barY = (int)(0.752 * H);
+        DrawOwnBar(f, barY);
+        DrawJaso(f, W / 2 - 15, barY - 360);           // the character's red mask, high above its feet (centre 0.38 h)
+        DrawJaso(f, W / 2 - 15 + (int)(0.25 * H), barY - 360);   // a Jaso beside it
+
+        var hit = Assert.Single(Find(f));
+        Assert.InRange(hit.CenterX, W / 2 + (int)(0.25 * H) - 10, W / 2 + (int)(0.25 * H) + 20);
+    }
+
+    [Fact]
+    public void NoHpBar_NoOwnBox()
+    {
+        using var f = Field();
+        Assert.Null(AsBgra(f, ScreenAnalyzer.FindOwnCharacter));
+    }
+
+    private static T AsBgra<T>(Mat bgr, Func<Mat, T> read)
+    {
+        using var bgra = new Mat();
+        CvInvoke.CvtColor(bgr, bgra, ColorConversion.Bgr2Bgra);
+        return read(bgra);
+    }
+
     [Fact]
     public void AJasoBesideTheCharacter_IsAFullHit()
     {
