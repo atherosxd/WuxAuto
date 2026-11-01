@@ -209,16 +209,16 @@ public class BlossomPilotTests
     }
 
     [Fact]
-    public async Task StartInside_TurnsTheAutohuntOff()
+    public async Task StartInside_PressesNoAutohuntKey()
     {
-        var (settings, input, ocr) = Harness(() => "19148 , 19062", log: i => i.Calls.Contains("KeyTap J")
-            ? ["Auto hunt started.", "Auto hunt ended."]
-            : ["Auto hunt started."]);
+        // User, 2026-11-02: "you can't activate autohunt inside, so make sure it is off in the city" - inside, 'J' prints
+        // nothing (live 02:28: two presses and ~10 s for "cannot tell").
+        var (settings, input, ocr) = Harness(() => "19148 , 19062");
 
         var run = await RunAsync(settings, input, ocr, PilotPhase.CheckZone, (p, _) => p.Phase is PilotPhase.WarBuff or PilotPhase.BlossomTurn);
 
         string log = string.Join("\n", run.Lines);
-        Assert.Contains("KeyTap J", input.Calls);
+        Assert.DoesNotContain("KeyTap J", input.Calls);
         Assert.True(run.Phase is PilotPhase.WarBuff or PilotPhase.BlossomTurn, log);
     }
 
@@ -636,11 +636,17 @@ public class BlossomPilotTests
     }
 
     [Theory]
-    [InlineData("(Whisper) [AFK Checker] : Start 1/5", true)]
+    [InlineData("(Whisper) [AFK Checker] : Start 1/5", false)]
+    [InlineData("(Whisper) [AFK Checker] : 2/5", false)]
+    [InlineData("(Whisper) [AFK Checker] : 3/5", true)]
     [InlineData("(Whisper) [AFK Checker] : Reset 0/5", false)]
-    public async Task AfkChecker_OneOrMore_StepsALittle(string line, bool steps)
+    [InlineData("(Whisper) [AFK Checker] : 7/5", false)]   // a misread (live: "6/5", "7/5", "9/5")
+    public async Task AfkChecker_FromThreeOfFive_StepsALittle(string line, bool steps)
     {
-        // User, 2026-10-30: "add a AFK Checker, if 1+/5, try to move a little bit to other directions".
+        // User, 2026-10-30: "add a AFK Checker, if 1+/5, try to move a little bit to other directions"; 2026-11-02: "it is
+        // trying to move too much" / "the afk maxes out at mostly a minute, plenty of time to try moving again" - the walk
+        // moves anyway; a step only from 3/5 (AfkStepFrom), at most every AfkStepEveryMs.
+        Assert.Equal(3, new AppSettings().Blossom.AfkStepFrom);
         var (settings, input, ocr) = Harness(() => "15000 , 15000", chat: _ => [line]);
         long start = Environment.TickCount64;
 
@@ -648,8 +654,19 @@ public class BlossomPilotTests
             (_, lines) => lines.Any(l => l.StartsWith("AFK Checker", StringComparison.Ordinal)) || Environment.TickCount64 - start > 3000, 8000);
 
         string log = string.Join("\n", run.Lines);
-        Assert.True(steps == run.Lines.Any(l => l.StartsWith("AFK Checker at 1/5", StringComparison.Ordinal)), log);
+        Assert.True(steps == run.Lines.Any(l => l.StartsWith("AFK Checker at", StringComparison.Ordinal)), log);
         Assert.Equal(steps, input.Calls.Any(c => c.StartsWith("CtrlClick", StringComparison.Ordinal)));
+    }
+
+    [Fact]
+    public async Task AfkChecker_StepsAtMostEveryAfkStepEveryMs()
+    {
+        var (settings, input, ocr) = Harness(() => "15000 , 15000", chat: _ => ["(Whisper) [AFK Checker] : 4/5"]);
+        settings.Blossom.AfkStepEveryMs = 60000;
+
+        var run = await RunAsync(settings, input, ocr, PilotPhase.BlossomWalk, (_, _) => false, 12000);
+
+        Assert.Single(run.Lines, l => l.StartsWith("AFK Checker at", StringComparison.Ordinal));
     }
 
     [Fact]
@@ -1197,6 +1214,7 @@ public class BlossomPilotTests
         settings.Blossom.ScanEveryMs = 0;        // no camera scans; the Jaso click tests turn them on
         settings.Blossom.FightScanEveryMs = 0;
         settings.Blossom.CameraTiltPx = 0;       // no camera tilt; the CameraTilt tests turn it on
+        settings.Blossom.TurnToPillars = true;   // the default; Arrival_PillarTurnOff_* turns it off
 
         var input = new FakeGameInput();
         var ocr = new FakeOcrEngine();
@@ -1506,6 +1524,52 @@ public class BlossomPilotTests
             return (t.i, from, to - from);
         })
         .ToList();
+
+    [Fact]
+    public async Task Arrival_PillarTurnOff_TiltsUpThenWalksStraight()
+    {
+        // The pillar turn is on by default (user, 2026-11-02: "always turn to pillars"); switched off, the tilt up and then
+        // the walk straight ahead from the arrival spot.
+        Assert.True(new AppSettings().Blossom.TurnToPillars);
+        var (settings, input, ocr) = Harness(() => "19148 , 19062");
+        settings.Blossom.TurnToPillars = false;
+        settings.Blossom.CameraTiltPx = 60;
+
+        var run = await RunAsync(settings, input, ocr, PilotPhase.BlossomTurn,
+            (_, _) => input.Calls.Any(c => c.StartsWith("Click ", StringComparison.Ordinal)), 10000);
+
+        string log = string.Join("\n", run.Lines) + "\n" + string.Join("\n", input.Calls);
+        Assert.Single(Drags(input));                                   // the tilt up
+        Assert.DoesNotContain(input.Calls, c => c is "KeyDown D" or "KeyDown A");   // no turn either way
+        Assert.Equal(PilotPhase.BlossomWalk, run.Phase);
+        Assert.Contains(run.Lines, l => l.Contains("walking straight on", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task AfterThePillarTurn_TheFirstLookAsideIsLeft_TheWallIsOnTheRight()
+    {
+        // User, 2026-11-02: "upon entering it tends to rotate to right. go straight straight or straight left as the right is
+        // the wall" / "after the pillar it tries to turn right again".
+        long start = Environment.TickCount64;
+        var (settings, input, ocr) = Harness(() => $"19148 , {19062 - (Environment.TickCount64 - start) / 5}");   // walking north
+        settings.Blossom.TurnMaxTaps = 2;
+        settings.Blossom.ScanEveryMs = 1000;
+        settings.Blossom.ScanSideMs = 150;
+
+        bool TurnedAfterWalk()
+        {
+            int w = input.Calls.FindIndex(c => c.StartsWith("Click ", StringComparison.Ordinal));
+            return w >= 0 && input.Calls.Skip(w).Any(IsTurn);
+        }
+
+        var run = await RunAsync(settings, input, ocr, PilotPhase.BlossomTurn,
+            (_, lines) => lines.Any(l => l.Contains("while walking on", StringComparison.Ordinal)) && TurnedAfterWalk(), 15000);
+
+        string log = string.Join("\n", run.Lines) + "\n" + string.Join("\n", input.Calls);
+        int walk = input.Calls.FindIndex(c => c.StartsWith("Click ", StringComparison.Ordinal));
+        Assert.True(walk >= 0, log);
+        Assert.Equal("KeyDown A", input.Calls.Skip(walk).First(IsTurn));
+    }
 
     [Fact]
     public async Task CameraTilt_OnArrival_OneDragUp_BeforeThePillarTurn_NeverDown()

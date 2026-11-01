@@ -73,7 +73,7 @@ public static class AppPaths
 public static class SettingsStore
 {
     /// <summary>Bump when an existing settings.json must be migrated (see <see cref="Migrate"/>).</summary>
-    private const int CurrentVersion = 28;
+    private const int CurrentVersion = 29;
 
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
@@ -273,6 +273,16 @@ public static class SettingsStore
         if (s.Version < 28 && s.Blossom is { ScanEveryMs: 1500 } ahead)
             ahead.ScanEveryMs = 6000;
 
+        // v29 (user, 2026-11-02: "it is trying to move too much and rotate too much"): the look aside half as far (a 700 ms
+        // hold turned ~120 deg live) and less often.
+        if (s.Version < 29 && s.Blossom is { } aside)
+        {
+            if (aside.ScanEveryMs == 6000)
+                aside.ScanEveryMs = 10000;
+            if (aside.ScanSideMs == 700)
+                aside.ScanSideMs = 350;
+        }
+
         s.Version = CurrentVersion;
         return true;
     }
@@ -419,6 +429,8 @@ public static class SettingsStore
         b.LookAsideMs = Math.Clamp(b.LookAsideMs, 1000, 60000);
         b.StuckTurnAfterMs = b.StuckTurnAfterMs <= 0 ? 0 : Math.Clamp(b.StuckTurnAfterMs, 2000, 120000);
         b.StuckTurnMs = Math.Clamp(b.StuckTurnMs, 200, 5000);
+        b.AfkStepFrom = Math.Clamp(b.AfkStepFrom, 1, 5);
+        b.AfkStepEveryMs = Math.Clamp(b.AfkStepEveryMs, 0, 120000);
         b.ScanTapMs = Math.Clamp(b.ScanTapMs, 30, 2000);
         b.FightScanEveryMs = b.FightScanEveryMs <= 0 ? 0 : Math.Clamp(b.FightScanEveryMs, 1000, 60000);
         b.CameraTiltPx = Math.Clamp(b.CameraTiltPx, 0, 400);

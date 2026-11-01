@@ -396,15 +396,33 @@ public sealed class BlossomSettings
     /// On the walk, looking ahead with no Jaso seen this long -> the camera looks left or right at random for LookAsideMs
     /// while the walk goes on, then turns back (user, same day: "when running, rotate the camera to scan for the mob"; 18:10:
     /// "randomly do left or right, stay on any direction longer than 5s then return back"). 4000 until settings v27, 1500
-    /// until v28. 0 = off.
+    /// until v28, 6000 until v29 (user, 2026-11-02: "it is trying to move too much and rotate too much"). 0 = off.
     /// </summary>
-    public int ScanEveryMs { get; set; } = 6000;
+    public int ScanEveryMs { get; set; } = 10000;
 
     /// <summary>How long the walk looks aside before it turns back (user, 18:10: "stay on any direction longer than 5s").</summary>
     public int LookAsideMs { get; set; } = 6000;
 
-    /// <summary>The look aside's camera turn: A (left) or D (right) held this long, and the other key as long to turn back.</summary>
-    public int ScanSideMs { get; set; } = 700;
+    /// <summary>
+    /// The look aside's camera turn: A (left) or D (right) held this long, and the other key as long to turn back. 700 (~120
+    /// deg live) until settings v29 - "rotate too much".
+    /// </summary>
+    public int ScanSideMs { get; set; } = 350;
+
+    /// <summary>
+    /// On arrival, turn ('D' taps) until the two pillars are centred before walking (user, 2026-11-02: "always turn to
+    /// pillars"). Off = the walk goes straight on from the arrival spot.
+    /// </summary>
+    public bool TurnToPillars { get; set; } = true;
+
+    /// <summary>
+    /// The AFK Checker's count ("k/5" in the chat) from which the walk steps aside, at most every AfkStepEveryMs (user,
+    /// 2026-11-02: "it is trying to move too much" / "the afk maxes out at mostly a minute, plenty of time to try moving
+    /// again"; it stepped at every 1/5 before).
+    /// </summary>
+    public int AfkStepFrom { get; set; } = 3;
+
+    public int AfkStepEveryMs { get; set; } = 15000;
 
     /// <summary>
     /// The walk clicking on and the character not moving this long -> the camera turns round (StuckTurnMs) and the walk goes

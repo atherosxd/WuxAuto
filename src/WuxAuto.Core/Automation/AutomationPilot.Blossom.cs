@@ -18,7 +18,8 @@ public sealed partial class AutomationPilot
     /// <summary>The short fine-tune tap once both pillars are in view but off centre.</summary>
     private const int BlossomFineTapMs = 40;
     private const int BlossomMaxFineTaps = 12;
-    private const int BlossomTurnSettleMs = 350;
+    private const int BlossomTurnSettleMs = 150;   // was 350 (user, 2026-11-02: "try a faster turn to pillar")
+    private const int BlossomPillarStepMs = 250;   // the pillar search's held step (was TurnTapMs 100 ms taps)
     private const int BlossomMaxStalls = 5;   // ~5-6 s against a wall: the AFK checker kicks idle characters (user)
     private const int BlossomMaxUnread = 40;
     private const int BlossomRebuffOverdueMs = 30000;
@@ -73,7 +74,6 @@ public sealed partial class AutomationPilot
     private int _blossomUnread;
     private bool _blossomHeadingKnown;
     private bool _blossomBuffThenTurn;
-    private bool _blossomHuntOffChecked;
     private int _blossomHeadingMisses;
     private int _blossomHeadingAge;   // steps (>= 60 units) since the heading was set
     private long _blossomIgnoreTargetsUntil;
@@ -94,6 +94,8 @@ public sealed partial class AutomationPilot
     private long _blossomNotFullToldAt;
     private long _blossomFightLootAt;            // LootWhileFighting: the last loot tap
     private int _blossomAfkSteps;
+    private long _blossomAfkStepAt;              // the last AFK step (AfkStepEveryMs apart)
+    private bool _blossomFirstAsideLeft;         // arrived: the first look aside goes left
     private long _blossomJasoClickedAt;          // the last click on a Jaso seen on screen
     private int _blossomJasoClicks;              // clicks on Jasos since the last fight
     private long _blossomJasoIgnoreUntil;
@@ -162,6 +164,8 @@ public sealed partial class AutomationPilot
         _blossomTargetHp = null;
         _blossomNotFullToldAt = 0;
         _blossomAfkSteps = 0;
+        _blossomAfkStepAt = 0;
+        _blossomFirstAsideLeft = false;
         _blossomLegFrom = null;
         _blossomJumpCandidate = null;
         _blossomDir = null;
@@ -175,7 +179,6 @@ public sealed partial class AutomationPilot
         _blossomUnread = 0;
         _blossomHeadingKnown = false;
         _blossomHeadingMisses = 0;
-        _blossomHuntOffChecked = false;
         _blossomIgnoreTargetsUntil = 0;
         _blossomJasoClickedAt = 0;
         _blossomJasoClicks = 0;
@@ -251,7 +254,8 @@ public sealed partial class AutomationPilot
         _blossomLastOffset = null;
         _blossomTurnTold = false;
         _blossomCameraTilted = false;   // arrived (teleport or death): the camera looks down again
-        Log?.Invoke(LogLevel.Info, $"Turning ('{_settings.Input.RotateKey}' {_settings.Blossom.TurnTapMs} ms taps) until the two pillars are centred.");
+        _blossomFirstAsideLeft = true;  // and the first look aside goes left (the wall is on the right)
+        Log?.Invoke(LogLevel.Info, $"Turning ('{_settings.Input.RotateKey}' held {Math.Max(_settings.Blossom.TurnTapMs, BlossomPillarStepMs)} ms a step) until the two pillars are centred.");
         Advance(PilotPhase.BlossomTurn, 400);
     }
 
@@ -294,6 +298,15 @@ public sealed partial class AutomationPilot
             QueueBlossomTilt();
         if (TickBlossomCameraTilt(frame, now))
             return;
+
+        // No pillar turn by default (user, 2026-11-02: "upon entering it tends to rotate to right. go straight straight or
+        // straight left as the right is the wall"): straight on from the arrival spot, the heading learnt from that step.
+        if (!b.TurnToPillars)
+        {
+            Log?.Invoke(LogLevel.Info, "Arrived - walking straight on (no pillar turn); the heading is learnt from the first step.");
+            StartBlossomWalk();
+            return;
+        }
 
         var pair = _analyzer.FindPillarPair(frame, b.PillarTemplate, b.PillarMatchScore);
         if (pair != null)
@@ -342,7 +355,9 @@ public sealed partial class AutomationPilot
             Log?.Invoke(LogLevel.Info, $"Pillars not lined up after {b.TurnTaps} taps - turning on (up to {b.TurnMaxTaps}).");
         }
 
-        if (!_controls.Turn(TurnDirection.Right, b.TurnTapMs))
+        // A held step, like the look aside's (user, 2026-11-02: "try a faster turn to pillar" / "hold turn, like the same for
+        // the right or left look"): BlossomPillarStepMs a step instead of TurnTapMs taps; the centring stays in fine taps.
+        if (!_controls.Turn(TurnDirection.Right, Math.Max(b.TurnTapMs, BlossomPillarStepMs)))
         {
             _detail = "turn blocked - waiting for the game to be in front";
             _waitUntil = now + 300;
@@ -708,8 +723,11 @@ public sealed partial class AutomationPilot
     private bool TryBlossomAfkStep(Mat frame, IReadOnlyList<OcrWord> words, long now)
     {
         var b = _settings.Blossom;
+        // From AfkStepFrom of 5, at most every AfkStepEveryMs (user, 2026-11-02: "it is trying to move too much" / "the afk maxes
+        // out at mostly a minute, plenty of time to try moving again" - it stepped at every 1/5, every 5 s); more than 5 is a
+        // misread (live "6/5", "7/5", "9/5").
         if (BlossomText.AfkCheckerCount(ScreenAnalyzer.ToLines(words), b.AfkCheckerText, frame.Width, frame.Height) is not int count
-            || count < 1)
+            || count < b.AfkStepFrom || count > 5 || (_blossomAfkStepAt > 0 && now - _blossomAfkStepAt < b.AfkStepEveryMs))
             return false;
 
         var (ux, uy, side) = BlossomStepWays[_blossomAfkSteps % BlossomStepWays.Length];
@@ -722,6 +740,7 @@ public sealed partial class AutomationPilot
             return false;
 
         _blossomAfkSteps++;
+        _blossomAfkStepAt = now;
         Log?.Invoke(LogLevel.Warning, $"AFK Checker at {count}/5 - stepping {side} a little.");
         BlossomShot(frame, "blossom_afk");
         if (_phase == PilotPhase.BlossomAttack)
@@ -961,7 +980,10 @@ public sealed partial class AutomationPilot
         if (_blossomAside == null && b.ClickToTarget && b.ScanEveryMs > 0 && _blossomPauseSince == 0
             && _blossomHeadingKnown && !_blossomRemeasure && now - Math.Max(_blossomJasoSeenAt, _blossomScanEndedAt) >= b.ScanEveryMs)
         {
-            var side = Random.Shared.Next(2) == 0 ? TurnDirection.Left : TurnDirection.Right;
+            // The first one after an arrival goes left (user, 2026-11-02: "after the pillar it tries to turn right again" -
+            // "go straight straight or straight left as the right is the wall"); after that at random.
+            var side = _blossomFirstAsideLeft || Random.Shared.Next(2) == 0 ? TurnDirection.Left : TurnDirection.Right;
+            _blossomFirstAsideLeft = false;
             _blossomAside = side;
             _blossomAsideSteps = 0;
             _blossomHeadingBeforeAside = _headingError;
@@ -1696,14 +1718,8 @@ public sealed partial class AutomationPilot
     {
         _zoneConfirmedAt = Environment.TickCount64;
 
-        // Start inside with the autohunt running: it would fight everything beside the walk. The newest autohunt line in
-        // the combat log decides (J is a toggle), as at the Laby's final boss; ticked until it is off or given up.
-        if (!_blossomHuntOffChecked && !_controls.IsDryRun && _controls.Has(GameAction.ToggleAutohunt))
-        {
-            if (!await EnsureAutohuntOffAsync(frame, $"in {Destination}", trustVisibleLine: true))
-                return;
-            _blossomHuntOffChecked = true;
-        }
+        // No autohunt check here (user, 2026-11-02: "you can't activate autohunt inside, so make sure it is off in the
+        // city"): inside, 'J' prints nothing - live 02:28 two presses and ~10 s for "cannot tell". The town check does it.
 
         // No pillar turn here (user, 2026-10-30: "it is possible to start it already in the map and no need to look for the
         // pillar"): away from the arrival spot they are not in view; the walk learns the heading from its first step.

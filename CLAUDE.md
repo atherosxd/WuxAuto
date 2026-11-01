@@ -179,7 +179,7 @@ words and the map scroll-arrow result. `--crop` writes `<frame>.crop.png` next t
 Core tests and the refactor parity gate (M1, 2026-10-27):
 
 ```powershell
-dotnet test tests\WuxAuto.Core.Tests        # xUnit, platform-free Core only (972 tests, ~4-8 min; the pilot tests tick a
+dotnet test tests\WuxAuto.Core.Tests        # xUnit, platform-free Core only (979 tests, ~4-8 min; the pilot tests tick a
                                            # blank Mat with a scripted OCR scene - see tests/ in section 3)
 # probe baseline: runs every SelfTest probe over a frozen, local-only frame set (never committed)
 # and writes normalised output; run it before and after a refactor and diff the two
@@ -1059,7 +1059,10 @@ teleport in again (LOD's rule); still in town after the teleport = "destination 
 * **Turn:** `ScreenAnalyzer.FindPillarPair` (`Assets/blossompillar.png` = the left pillar's grey base, 96x42, cropped from the
   user's zoomed-out 2000x1168 frame at 788,270; hits in `PillarBand` (0.15, 0.05, 0.62, 0.45), duplicates per place dropped, a
   pair = one row, 0.10-0.40 w apart, the most central). User's frame: left 0.979, right (green-tinted) 0.807, offset +0.020.
-  No pair -> `D` (`TurnDirection.Right` = `Input.RotateKey`) `TurnTapMs` 100, 350 ms settle; after `TurnTaps` 7 one Info, after
+  `Blossom.TurnToPillars` (on; user, 2026-11-02: "always turn to pillars"; off = straight on from the arrival spot).
+  No pair -> `D` (`TurnDirection.Right` = `Input.RotateKey`) **held `BlossomPillarStepMs` 250 ms a step, 150 ms settle** (user,
+  2026-11-02: "try a faster turn to pillar" / "hold turn, like the same for the right or left look"; was `TurnTapMs` 100 ms taps
+  and 350 ms); after `TurnTaps` 7 one Info, after
   `TurnMaxTaps` **15** or `TurnMaxMs` **10000** (whichever first; user, 2026-10-30: "reduce the turn to pillars to 15 turns or
   10s"; was 50 taps, ~1 min; v24 moves a saved 50) a warning + `blossom_no_pillars` and the walk. Pair off centre (> `PillarCenterTolerance` 0.06 w) -> 40 ms fine
   taps, direction flipped when the offset grew (D's direction is not assumed), <= 12. No Tab while turning.
@@ -1103,17 +1106,20 @@ teleport in again (LOD's rule); still in town after the teleport = "destination 
 * **AFK Checker** (user, 2026-10-30: the chat whispers "(Whisper) [AFK Checker] : Start 1/5" ... "Reset 0/5" - "if 1+/5, try
   to move a little bit to other directions"): `Blossom.AfkCheckerText` "AFK Checker" (empty = off). The shared 5 s
   whole-screen OCR (`BlossomAfkWatch`: Blossom phases or the buff round, game in front) -> `BlossomText.AfkCheckerCount`:
-  the bottom-most chat line (left 45 % w, below 55 % h) naming it with a "k/5" -> k >= 1 -> `TryBlossomAfkStep`: the held
-  skill let go, a Ctrl+click half `WalkClickPx` from the feet, a different way each time; `blossom_afk`. Not yet seen live
-  (the whisper lines are from the 10:20 snapshot).
+  the bottom-most chat line (left 45 % w, below 55 % h) naming it with a "k/5" -> k >= `AfkStepFrom` **3** (k > 5 = a misread,
+  live "6/5", "7/5", "9/5"), at most every `AfkStepEveryMs` **15000** -> `TryBlossomAfkStep`: the held skill let go, a
+  Ctrl+click half `WalkClickPx` from the feet, a different way each time; `blossom_afk`. Until 2026-11-02 it stepped from 1/5
+  at every 5 s check (user: "it is trying to move too much" / "the afk maxes out at mostly a minute, plenty of time to try
+  moving again"); `AfkChecker_FromThreeOfFive_*`, `AfkChecker_StepsAtMostEvery*`.
 * **Walk back** (user, 2026-10-30, with a recorded 83-waypoint first-island route: "1 - 83 then 83, 82, 81 to 1 then loop"): `Blossom.BackAndForth` (check box "Walk back the same way"; on by default since v25, for the recorded default route) -> `BlossomRoute.Next(..., backAndForth, ref forward)`: forward to the last waypoint, back to `LoopFrom`, forward again (`_blossomForward`, reset per run; a log line at each turnaround). On the way back a waypoint's camera turn is undone when leaving it (the key flipped, A <-> D, same taps), so each stretch has the camera it had on the way out; a turnaround taps nothing (the last waypoint's own turn is never made). Record route ticks it when the recording ends > 400 from its loop start (`RouteRecording.WalkBack`, `ClosingGap`): a loop would cross the map in one straight line. Pinned by `BlossomRouteTests` / `BlossomPilotTests.BackAndForth_WalksTheRouteBack_AndUndoesItsCameraTurns` / `RouteRecordingTests`. Not yet seen live.
 * **Following the road** (user, live run 7: "not aligned by the dirt road ... goes straight to the water beside the bridge"): along a leg the walk aims 250 units ahead on the line from the waypoint just left to the next one (`BlossomRoute.LookAhead`, pure pursuit), so drift is pulled back onto the user's line; within 300 of the waypoint it clicks the waypoint's own spot from the character's feet (0.55 h, >= 80 px - a short click just under the feet lands on the character's body and does nothing; 1.8 px per unit). A death mid-fight needs two coordinate reads that agree (run 7: "13521" read as "1352" sent it back to the pillars).
 * **Record route** (user, 2026-10-29: "I walk the road once by hand and WuxAuto saves the waypoints"): Settings > Auto Blossom > **Record route** / **Loop starts here** / **Stop recording**. `Automation/RouteRecorder` (desktop, ticked by `WuxEngine` beside `AutoConfirm` while the pilot is not running) reads the coordinates every 500 ms and polls the turn keys (`GetAsyncKeyState`, game in front) into `RouteRecording` (Core, pinned by `RouteRecordingTests`): a waypoint every 120 units, a jump > 400 only when the next read agrees, A / D presses = the latest waypoint's camera turns (net, "N:5A"), the loop at the latest waypoint (or the spot, >= 60 past it). Stop (>= 2 waypoints) replaces `Waypoints` / `LoopFrom` / `WaypointTurns`, saves, and writes `blossom-route.txt` (a copy - a pre-Blossom WuxAuto drops the block when it saves). Start while recording saves the recording first. Not yet used live.
 * **Minimap title:** `ScreenAnalyzer.ReadMinimapLinesAsync` (all modes): the band read, and without a title-like line the
   `MinimapTitleStrip` (0.76, 0.03, 0.23, 0.08) x2 then x3 - live 2026-10-29 the whole-band OCR over Blossom Garden's bright
   yellow map read **no words at all** and the arrival failed "never showed on the minimap" twice.
-* **Start inside:** the autohunt is made off first (`EnsureAutohuntOffAsync`, `trustVisibleLine: true`; skipped in a dry run),
-  then the buffs (or the fight, a Jaso already targeted) and the walk from the nearest waypoint - **no pillar turn** (user,
+* **Start inside:** no autohunt check (user, 2026-11-02: "you can't activate autohunt inside, so make sure it is off in the
+  city" - inside, 'J' prints nothing; live 02:28 two presses and ~10 s for "cannot tell"; until then
+  `EnsureAutohuntOffAsync` ran here), the buffs (or the fight, a Jaso already targeted) and the walk from the nearest waypoint - **no pillar turn** (user,
   2026-10-30: "it is possible to start it already in the map and no need to look for the pillar"; away from the arrival spot
   they are not in view, and the turn took 50 taps for nothing). The turn stays for the teleport's arrival and after a death.
 * **Target:** whole-screen OCR line in the target-bar band (y < 13 % h, |x - 50 %| < 22 % w) containing the name after its "[S]"
@@ -1197,8 +1203,11 @@ teleport in again (LOD's rule); still in town after the teleport = "destination 
   changes over time, hence the picture fingerprint. **Look aside** (user, 18:10: "actively walk to the waypoints but randomly
   do left or right, stay on any direction longer than 5s then return back, as when you are trying to rotate there is a jaso
   but it continued to rotate back and never target it" / "it should be still similar to when tab is allowed"): looking ahead
-  with no Jaso seen for `ScanEveryMs` **6000** (0 = off; settings v28 moves the v27 1500), heading known and measured since
-  the last turn, not in a waypoint pause -> left or right at random (`Random.Shared`), **one turn of `ScanSideMs` 700**
+  with no Jaso seen for `ScanEveryMs` **10000** (0 = off; v28 moved the v27 1500 to 6000, v29 6000 to 10000 - user, 2026-11-02:
+  "it is trying to move too much and rotate too much"), heading known and measured since the last turn, not in a waypoint
+  pause -> left or right at random (`Random.Shared`; **the first after an arrival always left**, `_blossomFirstAsideLeft` -
+  user: "after the pillar it tries to turn right again" / "the right is the wall"), **one turn of `ScanSideMs` 350** (700
+  until v29, ~120 deg live)
   (clamp 100-3000) in `BlossomTurnSteps` **3** short holds with a look after each (`BlossomScanSettleMs` 300; user 18:20:
   "rotating to right, sees jaso rotates left then continues instead of going back and retargeting" - a Jaso in view stops the
   turn right there and is clicked, on the way out or back), then **`LookAsideMs` 6000** (clamp 1000-60000) of the normal walk
