@@ -404,6 +404,11 @@ public static class SettingsStore
         b.FightStuckMs = b.FightStuckMs <= 0 ? 0 : Math.Clamp(b.FightStuckMs, 1000, 60000);
         b.RunAheadDistance = Math.Clamp(b.RunAheadDistance, 0, 3000);
         b.RandomSkipMax = Math.Clamp(b.RandomSkipMax, 0, 20);
+        b.ScanEveryMs = b.ScanEveryMs <= 0 ? 0 : Math.Clamp(b.ScanEveryMs, 1000, 60000);
+        b.ScanTaps = Math.Clamp(b.ScanTaps, 1, 40);
+        b.ScanTapMs = Math.Clamp(b.ScanTapMs, 30, 2000);
+        b.FightScanEveryMs = b.FightScanEveryMs <= 0 ? 0 : Math.Clamp(b.FightScanEveryMs, 1000, 60000);
+        b.CameraTiltPx = Math.Clamp(b.CameraTiltPx, 0, 400);
         b.LootDelayMs = Math.Clamp(b.LootDelayMs, 0, 10000);
         b.LootMs = Math.Clamp(b.LootMs, 0, 60000);
         b.LootEveryMs = Math.Clamp(b.LootEveryMs, 50, 2000);

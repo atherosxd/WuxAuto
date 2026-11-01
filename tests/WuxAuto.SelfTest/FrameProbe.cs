@@ -274,6 +274,39 @@ internal static class FrameProbe
         return 0;
     }
 
+    /// <summary>
+    /// Auto Blossom without Tab: the Jaso Practitioners <see cref="ScreenAnalyzer.FindJasos"/> sees in every PNG of a folder,
+    /// nearest to the character first, each with the click point the pilot would use. Writes &lt;frame&gt;.jaso.png with the boxes.
+    /// </summary>
+    public static int Jasos(string dir)
+    {
+        foreach (string path in Directory.GetFiles(dir, "*.png").Where(p => !p.EndsWith(".scan.png") && !p.EndsWith(".crop.png")
+                                                                           && !p.EndsWith(".jaso.png") && !p.EndsWith(".det.png")).Order())
+        {
+            using var frame = ImageFile.Read(path, ImreadModes.ColorBgr);
+            if (frame.IsEmpty)
+                continue;
+
+            var sw = System.Diagnostics.Stopwatch.StartNew();
+            var hits = ScreenAnalyzer.FindJasos(frame, WuxAuto.Automation.AutomationPilot.WarWalkBands(frame.Width, frame.Height));
+            sw.Stop();
+            Console.WriteLine($"{Path.GetFileName(path)} {frame.Width}x{frame.Height} {sw.ElapsedMilliseconds}ms | " +
+                              (hits.Count == 0 ? "none" : string.Join("; ", hits.Select(r =>
+                              {
+                                  var (cx, cy) = WuxAuto.Automation.AutomationPilot.JasoClickPoint(r);
+                                  return $"{r.X},{r.Y} {r.Width}x{r.Height} click {cx},{cy}";
+                              }))));
+            if (hits.Count > 0)
+            {
+                foreach (var r in hits)
+                    CvInvoke.Rectangle(frame, new Rectangle(r.X, r.Y, r.Width, r.Height), new MCvScalar(0, 255, 0), 2);
+                CvInvoke.Imwrite(Path.ChangeExtension(path, ".jaso.png"), frame);
+            }
+        }
+
+        return 0;
+    }
+
     public static async Task<int> RunAsync(string path, string[] args)
     {
         var source = ImageFile.Read(path, ImreadModes.Unchanged);

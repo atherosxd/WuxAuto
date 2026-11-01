@@ -141,6 +141,9 @@ dotnet run --project .\tests\WuxAuto.SelfTest -- --tribe "$env:LOCALAPPDATA\WuxA
 # Auto Blossom: the two pillar bases (hits >= 0.30 in ScreenAnalyzer.PillarBand) + the pair / offset verdict per PNG
 dotnet run --project .\tests\WuxAuto.SelfTest -- --pillars <dir>
 
+# Auto Blossom: the Jasos found by colour and shape (ScreenAnalyzer.FindJasos) + their click points per PNG; writes <frame>.jaso.png
+dotnet run --project .\tests\WuxAuto.SelfTest -- --jaso <dir>
+
 # M2 parity: the pilot's detectors and x1.5 OCR reads on the frozen legacy vision (tests\...\Legacy,
 # OpenCvSharp 4.13) vs Core's (Emgu CV), per frame; ends with two summary lines (see below)
 dotnet run --project .\tests\WuxAuto.SelfTest -- --parity "$env:LOCALAPPDATA\WuxAuto\parity-frames"
@@ -176,7 +179,7 @@ words and the map scroll-arrow result. `--crop` writes `<frame>.crop.png` next t
 Core tests and the refactor parity gate (M1, 2026-10-27):
 
 ```powershell
-dotnet test tests\WuxAuto.Core.Tests        # xUnit, platform-free Core only (922 tests, ~4-8 min; the pilot tests tick a
+dotnet test tests\WuxAuto.Core.Tests        # xUnit, platform-free Core only (935 tests, ~4-8 min; the pilot tests tick a
                                            # blank Mat with a scripted OCR scene - see tests/ in section 3)
 # probe baseline: runs every SelfTest probe over a frozen, local-only frame set (never committed)
 # and writes normalised output; run it before and after a refactor and diff the two
@@ -1119,6 +1122,40 @@ teleport in again (LOD's rule); still in town after the teleport = "destination 
   target-bar numbers (`BlossomText.TargetHp` on `WarText.TargetHpLine`, box (0.25, 0, 0.50, 0.16)) below max -> not fought
   (Info at most every 5 s), the walk and Tab go on; unread numbers do not stop a fight. Live: a Jaso at 615378/750000 was
   another player's.
+* **Click to target** (user, 2026-11-01: "they have disabled tabbing in the Blossom, can you possibly click this mob instead by
+  using the color, shape"; `Blossom.ClickToTarget` on, check box "Click Jasos (no Tab)"): `ScreenAnalyzer.FindJasos(frame,
+  WarWalkBands)` - HSV red (H 0-14) or magenta (H 160-180), S >= 60, V >= 35, the UI bands zeroed, half size, 3x3 dilate; a
+  blob 0.03-0.14 h tall, aspect h/w 1.1-4.0, not the own spot (|cx - w/2| < 0.13 h and |cy - 0.5 h| < 0.16 h: the character's
+  wings and effects read alike), with the **fan** (H 160-180, S >= 50, V 35-130; >= 0.03 bh^2 in the top 40 %) and an **orange
+  skirt** (H 4-14, S >= 100, V >= 60; >= 0.015 bh^2 from 35 % down); nearest the character (0.5 w, 0.54 h) first. Live
+  2048x1152 (the user near one, 2026-11-01): hit 748,414 38x66, ~50 ms a frame; 0 hits on the 54 Blossom debug frames, the Eight
+  Symbols frames and a Bohai war frame full of players. Measured: fan H 172-177 S ~120 V ~67, skirt H 4-9 S ~157 V ~122, grass
+  H 27-33; shrine gate posts (H 0-16, dark) fail the magenta fan rule, the pet's feathers the orange share. A Jaso from behind
+  (the fan only) is **not found**. `TryClickJaso`: a plain left click (`WalkTo(forceWalk: false)`) at `JasoClickPoint` (centre,
+  60 % down), then `JasoClickWaitMs` 1500 with no walk clicks while the target bar comes up (the usual target read starts the
+  fight); `JasoMaxMisses` 3 clicks without a fight -> Jasos ignored `JasoIgnoreMs` 5 s + `blossom_jaso_miss`. The walk tries it
+  at every target check (700 ms) with nothing in the target bar. **Walk scan** ("also add when running, to rotate the camera to
+  scan for the mob"): no Jaso seen for `ScanEveryMs` **4000** (0 = off) -> stand, `ScanTaps` **6** taps of `D` `ScanTapMs`
+  **250**, a look 300 ms after each; a Jaso -> click, scan over; none -> "Scanned N step(s) - no Jaso in view". **Fight scan**
+  ("do the rotate also even when attacking the current mob, and set that as a second subject"): every `FightScanEveryMs`
+  **3000** (0 = off) one `D` tap and a look 300 ms later until a Jaso is in view (the one fought is at the feet, left out) ->
+  remembered ("The next Jaso is in view ..."); at the kill (`LootWhileFighting`) the frame is searched again and the nearest
+  clicked at once, the rebuff then waits for the next pause. Every camera turn (scan, fight scan) -> `ForgetBlossomHeading`:
+  the next walk step clicks straight up and learns the heading. Pinned by `JasoDetectorTests` (drawn Jasos: found, nearest
+  first, own spot, a red-brown post, a fan without the skirt, under the UI) and `BlossomPilotTests` (`NoTab_*`, `NoJasoInView_*`,
+  `ScanFindsNothing_*`, `InAFight_*`). Probe: `--jaso <dir>` (hits + click points, `<frame>.jaso.png`). **Not seen live:** the
+  click targeting her, the scans, a plain click on another player (whether it attacks; the target bar rule keeps the pilot off
+  anyone else).
+* **Camera tilt** (user, 2026-11-01: "also try to move the screen up instead of facing down"; `Blossom.CameraTiltPx` **60**,
+  0 = off, clamp 0-400, UI "Camera tilt (px)"): `QueueBlossomTilt` / `TickBlossomCameraTilt`, one right-drag per tick
+  (`TiltCamera`, 300 ms, 400 ms settle): **down** 0.25 h -> 0.80 h at 0.5 w (the steepest view - assumed the game stops the
+  camera there), then **up** `CameraTiltPx` from 0.60 h. From that limit the tilt is the same each time, so repeating it never
+  adds up (the Laby gate tilt did, run 34). Queued: `StartBlossomWalk` (after the pillar turn), a Start inside, the respawn
+  path away from the arrival spot, every unblock zoom-out (walk and fight; sent once the walk ticks). The pillar turn's first
+  tick (`_blossomTurnLevelled`, reset by `BeginBlossomTurn`) sends the **down half only** (the pillar template was cropped
+  facing down). Pinned by `BlossomPilotTests.CameraTilt_*` (the
+  harness sets 0). **Not seen live:** that a long drag down stops at a limit, the view at 60 px, whether a zoom-out changes
+  the pitch, and the homing click scale (1.8 px per unit was measured facing down).
 * **Fight / loot:** the skill key **held** through the fight (`Blossom.HoldSkill`, on; check box "Hold skill (Blossom)"; user,
   2026-10-30: "spam or hold attack skill, currently it skills then normal attacks" - one tap casts once, then normal attacks;
   with Ctrl + skill the key is let go for a Ctrl tap every `Lod.SkillEveryMs`, as LOD's hold), off = tapped every

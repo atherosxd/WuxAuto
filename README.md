@@ -286,6 +286,19 @@ Blossom Garden needs no key.
    it first makes sure the autohunt is off.
 6. Rebuff when **Rebuff every** (Auto War) is due - after a loot or at a waypoint, never mid-fight.
 
+**Tab no longer targets in Blossom Garden** (2026-11-01). With **Click Jasos (no Tab)** on (Settings > Auto Blossom, on by
+default) the pilot looks for the Jaso Practitioner itself: a dark magenta fan over an orange-red skirt, about 3-14 % of the
+screen tall, not under the screen's panels and not at your own feet. The nearest one gets a plain left click. If the target
+bar then shows "[S]Jaso Practitioner" the fight starts; three clicks that target nothing and it leaves Jasos alone for 5 s.
+On the walk, after 4 s without seeing one it stands and turns the camera right in 6 steps, looking after each; in a fight it
+turns the camera one step every 3 s, remembers the next Jaso it sees and clicks her right after the kill. After any camera
+turn the next walk step learns the direction again. A Jaso seen only from behind (just the fan) is not found yet.
+
+**Camera tilt** (Settings > Auto Blossom, default 60 px, 0 = off): when the walk starts, and again after each zoom-out, the
+camera is right-dragged down as far as it goes (facing down) and then up by that many pixels, so it looks ahead and shows
+Jasos further away. Starting from the same limit every time, the tilt never adds up. The pillar turn uses the view facing
+down, as its picture was taken that way.
+
 **Record your own route** (Settings > Auto Blossom): bind the game, stand at the arrival spot in Blossom Garden lined up on
 the pillars, press **Record route** and walk the road by hand. A waypoint is saved every 120 units, and your own `A` / `D`
 camera taps are saved with the waypoint you are at (the pilot taps the same way when it leaves it). Press **Loop starts
@@ -503,6 +516,9 @@ dotnet run --project .\tests\WuxAuto.SelfTest -- --frame C:\path\frame.png
 
 # Auto Blossom: the two pillar bases and the lined-up verdict for every PNG in a folder
 dotnet run --project .\tests\WuxAuto.SelfTest -- --pillars C:\path\frames
+
+# Auto Blossom: the Jaso Practitioners found by colour and shape, with their click points (writes frame.jaso.png)
+dotnet run --project .\tests\WuxAuto.SelfTest -- --jaso C:\path\frames
 
 # focus the game, tap a key and report how much of the frame changed
 dotnet run --project .\tests\WuxAuto.SelfTest -- --input I

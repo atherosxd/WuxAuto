@@ -1,4 +1,5 @@
 using Emgu.CV;
+using Emgu.CV.Structure;
 using WuxAuto.Automation;
 using WuxAuto.Core;
 using WuxAuto.Vision;
@@ -1070,6 +1071,9 @@ public class BlossomPilotTests
         settings.Blossom.LoopFrom = 6;
         settings.Blossom.BackAndForth = false;
         settings.Blossom.WaypointTurns = ["1:A5", "2:D5", "3:A5", "4:D5"];
+        settings.Blossom.ScanEveryMs = 0;        // no camera scans; the Jaso click tests turn them on
+        settings.Blossom.FightScanEveryMs = 0;
+        settings.Blossom.CameraTiltPx = 0;       // no camera tilt; the CameraTilt tests turn it on
 
         var input = new FakeGameInput();
         var ocr = new FakeOcrEngine();
@@ -1112,5 +1116,165 @@ public class BlossomPilotTests
     {
         using var frame = Blank.Bgra(Height, Width);
         return await PilotRun.RunAsync(settings, input, ocr, frame, startAt, done, timeoutMs);
+    }
+
+    // ---- 2026-11-01: Tab no longer targets in Blossom Garden - a Jaso seen on screen is clicked
+
+    /// <summary>A Jaso as <see cref="ScreenAnalyzer.FindJasos"/> knows her: a dark magenta fan over an orange body (BGRA).</summary>
+    private static void DrawJaso(Mat frame, int x, int y)
+    {
+        CvInvoke.Rectangle(frame, new System.Drawing.Rectangle(x, y, 30, 15), new MCvScalar(45, 30, 70, 255), -1);
+        CvInvoke.Rectangle(frame, new System.Drawing.Rectangle(x + 8, y + 15, 14, 40), new MCvScalar(40, 80, 170, 255), -1);
+    }
+
+    /// <summary>A plain left click inside the figure drawn at (x, y).</summary>
+    private static bool ClickedJasoAt(FakeGameInput input, int x, int y) => input.Calls
+        .Where(c => c.StartsWith("Click ", StringComparison.Ordinal) && c.Split(' ').Length == 2)   // a left click, no button named
+        .Select(c => c["Click ".Length..].Split(',').Select(int.Parse).ToArray())
+        .Any(p => p[0] >= x - 4 && p[0] <= x + 34 && p[1] >= y && p[1] <= y + 58);
+
+    [Fact]
+    public async Task NoTab_AJasoOnScreen_IsClicked_ThenFought()
+    {
+        // User, 2026-11-01: "they have disabled tabbing in the Blossom, can you possibly click this mob instead by using the
+        // color, shape".
+        FakeGameInput? sent = null;
+        var (settings, input, ocr) = Harness(() => "15000 , 15000",
+            target: i => ClickedJasoAt(i, 600, 250) ? "[S]Jaso Practitioner" : null);   // the target bar shows her once clicked
+        sent = input;
+        using var frame = Blank.Bgra(Height, Width);
+        DrawJaso(frame, 600, 250);
+
+        var run = await PilotRun.RunAsync(settings, input, ocr, frame, PilotPhase.BlossomWalk,
+            (_, lines) => lines.Any(l => l.Contains("Jaso Practitioner targeted", StringComparison.Ordinal)), 10000);
+
+        string log = string.Join("\n", run.Lines);
+        Assert.True(ClickedJasoAt(input, 600, 250), log + "\n" + string.Join("\n", input.Calls));
+        Assert.Contains(run.Lines, l => l.Contains("Jaso Practitioner targeted", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task NoJasoInView_TheCameraScans_AndOneThatComesIntoViewIsClicked()
+    {
+        // User, 2026-11-01: "also add when running, to rotate the camera to scan for the mob".
+        var (settings, input, ocr) = Harness(() => "15000 , 15000");
+        settings.Blossom.ScanEveryMs = 1000;
+        settings.Blossom.ScanTaps = 6;
+        using var frame = Blank.Bgra(Height, Width);
+        bool drawn = false;
+
+        var run = await PilotRun.RunAsync(settings, input, ocr, frame, PilotPhase.BlossomWalk,
+            (_, _) => ClickedJasoAt(input, 900, 250), 12000,
+            beforeTick: () =>
+            {
+                if (!drawn && input.Calls.Count(c => c == "KeyDown D") >= 2)
+                {
+                    drawn = true;
+                    DrawJaso(frame, 900, 250);   // she comes into view after the second camera step
+                }
+            });
+
+        string calls = string.Join("\n", input.Calls);
+        Assert.True(ClickedJasoAt(input, 900, 250), string.Join("\n", run.Lines) + "\n" + calls);
+        Assert.InRange(input.Calls.Count(c => c == "KeyDown D"), 2, 3);   // the scan stops at her
+        Assert.Contains(run.Lines, l => l.Contains("Scanning", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task ScanFindsNothing_TheWalkGoesOnAndRelearnsTheHeading()
+    {
+        var (settings, input, ocr) = Harness(() => "15000 , 15000");
+        settings.Blossom.ScanEveryMs = 1000;
+        settings.Blossom.ScanTaps = 3;
+
+        var run = await RunAsync(settings, input, ocr, PilotPhase.BlossomWalk,
+            (_, lines) => lines.Any(l => l.Contains("no Jaso", StringComparison.Ordinal)), 12000);
+
+        string log = string.Join("\n", run.Lines);
+        Assert.True(run.Lines.Any(l => l.Contains("no Jaso", StringComparison.Ordinal) && l.Contains("learns the heading", StringComparison.Ordinal)), log);
+        Assert.True(input.Calls.Count(c => c == "KeyDown D") >= 3, string.Join("\n", input.Calls));
+    }
+
+    [Fact]
+    public async Task InAFight_TheCameraLooksForTheNextJaso_AndSheIsClickedRightAfterTheKill()
+    {
+        // User, 2026-11-01: "do the rotate also even when attacking the current mob, and set that as a second subject".
+        var (settings, input, ocr) = Harness(() => "15000 , 15000",
+            target: i => SkillTaps(i) < 8 ? "[S]Jaso Practitioner" : null);   // the one being fought dies after 8 taps
+        settings.Blossom.FightScanEveryMs = 1000;
+        settings.Blossom.TargetGoneMs = 1000;
+        using var frame = Blank.Bgra(Height, Width);
+        bool drawn = false;
+
+        var run = await PilotRun.RunAsync(settings, input, ocr, frame, PilotPhase.BlossomWalk,
+            (_, lines) => lines.Any(l => l.Contains("down (kill 1)", StringComparison.Ordinal)) && ClickedJasoAt(input, 1000, 300), 15000,
+            beforeTick: () =>
+            {
+                if (!drawn && input.Calls.Contains("KeyDown D"))
+                {
+                    drawn = true;
+                    DrawJaso(frame, 1000, 300);   // the camera step shows the next one
+                }
+            });
+
+        string log = string.Join("\n", run.Lines);
+        Assert.True(ClickedJasoAt(input, 1000, 300), log);
+        int kill = run.Lines.FindIndex(l => l.Contains("down (kill 1)", StringComparison.Ordinal));
+        int next = run.Lines.FindIndex(l => l.Contains("next Jaso", StringComparison.Ordinal));
+        Assert.True(next >= 0 && next < kill, "the next one should be seen during the fight:\n" + log);
+        Assert.Contains(run.Lines.Skip(kill), l => l.Contains("clicking", StringComparison.Ordinal));
+    }
+
+    // ---- 2026-11-01: "also try to move the screen up instead of facing down"
+
+    /// <summary>The right-drags sent, as (from y, to y - from y) - positive = down, towards the steepest view.</summary>
+    private static List<(int Index, int FromY, int Dy)> Drags(FakeGameInput input) => input.Calls
+        .Select((c, i) => (c, i))
+        .Where(t => t.c.StartsWith("Drag ", StringComparison.Ordinal))
+        .Select(t =>
+        {
+            var ends = t.c["Drag ".Length..].Split("->");
+            int from = int.Parse(ends[0].Split(',')[1]), to = int.Parse(ends[1].Split(',')[1]);
+            return (t.i, from, to - from);
+        })
+        .ToList();
+
+    [Fact]
+    public async Task CameraTilt_TheTurnLevelsTheView_AndTheWalkTiltsItUp()
+    {
+        var (settings, input, ocr) = Harness(() => "19148 , 19062");
+        settings.Blossom.TurnMaxTaps = 2;
+        settings.Blossom.CameraTiltPx = 60;
+
+        var run = await RunAsync(settings, input, ocr, PilotPhase.BlossomTurn,
+            (_, lines) => lines.Any(l => l.Contains("Tilted the camera up", StringComparison.Ordinal)), 15000);
+
+        string log = string.Join("\n", run.Lines) + "\n" + string.Join("\n", input.Calls);
+        var drags = Drags(input);
+        Assert.Equal(3, drags.Count);
+        Assert.True(drags[0].Dy >= Height / 2, log);                                 // down to the steepest view ...
+        Assert.True(drags[0].Index < input.Calls.IndexOf("KeyDown D"), log);          // ... before the pillar turn
+        Assert.True(drags[1].Dy >= Height / 2, log);                                 // the walk: down again ...
+        Assert.Equal(-60, drags[2].Dy);                                              // ... then 60 px up
+        int firstWalkClick = input.Calls.FindIndex(c => c.StartsWith("Click ", StringComparison.Ordinal));
+        Assert.True(firstWalkClick < 0 || firstWalkClick > drags[2].Index, log);
+    }
+
+    [Fact]
+    public async Task CameraTilt_StartInside_TiltsBeforeTheFirstWalkClick()
+    {
+        var (settings, input, ocr) = Harness(() => "15000 , 15000");
+        settings.Blossom.CameraTiltPx = 80;
+
+        var run = await RunAsync(settings, input, ocr, PilotPhase.CheckZone,
+            (_, _) => input.Calls.Any(c => c.StartsWith("Click ", StringComparison.Ordinal)), 15000);
+
+        string log = string.Join("\n", run.Lines) + "\n" + string.Join("\n", input.Calls);
+        var drags = Drags(input);
+        Assert.Equal(2, drags.Count);
+        Assert.True(drags[0].Dy >= Height / 2, log);
+        Assert.Equal(-80, drags[1].Dy);
+        Assert.True(input.Calls.FindIndex(c => c.StartsWith("Click ", StringComparison.Ordinal)) > drags[1].Index, log);
+        Assert.Contains(run.Lines, l => l.Contains("Tilted the camera up", StringComparison.Ordinal));
     }
 }
