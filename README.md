@@ -294,6 +294,11 @@ On the walk, after 4 s without seeing one it stands and turns the camera right i
 turns the camera one step every 3 s, remembers the next Jaso it sees and clicks her right after the kill. After any camera
 turn the next walk step learns the direction again. A Jaso seen only from behind (just the fan) is not found yet.
 
+**Camera tilt** (Settings > Auto Blossom, default 60 px, 0 = off): when the walk starts, and again after each zoom-out, the
+camera is right-dragged down as far as it goes (facing down) and then up by that many pixels, so it looks ahead and shows
+Jasos further away. Starting from the same limit every time, the tilt never adds up. The pillar turn uses the view facing
+down, as its picture was taken that way.
+
 **Record your own route** (Settings > Auto Blossom): bind the game, stand at the arrival spot in Blossom Garden lined up on
 the pillars, press **Record route** and walk the road by hand. A waypoint is saved every 120 units, and your own `A` / `D`
 camera taps are saved with the waypoint you are at (the pilot taps the same way when it leaves it). Press **Loop starts

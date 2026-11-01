@@ -409,6 +409,13 @@ public sealed class BlossomSettings
     public int FightScanEveryMs { get; set; } = 3000;
 
     /// <summary>
+    /// The camera tilted up this many px (right-drag) for the walk, so it looks ahead instead of down at the floor (user,
+    /// 2026-11-01: "also try to move the screen up instead of facing down"). Always from the steepest view: a long drag down
+    /// first (the game stops the camera there), so the tilt is the same however often it is done. 0 = off.
+    /// </summary>
+    public int CameraTiltPx { get; set; } = 60;
+
+    /// <summary>
     /// Reached within this many units. Live 2026-10-29: the old waypoints 2, 4 and 5 lay just past a railing (stopped 86, 67,
     /// 71 short at 60), so it went to 100 - which let the walk stop 61 north of waypoint 1 and start every next leg off the
     /// user's line (run 5). Now 40, with the walk homing in on the last 300 units, and blocked within 150 counts as reached.

@@ -1073,6 +1073,7 @@ public class BlossomPilotTests
         settings.Blossom.WaypointTurns = ["1:A5", "2:D5", "3:A5", "4:D5"];
         settings.Blossom.ScanEveryMs = 0;        // no camera scans; the Jaso click tests turn them on
         settings.Blossom.FightScanEveryMs = 0;
+        settings.Blossom.CameraTiltPx = 0;       // no camera tilt; the CameraTilt tests turn it on
 
         var input = new FakeGameInput();
         var ocr = new FakeOcrEngine();
@@ -1222,5 +1223,58 @@ public class BlossomPilotTests
         int next = run.Lines.FindIndex(l => l.Contains("next Jaso", StringComparison.Ordinal));
         Assert.True(next >= 0 && next < kill, "the next one should be seen during the fight:\n" + log);
         Assert.Contains(run.Lines.Skip(kill), l => l.Contains("clicking", StringComparison.Ordinal));
+    }
+
+    // ---- 2026-11-01: "also try to move the screen up instead of facing down"
+
+    /// <summary>The right-drags sent, as (from y, to y - from y) - positive = down, towards the steepest view.</summary>
+    private static List<(int Index, int FromY, int Dy)> Drags(FakeGameInput input) => input.Calls
+        .Select((c, i) => (c, i))
+        .Where(t => t.c.StartsWith("Drag ", StringComparison.Ordinal))
+        .Select(t =>
+        {
+            var ends = t.c["Drag ".Length..].Split("->");
+            int from = int.Parse(ends[0].Split(',')[1]), to = int.Parse(ends[1].Split(',')[1]);
+            return (t.i, from, to - from);
+        })
+        .ToList();
+
+    [Fact]
+    public async Task CameraTilt_TheTurnLevelsTheView_AndTheWalkTiltsItUp()
+    {
+        var (settings, input, ocr) = Harness(() => "19148 , 19062");
+        settings.Blossom.TurnMaxTaps = 2;
+        settings.Blossom.CameraTiltPx = 60;
+
+        var run = await RunAsync(settings, input, ocr, PilotPhase.BlossomTurn,
+            (_, lines) => lines.Any(l => l.Contains("Tilted the camera up", StringComparison.Ordinal)), 15000);
+
+        string log = string.Join("\n", run.Lines) + "\n" + string.Join("\n", input.Calls);
+        var drags = Drags(input);
+        Assert.Equal(3, drags.Count);
+        Assert.True(drags[0].Dy >= Height / 2, log);                                 // down to the steepest view ...
+        Assert.True(drags[0].Index < input.Calls.IndexOf("KeyDown D"), log);          // ... before the pillar turn
+        Assert.True(drags[1].Dy >= Height / 2, log);                                 // the walk: down again ...
+        Assert.Equal(-60, drags[2].Dy);                                              // ... then 60 px up
+        int firstWalkClick = input.Calls.FindIndex(c => c.StartsWith("Click ", StringComparison.Ordinal));
+        Assert.True(firstWalkClick < 0 || firstWalkClick > drags[2].Index, log);
+    }
+
+    [Fact]
+    public async Task CameraTilt_StartInside_TiltsBeforeTheFirstWalkClick()
+    {
+        var (settings, input, ocr) = Harness(() => "15000 , 15000");
+        settings.Blossom.CameraTiltPx = 80;
+
+        var run = await RunAsync(settings, input, ocr, PilotPhase.CheckZone,
+            (_, _) => input.Calls.Any(c => c.StartsWith("Click ", StringComparison.Ordinal)), 15000);
+
+        string log = string.Join("\n", run.Lines) + "\n" + string.Join("\n", input.Calls);
+        var drags = Drags(input);
+        Assert.Equal(2, drags.Count);
+        Assert.True(drags[0].Dy >= Height / 2, log);
+        Assert.Equal(-80, drags[1].Dy);
+        Assert.True(input.Calls.FindIndex(c => c.StartsWith("Click ", StringComparison.Ordinal)) > drags[1].Index, log);
+        Assert.Contains(run.Lines, l => l.Contains("Tilted the camera up", StringComparison.Ordinal));
     }
 }

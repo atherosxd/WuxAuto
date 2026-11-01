@@ -811,41 +811,44 @@ public sealed class ScreenAnalyzer : IDisposable
         if (w < 16 || h < 16)
             return [];
 
-        using var hsv = ToHsv(frame, new PixelRect(0, 0, w, h));
+        // The figures are found at half size (nearest pixel: the same mask a full-size pass shrunk would give) - the walk
+        // looks every 0.7 s and a full-size pass (~130 ms at 2048x1152) held its clicks back. The fan and skirt shares are
+        // counted at full size inside each candidate only: at half size the character's own pet passed them.
+        int sw = w / 2, sh = h / 2;
+        using var half = new Mat();
+        CvInvoke.Resize(frame, half, new Size(sw, sh), 0, 0, Inter.Nearest);
+        using var hsv = ToHsv(half, new PixelRect(0, 0, sw, sh));
         using var reds = new Mat();
         using var magenta = new Mat();
         CvHelpers.InRange(hsv, new MCvScalar(0, 60, 35), new MCvScalar(14, 255, 255), reds);
         CvHelpers.InRange(hsv, new MCvScalar(160, 60, 35), new MCvScalar(180, 255, 255), magenta);
         CvInvoke.BitwiseOr(reds, magenta, reds);
-        using var fan = new Mat();
-        CvHelpers.InRange(hsv, new MCvScalar(160, 50, 35), new MCvScalar(180, 255, 130), fan);
-        using var orange = new Mat();
-        CvHelpers.InRange(hsv, new MCvScalar(4, 100, 60), new MCvScalar(14, 255, 255), orange);
         foreach (var band in excluded)
         {
-            var r = band.Clamp(w, h);
+            var r = new PixelRect(band.X / 2, band.Y / 2, (band.Width + 1) / 2, (band.Height + 1) / 2).Clamp(sw, sh);
             if (r.Width <= 0 || r.Height <= 0)
                 continue;
             using var part = new Mat(reds, new Rectangle(r.X, r.Y, r.Width, r.Height));
             part.SetTo(new MCvScalar(0));
         }
 
-        using var small = new Mat();
-        CvInvoke.Resize(reds, small, new Size(w / 2, h / 2), 0, 0, Inter.Nearest);
         using var kernel = CvHelpers.StructuringElement(MorphShapes.Rectangle, new Size(3, 3));
-        CvHelpers.Dilate(small, small, kernel);
+        CvHelpers.Dilate(reds, reds, kernel);
 
-        int Count(Mat mask, int x, int y, int cw, int ch)
+        // Pixels of one colour range in a part of the frame, at full size.
+        int Count(MCvScalar lower, MCvScalar upper, int x, int y, int cw, int ch)
         {
             var r = new PixelRect(x, y, cw, ch).Clamp(w, h);
             if (r.Width <= 0 || r.Height <= 0)
                 return 0;
-            using var part = new Mat(mask, new Rectangle(r.X, r.Y, r.Width, r.Height));
-            return CvInvoke.CountNonZero(part);
+            using var part = ToHsv(frame, r);
+            using var mask = new Mat();
+            CvHelpers.InRange(part, lower, upper, mask);
+            return CvInvoke.CountNonZero(mask);
         }
 
         var hits = new List<PixelRect>();
-        foreach (var (box, pixels) in Components(small))
+        foreach (var (box, pixels) in Components(reds))
         {
             if (pixels < 20)
                 continue;
@@ -858,8 +861,8 @@ public sealed class ScreenAnalyzer : IDisposable
             double cx = x0 + bw / 2.0, cy = y0 + bh / 2.0;
             if (Math.Abs(cx - w / 2.0) < 0.13 * h && Math.Abs(cy - 0.50 * h) < 0.16 * h)
                 continue;   // the character's own spot
-            int fanTop = Count(fan, x0, y0, bw, (int)(bh * 0.4));
-            int orangeLow = Count(orange, x0, y0 + (int)(bh * 0.35), bw, bh - (int)(bh * 0.35));
+            int fanTop = Count(new MCvScalar(160, 50, 35), new MCvScalar(180, 255, 130), x0, y0, bw, (int)(bh * 0.4));
+            int orangeLow = Count(new MCvScalar(4, 100, 60), new MCvScalar(14, 255, 255), x0, y0 + (int)(bh * 0.35), bw, bh - (int)(bh * 0.35));
             if (fanTop < 0.03 * bh * bh || orangeLow < 0.015 * bh * bh)
                 continue;
             hits.Add(new PixelRect(x0, y0, bw, bh));

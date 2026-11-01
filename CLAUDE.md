@@ -179,7 +179,7 @@ words and the map scroll-arrow result. `--crop` writes `<frame>.crop.png` next t
 Core tests and the refactor parity gate (M1, 2026-10-27):
 
 ```powershell
-dotnet test tests\WuxAuto.Core.Tests        # xUnit, platform-free Core only (922 tests, ~4-8 min; the pilot tests tick a
+dotnet test tests\WuxAuto.Core.Tests        # xUnit, platform-free Core only (935 tests, ~4-8 min; the pilot tests tick a
                                            # blank Mat with a scripted OCR scene - see tests/ in section 3)
 # probe baseline: runs every SelfTest probe over a frozen, local-only frame set (never committed)
 # and writes normalised output; run it before and after a refactor and diff the two
@@ -1146,6 +1146,16 @@ teleport in again (LOD's rule); still in town after the teleport = "destination 
   `ScanFindsNothing_*`, `InAFight_*`). Probe: `--jaso <dir>` (hits + click points, `<frame>.jaso.png`). **Not seen live:** the
   click targeting her, the scans, a plain click on another player (whether it attacks; the target bar rule keeps the pilot off
   anyone else).
+* **Camera tilt** (user, 2026-11-01: "also try to move the screen up instead of facing down"; `Blossom.CameraTiltPx` **60**,
+  0 = off, clamp 0-400, UI "Camera tilt (px)"): `QueueBlossomTilt` / `TickBlossomCameraTilt`, one right-drag per tick
+  (`TiltCamera`, 300 ms, 400 ms settle): **down** 0.25 h -> 0.80 h at 0.5 w (the steepest view - assumed the game stops the
+  camera there), then **up** `CameraTiltPx` from 0.60 h. From that limit the tilt is the same each time, so repeating it never
+  adds up (the Laby gate tilt did, run 34). Queued: `StartBlossomWalk` (after the pillar turn), a Start inside, the respawn
+  path away from the arrival spot, every unblock zoom-out (walk and fight; sent once the walk ticks). The pillar turn's first
+  tick (`_blossomTurnLevelled`, reset by `BeginBlossomTurn`) sends the **down half only** (the pillar template was cropped
+  facing down). Pinned by `BlossomPilotTests.CameraTilt_*` (the
+  harness sets 0). **Not seen live:** that a long drag down stops at a limit, the view at 60 px, whether a zoom-out changes
+  the pitch, and the homing click scale (1.8 px per unit was measured facing down).
 * **Fight / loot:** the skill key **held** through the fight (`Blossom.HoldSkill`, on; check box "Hold skill (Blossom)"; user,
   2026-10-30: "spam or hold attack skill, currently it skills then normal attacks" - one tap casts once, then normal attacks;
   with Ctrl + skill the key is let go for a Ctrl tap every `Lod.SkillEveryMs`, as LOD's hold), off = tapped every

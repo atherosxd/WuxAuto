@@ -521,6 +521,7 @@
                                 <RowDefinition Height="Auto" />
                                 <RowDefinition Height="Auto" />
                                 <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
                             </Grid.RowDefinitions>
 
                             <!-- User, 2026-10-30: "1 - 83 then 83, 82, 81 to 1 then loop". Record route ticks it when the route does not come back round. -->
@@ -568,6 +569,10 @@
                             <TextBlock Grid.Row="1" Grid.Column="2" Text="Loot time (ms)" Style="{StaticResource FieldLabel}"
                                        ToolTip="Only with 'Loot while fighting' off: how long the loot key is spammed after a kill (every 0.2 s, starting 1 s after the kill). The buffs use the Auto War settings above." />
                             <TextBox Grid.Row="1" Grid.Column="3" Style="{StaticResource WideField}" Text="{Binding Settings.Blossom.LootMs}" />
+                            <!-- User, 2026-11-01: "also try to move the screen up instead of facing down". -->
+                            <TextBlock Grid.Row="5" Grid.Column="0" Text="Camera tilt (px)" Style="{StaticResource FieldLabel}"
+                                       ToolTip="When the walk starts (and after each zoom-out) the camera is turned to face down as far as it goes, then right-dragged up this many pixels so it looks ahead instead of at the floor. 0 = leave the camera as it is." />
+                            <TextBox Grid.Row="5" Grid.Column="1" Style="{StaticResource WideField}" Text="{Binding Settings.Blossom.CameraTiltPx}" />
                         </Grid>
 
                         <TextBlock Text="Mini mode" Style="{StaticResource SectionTitle}" Margin="0,12,0,6" />
