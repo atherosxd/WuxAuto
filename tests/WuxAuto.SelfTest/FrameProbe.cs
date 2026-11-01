@@ -280,7 +280,7 @@ internal static class FrameProbe
     /// seen: clicked only where the cursor turns into a sword) - each with the click point used without the cursor. Writes
     /// &lt;frame&gt;.jaso.png with the boxes (green full, yellow partial).
     /// </summary>
-    public static int Jasos(string dir)
+    public static int Jasos(string dir, bool why = false)
     {
         foreach (string path in Directory.GetFiles(dir, "*.png").Where(p => !p.EndsWith(".scan.png") && !p.EndsWith(".crop.png")
                                                                            && !p.EndsWith(".jaso.png") && !p.EndsWith(".det.png")).Order())
@@ -296,9 +296,14 @@ internal static class FrameProbe
                               (hits.Count == 0 ? "none" : string.Join("; ", hits.Select(c =>
                               {
                                   var r = c.Box;
-                                  var (cx, cy) = WuxAuto.Automation.AutomationPilot.JasoClickPoint(r);
+                                  var (cx, cy) = c.Body;
                                   return $"{(c.Full ? "full" : "partial")} {r.X},{r.Y} {r.Width}x{r.Height} click {cx},{cy}";
                               }))));
+            if (why)
+            {
+                foreach (string line in ScreenAnalyzer.JasoReport(frame, WuxAuto.Automation.AutomationPilot.WarWalkBands(frame.Width, frame.Height)))
+                    Console.WriteLine($"    {line}");
+            }
             if (hits.Count > 0)
             {
                 foreach (var c in hits)

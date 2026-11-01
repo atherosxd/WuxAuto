@@ -30,7 +30,11 @@ public sealed record PillarPair(TemplateMatch Left, TemplateMatch Right, double 
 /// her whole look (fan over an orange skirt, near enough); otherwise only part of it, or small and far - a look-alike as
 /// likely as not, so only clicked where the cursor turns into a sword.
 /// </summary>
-public sealed record JasoCandidate(PixelRect Box, bool Full);
+public sealed record JasoCandidate(PixelRect Box, bool Full)
+{
+    /// <summary>Where to click her: the middle of her orange skirt (her body), else 60 % down the box's middle.</summary>
+    public (int X, int Y) Body { get; init; } = (Box.CenterX, Box.Y + (int)(Box.Height * 0.6));
+}
 
 public sealed record TextHit(string Text, double Similarity, PixelRect Bounds, string LineText, PixelRect LineBounds, double OcrMs)
 {

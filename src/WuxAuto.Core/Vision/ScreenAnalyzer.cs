@@ -800,10 +800,12 @@ public sealed class ScreenAnalyzer : IDisposable
     /// first. A Jaso is a standing red figure: a dark magenta-red fan on top (blue above green - a shrine gate's red-brown
     /// posts are not) over a magenta top and an orange-red skirt. Live 2026-11-01 at 2048x1152: 38x66, fan H 172-177 S ~120
     /// V ~67, skirt H 4-9 S ~157 V ~122; the grass and the road are H 27-33. Red pixels outside <paramref name="excluded"/>
-    /// (the HUD) are joined into figures at half size; a figure 3-14 % of the client tall, 1.1-4x taller than wide, with
-    /// fan pixels in its top 40 % and orange ones below counts - unless it stands where the character does (its dark wings
-    /// with red flame edges read like one). Prototype on 60 saved frames: the live Jaso found, nothing else (gate posts,
-    /// trees, flowers, the character's pet, Eight Symbols Island); a Jaso seen from behind (only the wide fan) is missed.
+    /// (the HUD) are joined into figures at half size; a figure 3-25 % of the client tall counts when it has her look: the
+    /// fan in its top 40 % and orange below (1.1-4x taller than wide), or - attacking or turned away, the fan glows green or
+    /// splits off (the user's videos, 2026-11-01) - a red dress (hue 4-8 for 45 %+ of its orange) with a weaker fan (0.8x+)
+    /// or alone on a standing shape (1.25x+, 4.5 % tall). Not the character's own body column, not navy (its wings). On the
+    /// saved Blossom frames: the real Jasos only (pillars, reeds, tulips, leaves, the pet and the gear stay out); in the
+    /// user's videos every frame she shows in but two inside her green dome and a few back views.
     /// </summary>
     public static IReadOnlyList<PixelRect> FindJasos(Mat frame, IReadOnlyList<PixelRect> excluded)
         => JasoFigures(frame, excluded, partialToo: false).Select(c => c.Box).ToList();
@@ -821,13 +823,25 @@ public sealed class ScreenAnalyzer : IDisposable
         => JasoFigures(frame, excluded, partialToo: true);
 
     /// <summary>
-    /// Where the character itself stands on screen (centre within 0.13 h sideways and 0.16 h up or down of (0.5 w, 0.5 h)):
-    /// its wings, pet and effects read like a Jaso there.
+    /// The character's own body column (centre within 0.035 h sideways and 0.08 h up or down of (0.5 w, 0.5 h)): a Jaso
+    /// cannot stand there, beside it she can (user, 2026-11-01: "it doesn't detect the Jaso just beside the character" -
+    /// this was 0.13 h by 0.16 h, which hid her). The character's wings spread wider; they are told apart by their navy.
     /// </summary>
     public static bool IsOwnSpot(PixelRect box, int w, int h)
-        => Math.Abs(box.X + box.Width / 2.0 - w / 2.0) < 0.13 * h && Math.Abs(box.Y + box.Height / 2.0 - 0.50 * h) < 0.16 * h;
+        => Math.Abs(box.X + box.Width / 2.0 - w / 2.0) < 0.035 * h && Math.Abs(box.Y + box.Height / 2.0 - 0.50 * h) < 0.08 * h;
 
-    private static List<JasoCandidate> JasoFigures(Mat frame, IReadOnlyList<PixelRect> excluded, bool partialToo)
+    /// <summary>
+    /// Every red figure 2 % of the height or taller that <see cref="FindJasoCandidates"/> looks at, with its size, shape and
+    /// colour shares and why it was or was not taken (the --jaso probe's --why).
+    /// </summary>
+    public static IReadOnlyList<string> JasoReport(Mat frame, IReadOnlyList<PixelRect> excluded)
+    {
+        var why = new List<string>();
+        JasoFigures(frame, excluded, partialToo: true, why);
+        return why;
+    }
+
+    private static List<JasoCandidate> JasoFigures(Mat frame, IReadOnlyList<PixelRect> excluded, bool partialToo, List<string>? why = null)
     {
         int w = frame.Width, h = frame.Height;
         if (w < 16 || h < 16)
@@ -869,28 +883,75 @@ public sealed class ScreenAnalyzer : IDisposable
             return CvInvoke.CountNonZero(mask);
         }
 
+        // Pixels of one colour range in a part of the frame and their middle (null when there are none), at full size.
+        (int Count, (int X, int Y)? Middle) Centroid(MCvScalar lower, MCvScalar upper, int x, int y, int cw, int ch)
+        {
+            var r = new PixelRect(x, y, cw, ch).Clamp(w, h);
+            if (r.Width <= 0 || r.Height <= 0)
+                return (0, null);
+            using var part = ToHsv(frame, r);
+            using var mask = new Mat();
+            CvHelpers.InRange(part, lower, upper, mask);
+            var m = CvInvoke.Moments(mask, true);
+            return m.M00 <= 0 ? (0, null) : ((int)m.M00, (r.X + (int)Math.Round(m.M10 / m.M00), r.Y + (int)Math.Round(m.M01 / m.M00)));
+        }
+
         var hits = new List<JasoCandidate>();
         foreach (var (box, pixels) in Components(reds))
         {
-            if (pixels < (partialToo ? 8 : 20))
-                continue;
             int x0 = box.X * 2, y0 = box.Y * 2, bw = box.Width * 2, bh = box.Height * 2;
-            if (bh < (partialToo ? 0.015 : 0.03) * h || bh > 0.14 * h)
-                continue;
             double aspect = bh / (double)Math.Max(1, bw);
-            if (aspect < (partialToo ? 0.4 : 1.1) || aspect > (partialToo ? 4.5 : 4.0))
+            string figure = $"{x0},{y0} {bw}x{bh} ({bh / (double)h:0.000} h, h/w {aspect:0.00}, {pixels} px)";
+            bool Reject(string reason)
+            {
+                if (why != null && bh >= 0.02 * h)
+                    why.Add($"{figure}: {reason}");
+                return true;
+            }
+
+            if (pixels < (partialToo ? 8 : 20) && Reject("too few pixels"))
+                continue;
+            if ((bh < (partialToo ? 0.015 : 0.03) * h || bh > 0.25 * h) && Reject("too small or too tall"))
+                continue;
+            if ((aspect < (partialToo ? 0.4 : 0.8) || aspect > (partialToo ? 4.5 : 4.0)) && Reject("shape"))
                 continue;
             // The character's own spot (its dark wings with red flame edges read like a Jaso): never a full hit; a partial
             // candidate there (a Jaso fighting the character stands in it) is clicked only on a sword cursor.
             bool ownSpot = IsOwnSpot(new PixelRect(x0, y0, bw, bh), w, h);
-            if (ownSpot && !partialToo)
+            if (ownSpot && !partialToo && Reject("the character's own spot"))
+                continue;
+            // The character's wings: dark navy with red flame edges - 26-54 % navy in their box beside the character (live
+            // 2026-10-30), 0-0.3 % on four real Jasos. A figure with that much navy is not her, wherever it stands.
+            int navy = Count(new MCvScalar(95, 60, 15), new MCvScalar(130, 255, 150), x0, y0, bw, bh);
+            if (navy >= 0.05 * bw * bh && Reject($"navy {navy / (double)(bw * bh):0.00} (wings)"))
                 continue;
             int fanTop = Count(new MCvScalar(160, 50, 35), new MCvScalar(180, 255, 130), x0, y0, bw, (int)(bh * 0.4));
-            int orangeLow = Count(new MCvScalar(4, 100, 60), new MCvScalar(14, 255, 255), x0, y0 + (int)(bh * 0.35), bw, bh - (int)(bh * 0.35));
+            int skirtTop = y0 + (int)(bh * 0.35);
+            var (orangeLow, body) = Centroid(new MCvScalar(4, 100, 60), new MCvScalar(14, 255, 255), x0, skirtTop, bw, bh - (int)(bh * 0.35));
             bool fan = fanTop >= 0.03 * bh * bh, skirt = orangeLow >= 0.015 * bh * bh;
-            bool full = fan && skirt && bh >= 0.03 * h && aspect is >= 1.1 and <= 4.0 && !ownSpot;
+            // Attacking or turned away, her fan glows green or splits from the rest of her and only her red dress shows
+            // (user's videos, 2026-11-01: fan 0.00-0.027, dress 0.04-0.26 on every miss): a weaker fan with more dress, or
+            // a big red dress alone, count too.
+            // Her dress is red-orange (hue 4-8 for 0.53-0.77 of its orange pixels); wooden pillars, cattail reeds, tulips,
+            // autumn leaves and the character's own gear are browner (0.00-0.21) - without the fan, only a red dress counts.
+            double fanShare = fanTop / (double)(bh * bh), dress = orangeLow / (double)(bh * bh);
+            bool red = orangeLow > 0
+                       && Count(new MCvScalar(4, 100, 60), new MCvScalar(8, 255, 255), x0, skirtTop, bw, bh - (int)(bh * 0.35)) >= 0.45 * orangeLow;
+            // Side-on, her spread skirt makes her nearly as wide as tall (h/w 0.8-1.1), with some fan still showing; the dress
+            // alone counts only on a standing shape (h/w >= 1.25, 0.045 h tall) - a red tulip (0.043 h, 1.09) passed otherwise.
+            bool look = (fan && skirt && aspect >= 1.1)
+                        || (red && fanShare >= 0.012 && dress >= 0.04 && aspect >= 0.8)
+                        || (red && dress >= 0.08 && bh >= 0.045 * h && aspect >= 1.25);
+            bool full = look && bh >= 0.03 * h && aspect <= 4.0 && !ownSpot;
+            why?.Add($"{figure}: fan {fanTop / (double)(bh * bh):0.000} (>= 0.03), skirt {orangeLow / (double)(bh * bh):0.000} (>= 0.015)"
+                     + $" -> {(full ? "FULL" : partialToo && fan ? "partial" : "no")}");
             if (full || (partialToo && fan))
-                hits.Add(new JasoCandidate(new PixelRect(x0, y0, bw, bh), full));
+            {
+                var box2 = new PixelRect(x0, y0, bw, bh);
+                // User, 2026-11-01: "it click on its right not the body of the monster" - the box's middle can be off her body
+                // (her fan sticks out to one side); the middle of her orange skirt is on it.
+                hits.Add(body is { } b ? new JasoCandidate(box2, full) { Body = b } : new JasoCandidate(box2, full));
+            }
         }
 
         double meX = w / 2.0, meY = h * 0.54;

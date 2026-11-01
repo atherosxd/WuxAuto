@@ -96,7 +96,7 @@ if (pillarsIndex >= 0 && pillarsIndex + 1 < args.Length)
 
 int jasoIndex = Array.IndexOf(args, "--jaso");
 if (jasoIndex >= 0 && jasoIndex + 1 < args.Length)
-    return FrameProbe.Jasos(args[jasoIndex + 1]);
+    return FrameProbe.Jasos(args[jasoIndex + 1], args.Contains("--why"));
 
 int hpIndex = Array.IndexOf(args, "--hp");
 if (hpIndex >= 0 && hpIndex + 1 < args.Length)

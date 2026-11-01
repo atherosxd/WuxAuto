@@ -417,6 +417,14 @@ public sealed class BlossomSettings
     public int CameraTiltPx { get; set; } = 60;
 
     /// <summary>
+    /// Hover over the figures and click only where the game's cursor turns into a sword (also the far and partly seen ones,
+    /// and one beside the character). Off (user, 2026-11-01: "Turn it off"): read from outside, the cursor was not reliable -
+    /// the plain Windows arrow for a moment after the game comes to the front, the game's pointer over any character, at
+    /// times no cursor at all. Off, a figure with the Jaso's whole look is clicked in her middle and no other.
+    /// </summary>
+    public bool UseSwordCursor { get; set; }
+
+    /// <summary>
     /// The game's sword cursor (the fingerprint <see cref="IGameControls.HoverCursor"/> gives over a monster), learnt from
     /// a click whose target bar then showed the Jaso; 0 = not learnt yet. Learnt, only this picture counts as the sword.
     /// </summary>

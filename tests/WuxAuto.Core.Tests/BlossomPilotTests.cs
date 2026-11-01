@@ -1263,6 +1263,27 @@ public class BlossomPilotTests
     // game comes to the front; another picture at the character's own spot) - the sword is confirmed by a second read and
     // learnt from a click that targeted a Jaso.
 
+    [Fact]
+    public async Task SwordCursorOff_ByDefault_NoHovering_AFullJasoIsClickedInHerMiddle_APartialOneNever()
+    {
+        // User, 2026-11-01 15:00: "Turn it off" - the game's cursor read from outside was not reliable (the plain Windows
+        // arrow after the game comes to the front, the game's pointer over characters, at times no cursor at all).
+        var (settings, input, ocr) = Harness(() => "15000 , 15000");
+        Assert.False(settings.Blossom.UseSwordCursor);
+        input.Cursor = (x, y) => 2;   // whatever it would read
+        using var frame = Blank.Bgra(Height, Width);
+        DrawJaso(frame, 600, 250);
+        DrawFarPartial(frame);
+
+        var run = await PilotRun.RunAsync(settings, input, ocr, frame, PilotPhase.BlossomWalk, (_, _) => LeftClicks(input).Count > 0, 10000);
+
+        string log = string.Join("\n", run.Lines) + "\n" + string.Join("\n", input.Calls);
+        Assert.DoesNotContain(input.Calls, c => c.StartsWith("Hover ", StringComparison.Ordinal));
+        var (cx, cy) = LeftClicks(input)[0];
+        Assert.True(cx is >= 596 and <= 634 && cy is >= 250 and <= 308, log);      // the full one, in her middle
+        Assert.DoesNotContain(LeftClicks(input), p => OnFarPartial(p.X, p.Y));
+    }
+
     private static void DrawFarPartial(Mat frame)
     {
         CvInvoke.Rectangle(frame, new System.Drawing.Rectangle(900, 260, 14, 7), new MCvScalar(45, 30, 70, 255), -1);
@@ -1276,6 +1297,7 @@ public class BlossomPilotTests
     {
         var (settings, input, ocr) = Harness(() => "15000 , 15000");
         var reads = new HashSet<(int, int)>();
+        settings.Blossom.UseSwordCursor = true;
         input.Cursor = (x, y) => reads.Add((x, y)) && OnFarPartial(x, y) ? 2 : 1;   // 2 only on the first read at a point
         using var frame = Blank.Bgra(Height, Width);
         DrawFarPartial(frame);
@@ -1290,6 +1312,7 @@ public class BlossomPilotTests
     {
         bool targeted = false;
         var (settings, input, ocr) = Harness(() => "15000 , 15000", target: _ => targeted ? "[S]Jaso Practitioner" : null);
+        settings.Blossom.UseSwordCursor = true;
         input.Cursor = (x, y) => x is >= 596 and <= 634 && y is >= 250 and <= 308 ? 7 : 1;
         using var frame = Blank.Bgra(Height, Width);
         DrawJaso(frame, 600, 250);
@@ -1310,6 +1333,7 @@ public class BlossomPilotTests
         {
             var (settings, input, ocr) = Harness(() => "15000 , 15000");
             settings.Blossom.SwordCursor = 7;
+            settings.Blossom.UseSwordCursor = true;
             input.Cursor = (x, y) => OnFarPartial(x, y) ? over : 1;
             using var frame = Blank.Bgra(Height, Width);
             DrawFarPartial(frame);
@@ -1346,6 +1370,7 @@ public class BlossomPilotTests
         // spot, which the search left out - the pilot scanned on instead.
         var (settings, input, ocr) = Harness(() => "15000 , 15000");
         int jx = Width / 2 - 15, jy = Height / 2 - 20;
+        settings.Blossom.UseSwordCursor = true;
         input.Cursor = (x, y) => x >= jx && x <= jx + 30 && y >= jy + 15 && y <= jy + 55 ? 2 : 1;   // her body
         using var frame = Blank.Bgra(Height, Width);
         DrawJaso(frame, jx, jy);
@@ -1364,6 +1389,7 @@ public class BlossomPilotTests
         // User, 2026-11-01 13:45: "it tried to click the monster but on the side not directly on it". Seen side-on the fan
         // sticks out to one side and her body is off the figure's middle: points left and right of it are tried as well.
         var (settings, input, ocr) = Harness(() => "15000 , 15000");
+        settings.Blossom.UseSwordCursor = true;
         input.Cursor = (x, y) => x is >= 600 and <= 606 ? 2 : 1;   // only the left edge of the drawn figure
         using var frame = Blank.Bgra(Height, Width);
         DrawJaso(frame, 600, 250);
@@ -1384,6 +1410,7 @@ public class BlossomPilotTests
         // she stayed put, nothing was targeted; every click that targeted one that day was 0.23 h or lower. The game ignores
         // clicks on a monster that far: figures above JasoMinClickY are left for the walk to bring closer.
         var (settings, input, ocr) = Harness(() => "15000 , 15000");
+        settings.Blossom.UseSwordCursor = true;
         input.Cursor = (x, y) => (x is >= 596 and <= 634 && y is >= 150 and <= 210) || (x is >= 996 and <= 1034 && y is >= 300 and <= 360) ? 2 : 1;
         using var frame = Blank.Bgra(Height, Width);
         DrawJaso(frame, 600, 150);    // at the horizon: 150-205 of 900, centre 0.20 h
@@ -1443,6 +1470,7 @@ public class BlossomPilotTests
     {
         var (settings, input, ocr) = Harness(() => "15000 , 15000");
         static bool Sword(int x, int y) => x is >= 610 and <= 620 && y is >= 264 and <= 272;   // only a small part of her
+        settings.Blossom.UseSwordCursor = true;
         input.Cursor = (x, y) => Sword(x, y) ? 2 : 1;
         using var frame = Blank.Bgra(Height, Width);
         DrawJaso(frame, 600, 250);
@@ -1463,6 +1491,7 @@ public class BlossomPilotTests
         // The cursor can be read but stays the normal one over her (the hover too quick for the game, say): her whole look
         // is there, so she is clicked as before the cursor check - after the pointer went over her.
         var (settings, input, ocr) = Harness(() => "15000 , 15000");
+        settings.Blossom.UseSwordCursor = true;
         input.Cursor = (_, _) => 1;
         using var frame = Blank.Bgra(Height, Width);
         DrawJaso(frame, 600, 250);
@@ -1493,6 +1522,7 @@ public class BlossomPilotTests
         foreach (Func<int, int, long>? cursor in (Func<int, int, long>?[])[null, (_, _) => 1])
         {
             var (settings, input, ocr) = Harness(() => "15000 , 15000");
+            settings.Blossom.UseSwordCursor = true;
             input.Cursor = cursor;
             using var frame = Blank.Bgra(Height, Width);
             DrawFar(frame);
@@ -1502,6 +1532,7 @@ public class BlossomPilotTests
 
         // The sword shows over her: clicked.
         var (settings2, input2, ocr2) = Harness(() => "15000 , 15000");
+        settings2.Blossom.UseSwordCursor = true;
         input2.Cursor = (x, y) => x is >= 900 and <= 914 && y is >= 200 and <= 219 ? 2 : 1;
         using (var frame = Blank.Bgra(Height, Width))
         {

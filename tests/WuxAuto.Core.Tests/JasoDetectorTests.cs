@@ -166,6 +166,49 @@ public class JasoDetectorTests
     }
 
     [Fact]
+    public void AJasoBesideTheCharacter_IsAFullHit()
+    {
+        // User, 2026-11-01 15:05: "it doesn't detect the Jaso just beside the character" - only the character's own body
+        // column is left out now; its wings are told apart by their navy (below).
+        using var f = Field();
+        DrawJaso(f, W / 2 - 15 - (int)(0.08 * H), H / 2 - 20);   // 0.08 h left of the character
+
+        var hit = Assert.Single(Find(f));
+        Assert.InRange(hit.CenterX, W / 2 - (int)(0.08 * H) - 20, W / 2 - (int)(0.08 * H) + 20);
+    }
+
+    [Fact]
+    public void TheCharactersWings_NavyWithRedEdges_AreNotAJaso()
+    {
+        // Live 2026-10-30 (two snapshots): the character's dark navy wings with red flame edges passed the fan and skirt
+        // rules beside the character - navy 26-54 % of their box, 0-0.3 % on four real Jasos.
+        using var f = Field();
+        int x = W / 2 - (int)(0.10 * H) - 25, y = H / 2 - 35;
+        CvInvoke.Rectangle(f, new Rectangle(x, y, 50, 70), new MCvScalar(90, 40, 20), -1);        // navy wing
+        CvInvoke.Rectangle(f, new Rectangle(x, y, 50, 12), Fan, -1);                               // dark red-magenta edge on top
+        CvInvoke.Rectangle(f, new Rectangle(x, y, 5, 70), Skirt, -1);                              // red-orange flame edges round it
+        CvInvoke.Rectangle(f, new Rectangle(x + 45, y, 5, 70), Skirt, -1);
+        CvInvoke.Rectangle(f, new Rectangle(x + 10, y + 50, 30, 20), Skirt, -1);
+
+        Assert.Empty(Find(f));
+        Assert.DoesNotContain(Candidates(f), c => c.Full);
+    }
+
+    [Fact]
+    public void ASideOnJaso_TheClickPointIsOnHerBody_NotTheMiddleOfHerBox()
+    {
+        // User, 2026-11-01 15:05: "it detected the jaso from afar. it click on its right not the body of the monster" - the
+        // fan sticks out to one side; the click point is the middle of her orange skirt.
+        using var f = Field();
+        CvInvoke.Rectangle(f, new Rectangle(600, 250, 60, 15), Fan, -1);            // wide fan, out to the right
+        CvInvoke.Rectangle(f, new Rectangle(600, 265, 14, 40), Skirt, -1);           // her body, at the left
+
+        var c = Assert.Single(Candidates(f));
+        Assert.InRange(c.Body.X, 600, 614);
+        Assert.InRange(c.Body.Y, 265, 305);
+    }
+
+    [Fact]
     public void Candidates_LeaveOutTheUi()
     {
         using var f = Field();

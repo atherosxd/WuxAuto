@@ -142,7 +142,7 @@ dotnet run --project .\tests\WuxAuto.SelfTest -- --tribe "$env:LOCALAPPDATA\WuxA
 dotnet run --project .\tests\WuxAuto.SelfTest -- --pillars <dir>
 
 # Auto Blossom: the Jasos found by colour and shape (ScreenAnalyzer.FindJasos) + their click points per PNG; writes <frame>.jaso.png
-dotnet run --project .\tests\WuxAuto.SelfTest -- --jaso <dir>
+dotnet run --project .\tests\WuxAuto.SelfTest -- --jaso <dir> [--why]   # --why: every red figure's size, shape, shares, verdict
 
 # M2 parity: the pilot's detectors and x1.5 OCR reads on the frozen legacy vision (tests\...\Legacy,
 # OpenCvSharp 4.13) vs Core's (Emgu CV), per frame; ends with two summary lines (see below)
@@ -179,7 +179,7 @@ words and the map scroll-arrow result. `--crop` writes `<frame>.crop.png` next t
 Core tests and the refactor parity gate (M1, 2026-10-27):
 
 ```powershell
-dotnet test tests\WuxAuto.Core.Tests        # xUnit, platform-free Core only (953 tests, ~4-8 min; the pilot tests tick a
+dotnet test tests\WuxAuto.Core.Tests        # xUnit, platform-free Core only (957 tests, ~4-8 min; the pilot tests tick a
                                            # blank Mat with a scripted OCR scene - see tests/ in section 3)
 # probe baseline: runs every SelfTest probe over a frozen, local-only frame set (never committed)
 # and writes normalised output; run it before and after a refactor and diff the two
@@ -1130,7 +1130,23 @@ teleport in again (LOD's rule); still in town after the teleport = "destination 
   skirt** (H 4-14, S >= 100, V >= 60; >= 0.015 bh^2 from 35 % down); nearest the character (0.5 w, 0.54 h) first. Live
   2048x1152 (the user near one, 2026-11-01): hit 748,414 38x66, ~50 ms a frame; 0 hits on the 54 Blossom debug frames, the Eight
   Symbols frames and a Bohai war frame full of players. Measured: fan H 172-177 S ~120 V ~67, skirt H 4-9 S ~157 V ~122, grass
-  H 27-33; shrine gate posts (H 0-16, dark) fail the magenta fan rule, the pet's feathers the orange share. **Candidates**
+  H 27-33; shrine gate posts (H 0-16, dark) fail the magenta fan rule, the pet's feathers the orange share. **Reworked from
+  the user's two videos** (2026-11-01, `Videos\jaso.mp4` / `jaso2.mp4`, native-size crops beside the character, frames pasted
+  into a 2048x1152 Blossom frame; never in git): size 0.03-**0.25 h** (close by she is ~0.13-0.17 h); her look = **A** fan
+  >= 0.03 + skirt >= 0.015, h/w >= 1.1, or (attacking / turned away the fan glows green or splits off: fan 0.00-0.027, dress
+  0.04-0.26 on every miss) a **red dress** - hue 4-8 for >= 45 % of the skirt's orange pixels (Jasos 0.53-0.77; wooden
+  pillars, cattail reeds, tulips, autumn leaves, the character's gear 0.00-0.21) - with **B** fan >= 0.012 + dress >= 0.04,
+  h/w >= 0.8 (side-on her skirt spreads), or **C** dress >= 0.08 alone on a standing shape (h/w >= 1.25, >= 0.045 h; a red
+  tulip 0.043 h / 1.09 passed otherwise). **Wings**: a figure with >= 5 % navy (H 95-130, S >= 60, V 15-150) is never her -
+  the character's wings were 26-54 % navy, four Jasos 0-0.3 %. **Own spot** shrunk to the body column (|dx| < 0.035 h,
+  |cy - 0.5 h| < 0.08 h; was 0.13 h x 0.16 h and hid a Jaso fighting the character - user: "it doesn't detect the Jaso just
+  beside the character"). **Click point** `JasoCandidate.Body` = the middle of the skirt's orange pixels (user: "it click on its
+  right not the body of the monster" - the box's middle was off her body). Result: video 1 every frame she shows in but two
+  inside her green dome (22/42 frames, the rest without her), video 2 17/24 (was 13); the saved Blossom frames give only the
+  real Jasos (3 in debug, incl. one beside the character at 14:52). `--jaso <dir> --why` prints every figure's size, shape,
+  shares and verdict (`ScreenAnalyzer.JasoReport`). **Sword cursor off by default** (`Blossom.UseSwordCursor`, user 15:00:
+  "Turn it off" / "sword is a fallback"): with it off nothing is hovered, full figures are clicked on `Body`, partial ones
+  never; on, everything below applies. **Candidates**
   (user, same day, live: "it should be able to click a jaso from afar with just some of the characteristics of the monster";
   `ScreenAnalyzer.FindJasoCandidates` -> `JasoCandidate(Box, Full)`): the same pass, also 0.015-0.03 h tall, aspect 0.4-4.5,
   with the **fan required** (orange alone matched 20-40 flowers / soil patches a frame on the saved Blossom frames; with the

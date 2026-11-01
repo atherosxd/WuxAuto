@@ -449,13 +449,15 @@ public sealed partial class AutomationPilot
         // a picture other than the normal one, read the same twice (live 14:26: the plain Windows arrow shows for a moment
         // after the game comes to the front, another picture at the character's own spot) - and, once learnt from a click
         // that targeted a Jaso (Blossom.SwordCursor), only that picture.
-        long normal = _controls.HoverCursor(frame.Width / 2, (int)(frame.Height * 0.70));
+        // Off by default (user, 2026-11-01: "Turn it off" / "sword is a fallback"): the cursor read from outside was not
+        // reliable; full figures are then clicked on her body and partial ones not at all.
+        long normal = _settings.Blossom.UseSwordCursor ? _controls.HoverCursor(frame.Width / 2, (int)(frame.Height * 0.70)) : 0;
         long sword = _settings.Blossom.SwordCursor;
         if (normal != 0)
         {
             foreach (var c in candidates.Take(JasoHoverCandidates))
             {
-                foreach (var p in JasoProbePoints(c.Box))
+                foreach (var p in JasoProbePoints(c.Box).Prepend(c.Body))
                 {
                     long cursor = _controls.HoverCursor(p.X, p.Y);
                     if (cursor == 0 || cursor == normal || (sword != 0 && cursor != sword) || _controls.HoverCursor(p.X, p.Y) != cursor)
@@ -467,10 +469,10 @@ public sealed partial class AutomationPilot
             }
         }
 
-        // No sword (or no cursor to read): a full figure is clicked on its looks, in her middle, as before the cursor check -
-        // a partial one never.
+        // No sword (or the cursor not read): a full figure is clicked on its looks, on her body (the middle of her red dress)
+        // - a partial one never.
         if (candidates.FirstOrDefault(c => c.Full) is { } full)
-            return ClickJaso(full, JasoClickPoint(full.Box), normal != 0 ? $"({why}) - no sword cursor over her, clicking her middle" : $"({why})", 0);
+            return ClickJaso(full, full.Body, normal != 0 ? $"({why}) - no sword cursor over her, clicking her body" : $"({why})", 0);
 
         if (normal != 0)
         {

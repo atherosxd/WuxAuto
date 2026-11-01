@@ -287,19 +287,19 @@ Blossom Garden needs no key.
 6. Rebuff when **Rebuff every** (Auto War) is due - after a loot or at a waypoint, never mid-fight.
 
 **Tab no longer targets in Blossom Garden** (2026-11-01). With **Click Jasos (no Tab)** on (Settings > Auto Blossom, on by
-default) the pilot looks for the Jaso Practitioner itself: a dark magenta fan over an orange-red skirt, not under the
-screen's panels and not at your own feet. Far away, or partly hidden, it is enough to see the fan on a small red figure.
-The game's cursor turns into a sword over a monster, so the pilot first moves the pointer over the ground, then over the
-nearest figures, and clicks where the cursor becomes the sword - right on her, even far away, and never on a flower, a pet
-or a player that only looks alike. A figure with her whole look is clicked in her middle even when no sword showed. After
-the click it waits up to 7 s, without walking on or turning the camera, while the character runs to her (from afar the
-target bar shows 3-6 s after the click). When the target bar shows "[S]Jaso Practitioner" the fight starts; three clicks
-that target nothing and it leaves Jasos alone for 5 s. On the walk, after 1.5 s without seeing one it turns the camera right in 6 steps, looking after each, and keeps
-walking to the waypoint meanwhile (standing still brings the AFK Checker fast); in a fight it turns the camera one step
-every 3 s, remembers the next Jaso it sees and clicks her right after the kill. After any camera turn the walk learns the
-direction again. A Jaso right next to your character (fighting it) is found too, and clicked only on the sword cursor (your
-own wings look alike). One far off at the horizon is left alone - the game ignores a click that far - until the walk
-brings her closer.
+default) the pilot looks for the Jaso Practitioner itself: a dark magenta fan over a red-orange dress, not under the
+screen's panels. Attacking or turned away (her fan glows green), her red dress alone is enough on a standing figure; the
+pilot tells it apart from wooden pillars, reeds and tulips by its redder colour, and from your own wings by their navy. A
+Jaso right beside your character is found too. The click goes on her dress (her body), not the middle of her outline.
+After the click it waits up to 7 s, without walking on or turning the camera, while the character runs to her (from afar
+the target bar shows 3-6 s after the click). When the target bar shows "[S]Jaso Practitioner" the fight starts; three
+clicks that target nothing and it leaves Jasos alone for 5 s. On the walk, after 1.5 s without seeing one it turns the
+camera right in 6 steps, looking after each, and keeps walking to the waypoint meanwhile (standing still brings the AFK
+Checker fast); in a fight it turns the camera one step every 3 s, remembers the next Jaso it sees and clicks her right
+after the kill. After any camera turn the walk learns the direction again. One far off at the horizon is left alone - the
+game ignores a click that far - until the walk brings her closer. Inside her green AOE dome her colours change and she is
+not always found. (`Blossom.UseSwordCursor` in settings.json turns on an extra check that hovers the pointer and clicks
+only where the game's cursor becomes a sword; it is off, because the cursor read from outside the game was unreliable.)
 
 **Camera tilt** (Settings > Auto Blossom, default 60 px, 0 = off): right after arriving (the teleport leaves the camera
 looking almost straight down), before the turn to the pillars, the camera is right-dragged up by that many pixels once, so
