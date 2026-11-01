@@ -1240,25 +1240,53 @@ public class BlossomPilotTests
         .ToList();
 
     [Fact]
-    public async Task CameraTilt_ThePillarTurnLeavesTheCamera_TheWalkTiltsItUp()
+    public async Task CameraTilt_OnArrival_BeforeThePillarTurn_AndTheWalkDoesNotRepeatIt()
     {
-        // Live 2026-11-01 11:35: the drag down to the limit looks straight down at the grass - no pillar can be in view, so
-        // the turn keeps the camera as it is; only the walk tilts it.
+        // User, 2026-11-01: "also upon teleporting it look down, look up by dragging right click up" - the tilt (down to the
+        // limit, then up) goes out before the pillar turn's first tap; the walk after the turn does not tilt again.
         var (settings, input, ocr) = Harness(() => "19148 , 19062");
         settings.Blossom.TurnMaxTaps = 2;
         settings.Blossom.CameraTiltPx = 60;
 
         var run = await RunAsync(settings, input, ocr, PilotPhase.BlossomTurn,
-            (_, lines) => lines.Any(l => l.Contains("Tilted the camera up", StringComparison.Ordinal)), 15000);
+            (_, _) => input.Calls.Any(c => c.StartsWith("Click ", StringComparison.Ordinal)), 15000);
 
         string log = string.Join("\n", run.Lines) + "\n" + string.Join("\n", input.Calls);
         var drags = Drags(input);
         Assert.Equal(2, drags.Count);
-        Assert.True(drags[0].Index > input.Calls.LastIndexOf("KeyDown D"), log);      // no drag before or during the turn
-        Assert.True(drags[0].Dy >= Height / 2, log);                                 // the walk: down to the limit ...
+        Assert.True(drags[0].Dy >= Height / 2, log);                                 // down to the limit ...
         Assert.Equal(-60, drags[1].Dy);                                              // ... then 60 px up
-        int firstWalkClick = input.Calls.FindIndex(c => c.StartsWith("Click ", StringComparison.Ordinal));
-        Assert.True(firstWalkClick < 0 || firstWalkClick > drags[1].Index, log);
+        Assert.True(drags[1].Index < input.Calls.IndexOf("KeyDown D"), log);          // both before the pillar turn
+        Assert.Contains(run.Lines, l => l.Contains("Tilted the camera up", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task AfterAClickOnAJaso_TheWalkWaitsForTheTargetBar_NoWalkClickNoScan()
+    {
+        // Live 2026-11-01 12:27-12:36: a click from afar works - the character runs to her and the target bar shows 3-6 s
+        // later - but the walk clicked on after 1.5 s and the camera scan started at 4 s, which took the character away.
+        bool shown = false;
+        var (settings, input, ocr) = Harness(() => "15000 , 15000", target: _ => shown ? "[S]Jaso Practitioner" : null);
+        settings.Blossom.ScanEveryMs = 1000;
+        using var frame = Blank.Bgra(Height, Width);
+        DrawJaso(frame, 600, 250);
+        long clickedAt = 0;
+
+        var run = await PilotRun.RunAsync(settings, input, ocr, frame, PilotPhase.BlossomWalk,
+            (_, lines) => lines.Any(l => l.Contains("Jaso Practitioner targeted", StringComparison.Ordinal)), 15000,
+            beforeTick: () =>
+            {
+                if (clickedAt == 0 && ClickedJasoAt(input, 600, 250))
+                    clickedAt = Environment.TickCount64;
+                shown = clickedAt > 0 && Environment.TickCount64 - clickedAt > 4500;   // she is reached 4.5 s after the click
+            });
+
+        string log = string.Join("\n", run.Lines) + "\n" + string.Join("\n", input.Calls);
+        Assert.Contains(run.Lines, l => l.Contains("Jaso Practitioner targeted", StringComparison.Ordinal));
+        int jasoClick = input.Calls.FindIndex(c => c.StartsWith("Click ", StringComparison.Ordinal));
+        var after = input.Calls.Skip(jasoClick + 1).ToList();
+        Assert.DoesNotContain(after, c => c.StartsWith("Click ", StringComparison.Ordinal));   // no walk click while she is reached
+        Assert.DoesNotContain("KeyDown D", after);                                            // no camera scan either
     }
 
     // ---- 2026-11-01: "when clicking jaso, the cursor will change into a sword" / "it should be able to click a jaso from

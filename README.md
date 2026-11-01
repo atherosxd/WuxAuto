@@ -291,16 +291,17 @@ default) the pilot looks for the Jaso Practitioner itself: a dark magenta fan ov
 screen's panels and not at your own feet. Far away, or partly hidden, it is enough to see the fan on a small red figure.
 The game's cursor turns into a sword over a monster, so the pilot first moves the pointer over the ground, then over the
 nearest figures, and clicks where the cursor becomes the sword - right on her, even far away, and never on a flower, a pet
-or a player that only looks alike. A figure with her whole look is clicked in her middle even when no sword showed. If
-the target bar then shows "[S]Jaso Practitioner" the fight starts; three clicks that target nothing and it leaves Jasos
-alone for 5 s. On the walk, after 4 s without seeing one it stands and turns the camera right in 6 steps, looking after
+or a player that only looks alike. A figure with her whole look is clicked in her middle even when no sword showed. After
+the click it waits up to 7 s, without walking on or turning the camera, while the character runs to her (from afar the
+target bar shows 3-6 s after the click). When the target bar shows "[S]Jaso Practitioner" the fight starts; three clicks
+that target nothing and it leaves Jasos alone for 5 s. On the walk, after 4 s without seeing one it stands and turns the camera right in 6 steps, looking after
 each; in a fight it turns the camera one step every 3 s, remembers the next Jaso it sees and clicks her right after the
 kill. After any camera turn the next walk step learns the direction again.
 
-**Camera tilt** (Settings > Auto Blossom, default 60 px, 0 = off): when the walk starts, and again after each zoom-out, the
-camera is right-dragged down as far as it goes (facing down) and then up by that many pixels, so it looks ahead and shows
-Jasos further away. Starting from the same limit every time, the tilt never adds up. The turn to the pillars after
-arriving leaves the camera as it is (looking straight down, no pillar would be in view).
+**Camera tilt** (Settings > Auto Blossom, default 60 px, 0 = off): right after arriving (the teleport leaves the camera
+looking down), before the turn to the pillars, and again after each zoom-out, the camera is right-dragged down as far as it
+goes and then up by that many pixels, so it looks ahead and shows Jasos further away. Starting from the same limit every
+time, the tilt never adds up; the walk does not repeat it while the camera is still tilted.
 
 **Record your own route** (Settings > Auto Blossom): bind the game, stand at the arrival spot in Blossom Garden lined up on
 the pillars, press **Record route** and walk the road by hand. A waypoint is saved every 120 units, and your own `A` / `D`

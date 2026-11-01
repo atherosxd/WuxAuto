@@ -179,7 +179,7 @@ words and the map scroll-arrow result. `--crop` writes `<frame>.crop.png` next t
 Core tests and the refactor parity gate (M1, 2026-10-27):
 
 ```powershell
-dotnet test tests\WuxAuto.Core.Tests        # xUnit, platform-free Core only (943 tests, ~4-8 min; the pilot tests tick a
+dotnet test tests\WuxAuto.Core.Tests        # xUnit, platform-free Core only (944 tests, ~4-8 min; the pilot tests tick a
                                            # blank Mat with a scripted OCR scene - see tests/ in section 3)
 # probe baseline: runs every SelfTest probe over a frozen, local-only frame set (never committed)
 # and writes normalised output; run it before and after a refactor and diff the two
@@ -1141,11 +1141,14 @@ teleport in again (LOD's rule); still in town after the teleport = "destination 
   the normal cursor at (0.5 w, 0.70 h), then the `JasoHoverCandidates` 3 nearest, `JasoProbePoints` (centre x at 60, 35,
   80, 15 % down) -> the first point whose cursor differs = the sword -> plain left click there (`WalkTo(forceWalk: false)`).
   No sword: a full figure is clicked at `JasoClickPoint` (centre, 60 % down) anyway (the v0.25.0 floor), a partial one never;
-  look-alikes only -> no hovering for `JasoHoverPauseMs` 2 s. After a click `JasoClickWaitMs` 1500 with no walk clicks while
-  the target bar comes up (the usual target read starts the fight); `JasoMaxMisses` 3 clicks without a fight -> Jasos
-  ignored `JasoIgnoreMs` 5 s + `blossom_jaso_miss`. The walk tries it at every target check (700 ms) with nothing in the
-  target bar. Live v0.25.0 (11:35-11:39): clicks on full figures far up the screen (y 300-440) targeted nothing, one at
-  y 618 did; 3 kills. **Walk scan** ("also add when running, to rotate the camera to
+  look-alikes only -> no hovering for `JasoHoverPauseMs` 2 s. After a click `JasoClickWaitMs` **7000** with no walk clicks and
+  no scans while the character runs to her (the usual target read starts the fight); `JasoMaxMisses` 3 clicks without a
+  fight -> Jasos ignored `JasoIgnoreMs` 5 s + `blossom_jaso_miss`. The walk tries it at every target check (700 ms) with
+  nothing in the target bar. Live v0.25.0 (11:35-11:39): clicks on full figures far up the screen (y 300-440) targeted
+  nothing, one at y 618 did; 3 kills. Live 0.25.1 test (12:23-12:36): the sword shows over far Jasos (y 160-430), 6 kills,
+  each targeted **3-6 s after the click** (the character runs there first) - the 1.5 s wait then let the walk click on and
+  the 4 s scan turn the camera away, which made most far clicks "nothing targeted"; hence the 7 s. The normal cursor's handle
+  changes over time (`0x4970599`, `0x14D4184F`, `0x76F1529` seen), so it is read again on every look. **Walk scan** ("also add when running, to rotate the camera to
   scan for the mob"): no Jaso seen for `ScanEveryMs` **4000** (0 = off) -> stand, `ScanTaps` **6** taps of `D` `ScanTapMs`
   **250**, a look 300 ms after each; a Jaso -> click, scan over; none -> "Scanned N step(s) - no Jaso in view". **Fight scan**
   ("do the rotate also even when attacking the current mob, and set that as a second subject"): every `FightScanEveryMs`
@@ -1156,17 +1159,20 @@ teleport in again (LOD's rule); still in town after the teleport = "destination 
   first, own spot, a red-brown post, a fan without the skirt, under the UI; candidates: far small, fan only, a flower dot) and
   `BlossomPilotTests` (`NoTab_*`, `NoJasoInView_*`, `ScanFindsNothing_*`, `InAFight_*`, `SwordCursor_*`, `FarPartialJaso_*`).
   Probe: `--jaso <dir>` (full / partial figures + click points, `<frame>.jaso.png`: green full, yellow partial). **Not seen
-  live:** the sword cursor's handle over a Jaso, a click from afar targeting her, a plain click on another player.
+  live:** the 7 s wait, a plain click on another player.
 * **Camera tilt** (user, 2026-11-01: "also try to move the screen up instead of facing down"; `Blossom.CameraTiltPx` **60**,
   0 = off, clamp 0-400, UI "Camera tilt (px)"): `QueueBlossomTilt` / `TickBlossomCameraTilt`, one right-drag per tick
   (`TiltCamera`, 300 ms, 400 ms settle): **down** 0.25 h -> 0.80 h at 0.5 w (the steepest view - assumed the game stops the
   camera there), then **up** `CameraTiltPx` from 0.60 h. From that limit the tilt is the same each time, so repeating it never
-  adds up (the Laby gate tilt did, run 34). Queued: `StartBlossomWalk` (after the pillar turn), a Start inside, the respawn
-  path away from the arrival spot, every unblock zoom-out (walk and fight; sent once the walk ticks). The pillar turn sends
-  nothing: v0.25.0 dragged down to the limit before it, and live (11:35) that looks **straight down** at the grass - no pillar
-  in view, "no pillars lined up" after the 10 s cap. Live, the walk's down + 60 px up showed the field far ahead (Jasos at
-  y ~300). Pinned by `BlossomPilotTests.CameraTilt_*` (the harness sets 0). **Not seen live:** whether a zoom-out changes
-  the pitch, and the homing click scale (1.8 px per unit was measured facing down).
+  adds up (the Laby gate tilt did, run 34). **On arrival first** (user, same day: "also upon teleporting it look down, look up
+  by dragging right click up"): the pillar turn's first tick sends the whole tilt before its first tap (`BeginBlossomTurn`
+  clears `_blossomCameraTilted` and a half-done tilt). `_blossomCameraTilted` (set when the drag up is sent) makes the other
+  queues no-ops: `StartBlossomWalk`, a Start inside, the respawn path away from the arrival spot; every unblock zoom-out (walk
+  and fight) clears it (`RetiltBlossomCamera`; sent once the walk ticks). v0.25.0 sent only the drag down before the turn:
+  live (11:35) that looks **straight down** at the grass. Live, down + 60 px up showed the field far ahead (Jasos at
+  y 160-430). The pillar turn gave up (10 s cap) in every live arrival of 2026-11-01 - with the tilt first it is not seen
+  yet. Pinned by `BlossomPilotTests.CameraTilt_*` (the harness sets 0). **Not seen live:** whether a zoom-out changes the
+  pitch, and the homing click scale (1.8 px per unit was measured facing down).
 * **Fight / loot:** the skill key **held** through the fight (`Blossom.HoldSkill`, on; check box "Hold skill (Blossom)"; user,
   2026-10-30: "spam or hold attack skill, currently it skills then normal attacks" - one tap casts once, then normal attacks;
   with Ctrl + skill the key is let go for a Ctrl tap every `Lod.SkillEveryMs`, as LOD's hold), off = tapped every
