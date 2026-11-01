@@ -111,6 +111,7 @@ public sealed partial class AutomationPilot
     private long _blossomScanEndedAt;            // the last look aside ended (looking ahead since)
     private bool _blossomRemeasure;              // the camera turned: the next step measures the heading again; no turn before it
     private int _blossomReturnedFrom = -1;       // stuck on the way to this waypoint once: went back to the nearest; not again
+    private long _blossomStillSince;             // the first still step of the current still stretch (0 = moving)
     private long _blossomFightScanAt;            // fight: the last camera step looking for the next Jaso
     private long _blossomFightLookAt;
     private bool _blossomFightTurned;            // fight: the camera turned - the walk learns the heading again after it
@@ -189,6 +190,7 @@ public sealed partial class AutomationPilot
         _blossomScanEndedAt = 0;
         _blossomRemeasure = false;
         _blossomReturnedFrom = -1;
+        _blossomStillSince = 0;
         _blossomFightTurned = false;
         _blossomNextJasoSeen = false;
         _blossomTiltDue = false;
@@ -791,6 +793,7 @@ public sealed partial class AutomationPilot
         _blossomFightScanAt = now;
         _blossomFightLookAt = 0;
         _blossomNextJasoSeen = false;
+        _blossomStillSince = 0;   // standing to fight is not being stuck
         if (_blossomTurning is TurnDirection turning)
             EndBlossomTurn(goingBack: turning != _blossomAside, now);   // a target mid-turn: the camera stays where it is
         Log?.Invoke(LogLevel.Success, $"Jaso Practitioner targeted ('{target}') - {(_settings.Blossom.HoldSkill ? "holding" : "attacking with")} {SkillText(_settings.Dungeon.SkillKey)} ({_blossomKills} kill(s) so far).");
@@ -818,6 +821,7 @@ public sealed partial class AutomationPilot
         {
             _lastCoords = null;
             _blossomDir = null;
+            _blossomStillSince = 0;
             _detail = "waiting for the game window to be in front";
             if (!_blossomFocusTold)
             {
@@ -998,6 +1002,35 @@ public sealed partial class AutomationPilot
         if ((now >= _blossomReadAt || _blossomDir == null) && !await BlossomReadStepAsync(frame, now))
             return;
 
+        // Still for StuckTurnAfterMs while the walk clicks on (user, 20:35: "If it didnt move while trying to move for 10s. Try
+        // a 180° rotate ... D or A then try to" / "Click to move while still scanning for jaso"): the camera turns round, the
+        // heading is forgotten - the next step goes the way the camera faces now, away from what blocked it - and the walk,
+        // with its Jaso checks, goes on. The sidesteps and the return to the nearest waypoint keep their own counts.
+        if (b.StuckTurnAfterMs > 0 && _blossomStillSince > 0 && now - _blossomStillSince >= b.StuckTurnAfterMs)
+        {
+            var round = Random.Shared.Next(2) == 0 ? TurnDirection.Left : TurnDirection.Right;
+            if (!_controls.Turn(round, b.StuckTurnMs))
+            {
+                _waitUntil = now + 300;
+                return;
+            }
+
+            Log?.Invoke(LogLevel.Warning, $"Not moving for {(now - _blossomStillSince) / 1000.0:0}s - turning the camera round ('{TurnKey(round)}' " +
+                                          $"{b.StuckTurnMs / 1000.0:0.0#}s) and walking on the way it faces now.");
+            _blossomStillSince = 0;
+            // A look aside in progress is over: the camera faces elsewhere now.
+            _blossomAside = null;
+            _blossomTurning = null;
+            _blossomTurnStepsLeft = 0;
+            _blossomAsideSteps = 0;
+            _blossomHeadingBeforeAside = null;
+            _blossomScanEndedAt = now;
+            ForgetBlossomHeading();
+            BlossomShot(frame, "blossom_turn_round");
+            _waitUntil = now + BlossomScanSettleMs;
+            return;
+        }
+
         if (_blossomDir is (double ox, double oy) && now >= _blossomClickAt && !BlossomWalkClick(frame, ox, oy, now))
         {
             _detail = "walk click blocked - waiting for the game to be in front";
@@ -1134,7 +1167,12 @@ public sealed partial class AutomationPilot
             }
 
             // Near a waypoint the clicks are short, so a smaller step still counts as moving.
-            _blossomStalls = step < (_blossomNear ? 8 : 20) ? _blossomStalls + 1 : 0;
+            bool still = step < (_blossomNear ? 8 : 20);
+            _blossomStalls = still ? _blossomStalls + 1 : 0;
+            if (!still)
+                _blossomStillSince = 0;
+            else if (_blossomStillSince == 0)
+                _blossomStillSince = now;
         }
 
         _lastCoords = (coords.X, coords.Y);
@@ -1305,6 +1343,7 @@ public sealed partial class AutomationPilot
         Log?.Invoke(LogLevel.Info, $"{what} - on to waypoint {_blossomWaypoint + 1} ({next.X},{next.Y}).");
         _blossomPauseSince = 0;
         _blossomStalls = 0;
+        _blossomStillSince = 0;
         _blossomWaypointSteps = 0;
         _blossomBestDistance = double.MaxValue;
         _simpleClick = null;

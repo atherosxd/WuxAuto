@@ -406,6 +406,16 @@ public sealed class BlossomSettings
     /// <summary>The look aside's camera turn: A (left) or D (right) held this long, and the other key as long to turn back.</summary>
     public int ScanSideMs { get; set; } = 700;
 
+    /// <summary>
+    /// The walk clicking on and the character not moving this long -> the camera turns round (StuckTurnMs) and the walk goes
+    /// the way it faces now (user, 2026-11-01 20:35: "If it didnt move while trying to move for 10s. Try a 180° rotate").
+    /// 0 = off.
+    /// </summary>
+    public int StuckTurnAfterMs { get; set; } = 10000;
+
+    /// <summary>How long A or D is held for that turn round (~180 deg; a 700 ms hold turned ~120 deg live).</summary>
+    public int StuckTurnMs { get; set; } = 1400;
+
     /// <summary>The fight scan's camera step (one D tap of this length).</summary>
     public int ScanTapMs { get; set; } = 250;
 

@@ -179,7 +179,7 @@ words and the map scroll-arrow result. `--crop` writes `<frame>.crop.png` next t
 Core tests and the refactor parity gate (M1, 2026-10-27):
 
 ```powershell
-dotnet test tests\WuxAuto.Core.Tests        # xUnit, platform-free Core only (968 tests, ~4-8 min; the pilot tests tick a
+dotnet test tests\WuxAuto.Core.Tests        # xUnit, platform-free Core only (970 tests, ~4-8 min; the pilot tests tick a
                                            # blank Mat with a scripted OCR scene - see tests/ in section 3)
 # probe baseline: runs every SelfTest probe over a frozen, local-only frame set (never committed)
 # and writes normalised output; run it before and after a refactor and diff the two
@@ -1221,7 +1221,13 @@ teleport in again (LOD's rule); still in town after the teleport = "destination 
   and return back to nearest waypoint"): at the 5th still step (`BlossomMaxStalls`) the walk retargets the nearest waypoint
   (`BlossomRoute.Nearest`, the leg from the spot) while the sidesteps go on, then on along the route from there; once per
   waypoint (`_blossomReturnedFrom`, cleared when the walk leaves that waypoint behind) - stuck on its way again, the steps and
-  the no-progress skip carry on, so it cannot loop. **No heading + blocked** (live 18:08, 0.25.10: after a fight the heading
+  the no-progress skip carry on, so it cannot loop. **Still 10 s -> turn round** (user, 20:35-20:42: "If it didnt move while
+  trying to move for 10s. Try a 180° rotate 1.4s D or A then ... Click to move while still scanning for jaso"): the read
+  step keeps `_blossomStillSince` (the first still step of a still stretch; reset by a move, a waypoint, a fight, the game
+  behind a window); still for `StuckTurnAfterMs` **10000** (0 = off, clamp 2000-120000) -> A or D at random held
+  `StuckTurnMs` **1400** (clamp 200-5000; a 700 ms hold turned ~120 deg live), any look aside dropped, `ForgetBlossomHeading`
+  - the next step goes straight up, the way the camera faces now, away from what blocked it - and the walk with its Jaso
+  checks goes on; Warning "Not moving for Ns - turning the camera round ...", `blossom_turn_round`. **No heading + blocked** (live 18:08, 0.25.10: after a fight the heading
   was unknown, straight up was a wall, 20 s still until the AFK step moved it): the unblock ways now also run round the
   straight-up step, and the step that moves teaches the heading.
   `WindowInput.KeyUp` now lets go of any key it sent down even after an F10 unbind or Dry run ticked mid-hold (it refused an
@@ -1234,7 +1240,7 @@ teleport in again (LOD's rule); still in town after the teleport = "destination 
   `ForgetBlossomHeading`: the next walk step clicks straight up and learns the heading. Pinned by `JasoDetectorTests` (drawn Jasos: found, nearest
   first, own spot, a red-brown post, a fan without the skirt, under the UI, too small for its depth; candidates: far small,
   fan only, a flower dot, the own spot as partial) and `BlossomPilotTests` (`NoTab_*`, `NoJasoInView_TheCameraLooksAside_*`, `LookAside_*`,
-  `AJasoSeenWhileTurningBack_*`, `AJasoClickedMidTurn_*`, `NoLookAside_BeforeTheWalkKnowsItsHeading`, `Stuck_GoesBackToTheNearestWaypoint_*`,
+  `AJasoSeenWhileTurningBack_*`, `AJasoClickedMidTurn_*`, `NoLookAside_BeforeTheWalkKnowsItsHeading`, `Stuck_GoesBackToTheNearestWaypoint_*`, `StillForStuckTurnAfterMs_*`, `Moving_NoStuckTurn`,
   `Blocked_BeforeTheHeadingIsKnown_*`, `InAFight_*`, `SwordCursor_*`, `FarPartialJaso_*`, `AJasoNextToTheCharacter_*`,
   `SideOnJaso_*`, `AJasoAtTheHorizon_*`, `LearntSword_*`) and `SettingsMigrationTests.V28_*`.
   Probe: `--jaso <dir>` (full / partial figures + click points, `<frame>.jaso.png`: green full, yellow partial). **Click

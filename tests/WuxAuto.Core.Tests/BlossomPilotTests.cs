@@ -396,6 +396,46 @@ public class BlossomPilotTests
     }
 
     [Fact]
+    public async Task StillForStuckTurnAfterMs_TurnsTheCameraRound_AndWalksOnTheWayItFaces()
+    {
+        // User, 20:35-20:42: "If it didnt move while trying to move for 10s. Try a 180° rotate 14s D or A then try to" ...
+        // "Click to move while still scanning for jaso". The coordinates never move: after StuckTurnAfterMs still the camera
+        // turns round once (StuckTurnMs held), the heading is forgotten - the next step goes the way the camera faces now,
+        // away from what blocked it - and the walk clicks on.
+        var (settings, input, ocr) = Harness(() => "15000 , 15000");
+        settings.Blossom.WalkReadEveryMs = 150;
+        settings.Blossom.WalkClickEveryMs = 100;
+        settings.Blossom.StuckTurnAfterMs = 2000;
+        settings.Blossom.StuckTurnMs = 300;
+        long start = Environment.TickCount64;
+
+        var run = await RunAsync(settings, input, ocr, PilotPhase.BlossomWalk,
+            (_, lines) => lines.Any(l => l.Contains("turning the camera round", StringComparison.Ordinal))
+                          && input.Calls.Skip(input.Calls.FindIndex(IsTurn) + 1).Any(c => c.StartsWith("Click ", StringComparison.Ordinal)), 10000);
+
+        string log = string.Join("\n", run.Lines) + "\n" + string.Join("\n", input.Calls);
+        int turn = input.Calls.FindIndex(IsTurn);
+        Assert.True(turn >= 0, log);
+        long turnedAt = input.FirstAt(input.Calls[turn])!.Value;
+        Assert.True(turnedAt - start >= 2000, $"turned after {turnedAt - start} ms\n{log}");
+        Assert.Single(input.Calls, IsTurn);                                                            // once, not every tick
+        Assert.Contains(input.Calls.Skip(turn + 1), c => c.StartsWith("Click ", StringComparison.Ordinal));   // walking on
+    }
+
+    [Fact]
+    public async Task Moving_NoStuckTurn()
+    {
+        var (settings, input, ocr) = Harness(MovingNorth());
+        settings.Blossom.StuckTurnAfterMs = 2000;
+        settings.Blossom.StuckTurnMs = 300;
+
+        var run = await RunAsync(settings, input, ocr, PilotPhase.BlossomWalk, (_, _) => false, 4000);
+
+        Assert.DoesNotContain(run.Lines, l => l.Contains("turning the camera round", StringComparison.Ordinal));
+        Assert.DoesNotContain(input.Calls, IsTurn);
+    }
+
+    [Fact]
     public async Task Pause_EndsOnTime_EvenWithTheCoordinatesUnread()
     {
         bool reached = false;

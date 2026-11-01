@@ -301,7 +301,9 @@ camera looks left or right (at random) for 6 s while the character keeps walking
 into view, then turns back. Each turn is three short holds of `A` (left) or `D` (right) with a look after each: a Jaso
 seen mid-turn stops the turn right there and is clicked. While looking aside the walk measures its direction again; back
 ahead, it takes the direction it had before. (`Blossom.ScanEveryMs`, `LookAsideMs` and `ScanSideMs` in settings.json: 6000, 6000 and
-700 ms.) Stuck, it steps round and heads back to the nearest waypoint, then on along the route.
+700 ms.) Stuck, it steps round and heads back to the nearest waypoint, then on along the route; still not moving after
+10 s, it turns the camera round (`A` or `D` held 1.4 s) and walks on the way it faces, still looking for Jasos
+(`Blossom.StuckTurnAfterMs` / `StuckTurnMs`).
 In a fight it turns the camera one step every 3 s, remembers the next Jaso it sees and clicks her right after the kill;
 after that turn the walk learns the direction again. One far off at the horizon is left alone - the
 game ignores a click that far - until the walk brings her closer. Inside her green AOE dome her colours change and she is

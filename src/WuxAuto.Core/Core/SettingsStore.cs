@@ -417,6 +417,8 @@ public static class SettingsStore
         b.ScanEveryMs = b.ScanEveryMs <= 0 ? 0 : Math.Clamp(b.ScanEveryMs, 1000, 60000);
         b.ScanSideMs = Math.Clamp(b.ScanSideMs, 100, 3000);
         b.LookAsideMs = Math.Clamp(b.LookAsideMs, 1000, 60000);
+        b.StuckTurnAfterMs = b.StuckTurnAfterMs <= 0 ? 0 : Math.Clamp(b.StuckTurnAfterMs, 2000, 120000);
+        b.StuckTurnMs = Math.Clamp(b.StuckTurnMs, 200, 5000);
         b.ScanTapMs = Math.Clamp(b.ScanTapMs, 30, 2000);
         b.FightScanEveryMs = b.FightScanEveryMs <= 0 ? 0 : Math.Clamp(b.FightScanEveryMs, 1000, 60000);
         b.CameraTiltPx = Math.Clamp(b.CameraTiltPx, 0, 400);
