@@ -536,6 +536,10 @@
                                 <CheckBox Content="Hold skill (Blossom)" Margin="0,0,16,0"
                                           IsChecked="{Binding Settings.Blossom.HoldSkill}"
                                           ToolTip="On: the skill key stays held down through a fight, so the skill keeps going instead of one cast followed by normal attacks (with 'Ctrl + skill key too' it is let go for a Ctrl + skill tap now and then). Off: the skill is tapped every 0.3 s." />
+                                <!-- User, 2026-11-01: "they have disabled tabbing in the Blossom, can you possibly click this mob instead". -->
+                                <CheckBox Content="Click Jasos (no Tab)" Margin="0,0,16,0"
+                                          IsChecked="{Binding Settings.Blossom.ClickToTarget}"
+                                          ToolTip="On: a Jaso Practitioner seen on screen (dark magenta fan over an orange skirt) is clicked to target her, since Tab no longer targets in Blossom Garden. The camera turns now and then to look for one: on the walk after 4 s without one (6 steps), and in a fight every 3 s to find the next one, which is clicked right after the kill. Off: Tab only." />
                             </WrapPanel>
 
                             <!-- User, 2026-10-29: "add a settings in the app just like you showed 1:5A". Applied on the next Start. -->

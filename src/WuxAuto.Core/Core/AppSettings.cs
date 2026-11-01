@@ -387,6 +387,28 @@ public sealed class BlossomSettings
     public int RandomSkipMax { get; set; } = 4;
 
     /// <summary>
+    /// Find Jaso Practitioners on screen by colour and shape and click them (user, 2026-11-01: "they have disabled tabbing in
+    /// the Blossom, can you possibly click this mob instead"). Off = Tab only.
+    /// </summary>
+    public bool ClickToTarget { get; set; } = true;
+
+    /// <summary>
+    /// On the walk, no Jaso seen this long -> stand and turn the camera ScanTaps steps of ScanTapMs, looking after each
+    /// (user, same day: "when running, rotate the camera to scan for the mob"). 0 = off.
+    /// </summary>
+    public int ScanEveryMs { get; set; } = 4000;
+
+    public int ScanTaps { get; set; } = 6;
+
+    public int ScanTapMs { get; set; } = 250;
+
+    /// <summary>
+    /// In a fight, one camera step every this long until another Jaso is seen - clicked right after the kill (user, same day:
+    /// "do the rotate also even when attacking the current mob, and set that as a second subject"). 0 = off.
+    /// </summary>
+    public int FightScanEveryMs { get; set; } = 3000;
+
+    /// <summary>
     /// Reached within this many units. Live 2026-10-29: the old waypoints 2, 4 and 5 lay just past a railing (stopped 86, 67,
     /// 71 short at 60), so it went to 100 - which let the walk stop 61 north of waypoint 1 and start every next leg off the
     /// user's line (run 5). Now 40, with the walk homing in on the last 300 units, and blocked within 150 counts as reached.

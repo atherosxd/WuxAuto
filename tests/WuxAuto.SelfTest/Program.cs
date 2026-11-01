@@ -94,6 +94,10 @@ int pillarsIndex = Array.IndexOf(args, "--pillars");
 if (pillarsIndex >= 0 && pillarsIndex + 1 < args.Length)
     return FrameProbe.Pillars(args[pillarsIndex + 1]);
 
+int jasoIndex = Array.IndexOf(args, "--jaso");
+if (jasoIndex >= 0 && jasoIndex + 1 < args.Length)
+    return FrameProbe.Jasos(args[jasoIndex + 1]);
+
 int hpIndex = Array.IndexOf(args, "--hp");
 if (hpIndex >= 0 && hpIndex + 1 < args.Length)
     return await WarProbe.HpAsync(args[hpIndex + 1]);

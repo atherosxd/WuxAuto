@@ -794,6 +794,81 @@ public sealed class ScreenAnalyzer : IDisposable
         static double CenterX(Rectangle r) => r.X + r.Width / 2.0;
     }
 
+    /// <summary>
+    /// Auto Blossom without Tab (user, 2026-11-01: "they have disabled tabbing in the Blossom, can you possibly click this mob
+    /// instead by using the color, shape"): Jaso Practitioners seen in the game world, nearest to the character (0.5 w, 0.54 h)
+    /// first. A Jaso is a standing red figure: a dark magenta-red fan on top (blue above green - a shrine gate's red-brown
+    /// posts are not) over a magenta top and an orange-red skirt. Live 2026-11-01 at 2048x1152: 38x66, fan H 172-177 S ~120
+    /// V ~67, skirt H 4-9 S ~157 V ~122; the grass and the road are H 27-33. Red pixels outside <paramref name="excluded"/>
+    /// (the HUD) are joined into figures at half size; a figure 3-14 % of the client tall, 1.1-4x taller than wide, with
+    /// fan pixels in its top 40 % and orange ones below counts - unless it stands where the character does (its dark wings
+    /// with red flame edges read like one). Prototype on 60 saved frames: the live Jaso found, nothing else (gate posts,
+    /// trees, flowers, the character's pet, Eight Symbols Island); a Jaso seen from behind (only the wide fan) is missed.
+    /// </summary>
+    public static IReadOnlyList<PixelRect> FindJasos(Mat frame, IReadOnlyList<PixelRect> excluded)
+    {
+        int w = frame.Width, h = frame.Height;
+        if (w < 16 || h < 16)
+            return [];
+
+        using var hsv = ToHsv(frame, new PixelRect(0, 0, w, h));
+        using var reds = new Mat();
+        using var magenta = new Mat();
+        CvHelpers.InRange(hsv, new MCvScalar(0, 60, 35), new MCvScalar(14, 255, 255), reds);
+        CvHelpers.InRange(hsv, new MCvScalar(160, 60, 35), new MCvScalar(180, 255, 255), magenta);
+        CvInvoke.BitwiseOr(reds, magenta, reds);
+        using var fan = new Mat();
+        CvHelpers.InRange(hsv, new MCvScalar(160, 50, 35), new MCvScalar(180, 255, 130), fan);
+        using var orange = new Mat();
+        CvHelpers.InRange(hsv, new MCvScalar(4, 100, 60), new MCvScalar(14, 255, 255), orange);
+        foreach (var band in excluded)
+        {
+            var r = band.Clamp(w, h);
+            if (r.Width <= 0 || r.Height <= 0)
+                continue;
+            using var part = new Mat(reds, new Rectangle(r.X, r.Y, r.Width, r.Height));
+            part.SetTo(new MCvScalar(0));
+        }
+
+        using var small = new Mat();
+        CvInvoke.Resize(reds, small, new Size(w / 2, h / 2), 0, 0, Inter.Nearest);
+        using var kernel = CvHelpers.StructuringElement(MorphShapes.Rectangle, new Size(3, 3));
+        CvHelpers.Dilate(small, small, kernel);
+
+        int Count(Mat mask, int x, int y, int cw, int ch)
+        {
+            var r = new PixelRect(x, y, cw, ch).Clamp(w, h);
+            if (r.Width <= 0 || r.Height <= 0)
+                return 0;
+            using var part = new Mat(mask, new Rectangle(r.X, r.Y, r.Width, r.Height));
+            return CvInvoke.CountNonZero(part);
+        }
+
+        var hits = new List<PixelRect>();
+        foreach (var (box, pixels) in Components(small))
+        {
+            if (pixels < 20)
+                continue;
+            int x0 = box.X * 2, y0 = box.Y * 2, bw = box.Width * 2, bh = box.Height * 2;
+            if (bh < 0.03 * h || bh > 0.14 * h)
+                continue;
+            double aspect = bh / (double)Math.Max(1, bw);
+            if (aspect < 1.1 || aspect > 4.0)
+                continue;
+            double cx = x0 + bw / 2.0, cy = y0 + bh / 2.0;
+            if (Math.Abs(cx - w / 2.0) < 0.13 * h && Math.Abs(cy - 0.50 * h) < 0.16 * h)
+                continue;   // the character's own spot
+            int fanTop = Count(fan, x0, y0, bw, (int)(bh * 0.4));
+            int orangeLow = Count(orange, x0, y0 + (int)(bh * 0.35), bw, bh - (int)(bh * 0.35));
+            if (fanTop < 0.03 * bh * bh || orangeLow < 0.015 * bh * bh)
+                continue;
+            hits.Add(new PixelRect(x0, y0, bw, bh));
+        }
+
+        double meX = w / 2.0, meY = h * 0.54;
+        return hits.OrderBy(r => Math.Pow(r.CenterX - meX, 2) + Math.Pow(r.CenterY - meY, 2)).ToList();
+    }
+
     /// <summary>The game world between the HUD panels, where the ring and boss detectors look.</summary>
     private static PixelRect WorldArea(Mat frame) => new PixelRect((int)(frame.Width * 0.05), (int)(frame.Height * 0.12),
         (int)(frame.Width * 0.70), (int)(frame.Height * 0.78)).Clamp(frame.Width, frame.Height);
