@@ -299,9 +299,8 @@ each; in a fight it turns the camera one step every 3 s, remembers the next Jaso
 kill. After any camera turn the next walk step learns the direction again.
 
 **Camera tilt** (Settings > Auto Blossom, default 60 px, 0 = off): right after arriving (the teleport leaves the camera
-looking down), before the turn to the pillars, and again after each zoom-out, the camera is right-dragged down as far as it
-goes and then up by that many pixels, so it looks ahead and shows Jasos further away. Starting from the same limit every
-time, the tilt never adds up; the walk does not repeat it while the camera is still tilted.
+looking almost straight down), before the turn to the pillars, the camera is right-dragged up by that many pixels once, so
+it looks ahead and shows Jasos further away. It happens only on arrival, so it never adds up.
 
 **Record your own route** (Settings > Auto Blossom): bind the game, stand at the arrival spot in Blossom Garden lined up on
 the pillars, press **Record route** and walk the road by hand. A waypoint is saved every 120 units, and your own `A` / `D`

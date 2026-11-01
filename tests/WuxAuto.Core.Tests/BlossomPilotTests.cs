@@ -1240,10 +1240,11 @@ public class BlossomPilotTests
         .ToList();
 
     [Fact]
-    public async Task CameraTilt_OnArrival_BeforeThePillarTurn_AndTheWalkDoesNotRepeatIt()
+    public async Task CameraTilt_OnArrival_OneDragUp_BeforeThePillarTurn_NeverDown()
     {
-        // User, 2026-11-01: "also upon teleporting it look down, look up by dragging right click up" - the tilt (down to the
-        // limit, then up) goes out before the pillar turn's first tap; the walk after the turn does not tilt again.
+        // User, 2026-11-01: "also upon teleporting it look down, look up by dragging right click up" / "becuase you tilt it
+        // down!" / "upon arrival tilt up a little bit": one drag up before the pillar turn's first tap - no drag down to a
+        // limit first (that looked straight down) - and the walk after the turn does not tilt again.
         var (settings, input, ocr) = Harness(() => "19148 , 19062");
         settings.Blossom.TurnMaxTaps = 2;
         settings.Blossom.CameraTiltPx = 60;
@@ -1252,11 +1253,9 @@ public class BlossomPilotTests
             (_, _) => input.Calls.Any(c => c.StartsWith("Click ", StringComparison.Ordinal)), 15000);
 
         string log = string.Join("\n", run.Lines) + "\n" + string.Join("\n", input.Calls);
-        var drags = Drags(input);
-        Assert.Equal(2, drags.Count);
-        Assert.True(drags[0].Dy >= Height / 2, log);                                 // down to the limit ...
-        Assert.Equal(-60, drags[1].Dy);                                              // ... then 60 px up
-        Assert.True(drags[1].Index < input.Calls.IndexOf("KeyDown D"), log);          // both before the pillar turn
+        var drag = Assert.Single(Drags(input));
+        Assert.Equal(-60, drag.Dy);                                                  // 60 px up
+        Assert.True(drag.Index < input.Calls.IndexOf("KeyDown D"), log);              // before the pillar turn
         Assert.Contains(run.Lines, l => l.Contains("Tilted the camera up", StringComparison.Ordinal));
     }
 
@@ -1374,20 +1373,16 @@ public class BlossomPilotTests
     }
 
     [Fact]
-    public async Task CameraTilt_StartInside_TiltsBeforeTheFirstWalkClick()
+    public async Task CameraTilt_StartInside_LeavesTheCameraAsItIs()
     {
+        // Only the teleport's arrival leaves the camera looking down; started inside, the camera is as the player left it -
+        // an up drag on every Start would add up.
         var (settings, input, ocr) = Harness(() => "15000 , 15000");
         settings.Blossom.CameraTiltPx = 80;
 
         var run = await RunAsync(settings, input, ocr, PilotPhase.CheckZone,
             (_, _) => input.Calls.Any(c => c.StartsWith("Click ", StringComparison.Ordinal)), 15000);
 
-        string log = string.Join("\n", run.Lines) + "\n" + string.Join("\n", input.Calls);
-        var drags = Drags(input);
-        Assert.Equal(2, drags.Count);
-        Assert.True(drags[0].Dy >= Height / 2, log);
-        Assert.Equal(-80, drags[1].Dy);
-        Assert.True(input.Calls.FindIndex(c => c.StartsWith("Click ", StringComparison.Ordinal)) > drags[1].Index, log);
-        Assert.Contains(run.Lines, l => l.Contains("Tilted the camera up", StringComparison.Ordinal));
+        Assert.Empty(Drags(input));
     }
 }

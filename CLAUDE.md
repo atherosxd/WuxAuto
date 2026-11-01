@@ -1160,19 +1160,18 @@ teleport in again (LOD's rule); still in town after the teleport = "destination 
   `BlossomPilotTests` (`NoTab_*`, `NoJasoInView_*`, `ScanFindsNothing_*`, `InAFight_*`, `SwordCursor_*`, `FarPartialJaso_*`).
   Probe: `--jaso <dir>` (full / partial figures + click points, `<frame>.jaso.png`: green full, yellow partial). **Not seen
   live:** the 7 s wait, a plain click on another player.
-* **Camera tilt** (user, 2026-11-01: "also try to move the screen up instead of facing down"; `Blossom.CameraTiltPx` **60**,
-  0 = off, clamp 0-400, UI "Camera tilt (px)"): `QueueBlossomTilt` / `TickBlossomCameraTilt`, one right-drag per tick
-  (`TiltCamera`, 300 ms, 400 ms settle): **down** 0.25 h -> 0.80 h at 0.5 w (the steepest view - assumed the game stops the
-  camera there), then **up** `CameraTiltPx` from 0.60 h. From that limit the tilt is the same each time, so repeating it never
-  adds up (the Laby gate tilt did, run 34). **On arrival first** (user, same day: "also upon teleporting it look down, look up
-  by dragging right click up"): the pillar turn's first tick sends the whole tilt before its first tap (`BeginBlossomTurn`
-  clears `_blossomCameraTilted` and a half-done tilt). `_blossomCameraTilted` (set when the drag up is sent) makes the other
-  queues no-ops: `StartBlossomWalk`, a Start inside, the respawn path away from the arrival spot; every unblock zoom-out (walk
-  and fight) clears it (`RetiltBlossomCamera`; sent once the walk ticks). v0.25.0 sent only the drag down before the turn:
-  live (11:35) that looks **straight down** at the grass. Live, down + 60 px up showed the field far ahead (Jasos at
-  y 160-430). The pillar turn gave up (10 s cap) in every live arrival of 2026-11-01 - with the tilt first it is not seen
-  yet. Pinned by `BlossomPilotTests.CameraTilt_*` (the harness sets 0). **Not seen live:** whether a zoom-out changes the
-  pitch, and the homing click scale (1.8 px per unit was measured facing down).
+* **Camera tilt** (user, 2026-11-01: "also try to move the screen up instead of facing down", then "also upon teleporting it
+  look down, look up by dragging right click up", "upon arrival tilt up a little bit" - the teleport leaves the camera almost
+  straight down; `Blossom.CameraTiltPx` **60**, 0 = off, clamp 0-400, UI "Camera tilt (px)"): **once per arrival**, the
+  pillar turn's first tick (before its first tap; `BeginBlossomTurn` clears `_blossomCameraTilted`): **one right-drag up**
+  of `CameraTiltPx` from (0.5 w, 0.60 h) (`QueueBlossomTilt` / `TickBlossomCameraTilt`, `TiltCamera`, 300 ms, 400 ms settle).
+  Nowhere else - not on a Start inside, not after a zoom-out: from the same arrival view the tilt is the same each time,
+  while extra drags would add up (the Laby gate tilt did, run 34). History: v0.25.0 dragged down to the camera's limit
+  before the pillar turn (straight down at the grass, 11:35), 0.25.1/0.25.2 tests dragged down to the limit and then 60 px
+  up - the user: "becuase you tilt it down!". The limit + 60 px view showed the field far ahead (Jasos at y 160-430). The
+  pillar turn gave up (10 s cap) on every live arrival of 2026-11-01. Pinned by `BlossomPilotTests.CameraTilt_*` (the
+  harness sets 0). **Not seen live:** the arrival view + 60 px, the homing click scale (1.8 px per unit was measured
+  facing down).
 * **Fight / loot:** the skill key **held** through the fight (`Blossom.HoldSkill`, on; check box "Hold skill (Blossom)"; user,
   2026-10-30: "spam or hold attack skill, currently it skills then normal attacks" - one tap casts once, then normal attacks;
   with Ctrl + skill the key is let go for a Ctrl tap every `Lod.SkillEveryMs`, as LOD's hold), off = tapped every

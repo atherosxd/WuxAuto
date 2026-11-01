@@ -409,9 +409,9 @@ public sealed class BlossomSettings
     public int FightScanEveryMs { get; set; } = 3000;
 
     /// <summary>
-    /// The camera tilted up this many px (right-drag) for the walk, so it looks ahead instead of down at the floor (user,
-    /// 2026-11-01: "also try to move the screen up instead of facing down"). Always from the steepest view: a long drag down
-    /// first (the game stops the camera there), so the tilt is the same however often it is done. 0 = off.
+    /// On arrival in Blossom Garden (teleport or death), one right-drag up of this many px, so the camera looks ahead instead
+    /// of down at the floor (user, 2026-11-01: "upon arrival tilt up a little bit" - the teleport leaves it looking almost
+    /// straight down). Only then, so it never adds up. 0 = off.
     /// </summary>
     public int CameraTiltPx { get; set; } = 60;
 

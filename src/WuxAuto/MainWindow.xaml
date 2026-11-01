@@ -571,7 +571,7 @@
                             <TextBox Grid.Row="1" Grid.Column="3" Style="{StaticResource WideField}" Text="{Binding Settings.Blossom.LootMs}" />
                             <!-- User, 2026-11-01: "also try to move the screen up instead of facing down". -->
                             <TextBlock Grid.Row="5" Grid.Column="0" Text="Camera tilt (px)" Style="{StaticResource FieldLabel}"
-                                       ToolTip="When the walk starts (and after each zoom-out) the camera is turned to face down as far as it goes, then right-dragged up this many pixels so it looks ahead instead of at the floor. 0 = leave the camera as it is." />
+                                       ToolTip="Right after arriving in Blossom Garden (the teleport leaves the camera looking almost straight down), the camera is right-dragged up this many pixels once, so it looks ahead instead of at the floor. 0 = leave the camera as it is." />
                             <TextBox Grid.Row="5" Grid.Column="1" Style="{StaticResource WideField}" Text="{Binding Settings.Blossom.CameraTiltPx}" />
                         </Grid>
 

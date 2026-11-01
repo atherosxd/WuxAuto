@@ -102,8 +102,8 @@ public sealed partial class AutomationPilot
     private long _blossomFightLookAt;
     private bool _blossomFightTurned;            // fight: the camera turned - the walk learns the heading again after it
     private bool _blossomNextJasoSeen;           // fight: the next Jaso is in view - clicked right after the kill
-    private int _blossomTiltStep;                // camera tilt: 0 = none due, 1 = the drag down, 2 = the drag up
-    private bool _blossomCameraTilted;           // tilted since the last arrival or zoom-out
+    private bool _blossomTiltDue;                // the arrival's camera tilt is still to be sent
+    private bool _blossomCameraTilted;           // tilted since the last arrival
     private (int X, int Y)? _blossomLegFrom;     // where the current leg starts: the waypoint just left
     private (int X, int Y)? _blossomJumpCandidate;
     private long _blossomClickAt;
@@ -172,7 +172,7 @@ public sealed partial class AutomationPilot
         _blossomScanEndedAt = 0;
         _blossomFightTurned = false;
         _blossomNextJasoSeen = false;
-        _blossomTiltStep = 0;
+        _blossomTiltDue = false;
         _blossomCameraTilted = false;
     }
 
@@ -228,8 +228,7 @@ public sealed partial class AutomationPilot
         _blossomFineDir = TurnDirection.Right;
         _blossomLastOffset = null;
         _blossomTurnTold = false;
-        _blossomCameraTilted = false;   // arrived (teleport or death): the camera looks down again ...
-        _blossomTiltStep = 0;           // ... and a tilt cut short starts over from its drag down
+        _blossomCameraTilted = false;   // arrived (teleport or death): the camera looks down again
         Log?.Invoke(LogLevel.Info, $"Turning ('{_settings.Input.RotateKey}' {_settings.Blossom.TurnTapMs} ms taps) until the two pillars are centred.");
         Advance(PilotPhase.BlossomTurn, 400);
     }
@@ -239,7 +238,6 @@ public sealed partial class AutomationPilot
     {
         _blossomHeadingKnown = false;
         _blossomWaypoint = -1;
-        QueueBlossomTilt();
         ResumeBlossomWalk();
     }
 
@@ -268,9 +266,8 @@ public sealed partial class AutomationPilot
     {
         var b = _settings.Blossom;
         long now = Environment.TickCount64;
-        // User, 2026-11-01: "also upon teleporting it look down, look up by dragging right click up" - the tilt goes out
-        // first (down to the limit alone looked straight down at the grass, no pillar in view); the walk then keeps it.
-        if (_blossomTurnTaps == 0 && _blossomFineTaps == 0 && _blossomTiltStep == 0)
+        // User, 2026-11-01: "upon arrival tilt up a little bit" - before the turn's first tap.
+        if (_blossomTurnTaps == 0 && _blossomFineTaps == 0)
             QueueBlossomTilt();
         if (TickBlossomCameraTilt(frame, now))
             return;
@@ -487,57 +484,38 @@ public sealed partial class AutomationPilot
     }
 
     /// <summary>
-    /// User, 2026-11-01: "also try to move the screen up instead of facing down" / "also upon teleporting it look down, look
-    /// up by dragging right click up". Once after each arrival (the pillar turn's first tick: a teleport or a death puts the
-    /// camera facing down) and after every zoom-out of the unblock steps; the walk's start and a Start inside queue it too,
-    /// a no-op when the camera is still tilted. <see cref="TickBlossomCameraTilt"/> sends it.
+    /// User, 2026-11-01: "also upon teleporting it look down, look up by dragging right click up" / "upon arrival tilt up a
+    /// little bit" (the teleport leaves the camera looking almost straight down): once per arrival - the pillar turn's first
+    /// tick, after a teleport or a death - one right-drag up of CameraTiltPx. Nowhere else: from the same arrival view the
+    /// tilt is the same every time, while a drag on a Start inside or after a zoom-out would add up. (0.25.x first dragged
+    /// down to the camera's limit: that looked straight down - "becuase you tilt it down!") <see cref="TickBlossomCameraTilt"/>
+    /// sends it.
     /// </summary>
     private void QueueBlossomTilt()
     {
         if (_settings.Blossom.CameraTiltPx > 0 && !_blossomCameraTilted)
-            _blossomTiltStep = 1;
+            _blossomTiltDue = true;
     }
 
-    /// <summary>A zoom-out may have moved the camera: tilt it up again on the walk's next tick.</summary>
-    private void RetiltBlossomCamera()
-    {
-        _blossomCameraTilted = false;
-        QueueBlossomTilt();
-    }
-
-    /// <summary>
-    /// One right-drag per tick: first a long drag down (the game stops the camera at its steepest, facing down), then
-    /// CameraTiltPx up. Starting from that limit the tilt is the same every time - repeated after a zoom-out or a restart
-    /// it never adds up (the Laby's gate tilt did, run 34). True when it sent (or tried to send) a drag: the caller waits.
-    /// </summary>
+    /// <summary>The queued tilt: one right-drag up from 0.60 h. True when it sent (or tried to send) it: the caller waits.</summary>
     private bool TickBlossomCameraTilt(Mat frame, long now)
     {
         int tilt = _settings.Blossom.CameraTiltPx;
-        if (_blossomTiltStep == 0 || tilt <= 0)
+        if (!_blossomTiltDue || tilt <= 0)
         {
-            _blossomTiltStep = 0;
+            _blossomTiltDue = false;
             return false;
         }
 
-        int cx = frame.Width / 2, h = frame.Height;
-        bool down = _blossomTiltStep == 1;
-        // Down: 0.25 h -> 0.80 h, the world above the skill bar (0.85 h); up: from 0.60 h.
-        bool sent = down
-            ? _controls.TiltCamera(cx, (int)(h * 0.25), (int)(h * 0.55), BlossomTiltDragMs)
-            : _controls.TiltCamera(cx, (int)(h * 0.60), -tilt, BlossomTiltDragMs);
-        if (!sent)
+        if (!_controls.TiltCamera(frame.Width / 2, (int)(frame.Height * 0.60), -tilt, BlossomTiltDragMs))
         {
             _waitUntil = now + 300;
             return true;
         }
 
-        if (!down)
-        {
-            _blossomCameraTilted = true;
-            Log?.Invoke(LogLevel.Info, $"Tilted the camera up ({tilt} px right-drag from the steepest view) to see further ahead.");
-        }
-
-        _blossomTiltStep = down ? 2 : 0;
+        _blossomCameraTilted = true;
+        _blossomTiltDue = false;
+        Log?.Invoke(LogLevel.Info, $"Tilted the camera up ({tilt} px right-drag) to see further ahead.");
         _detail = "tilting the camera";
         _waitUntil = now + BlossomTiltSettleMs;
         return true;
@@ -681,10 +659,6 @@ public sealed partial class AutomationPilot
             _blossomFocusTold = false;
             Log?.Invoke(LogLevel.Info, "The game is back in front - walking on.");
         }
-
-        // The camera tilted up to look ahead (user, 2026-11-01), before the first walk click and after a zoom-out.
-        if (TickBlossomCameraTilt(frame, now))
-            return;
 
         // The camera turn when leaving a waypoint (user), one tap per tick.
         if (_blossomCamTaps > 0)
@@ -1067,10 +1041,7 @@ public sealed partial class AutomationPilot
         int index = _blossomUnblockWay++ % BlossomStepWays.Length;
         if (index == 0 && _settings.Dungeon.ZoomOutNotches > 0
             && _controls.ZoomOut(frame.Width / 2, (int)(frame.Height * 0.40), _settings.Dungeon.ZoomOutNotches))
-        {
             Log?.Invoke(LogLevel.Info, $"Blocked at {coords} - zoomed out again.");
-            RetiltBlossomCamera();   // the walk's next tick tilts the camera up again
-        }
 
         var (x, y, name) = BlossomStepWays[index];   // x: right of the way, y: back
         Log?.Invoke(LogLevel.Info, $"Blocked at {coords} ({_blossomStalls} still steps towards waypoint {_blossomWaypoint + 1}) - stepping {name}.");
@@ -1336,10 +1307,7 @@ public sealed partial class AutomationPilot
         var (ux, uy, side) = BlossomStepWays[_blossomSteps % BlossomStepWays.Length];
         if (_blossomSteps % BlossomStepWays.Length == 0 && _settings.Dungeon.ZoomOutNotches > 0
             && _controls.ZoomOut(frame.Width / 2, (int)(frame.Height * 0.40), _settings.Dungeon.ZoomOutNotches))
-        {
             Log?.Invoke(LogLevel.Info, $"Stuck on '{_blossomTarget}' - zoomed out again.");
-            RetiltBlossomCamera();   // tilted up again once the walk goes on
-        }
         _blossomSteps++;
         int feetX = frame.Width / 2, feetY = (int)(frame.Height * 0.55);
         int clickX = (int)Math.Round(Math.Clamp(feetX + ux * b.WalkClickPx, frame.Width * 0.25, frame.Width * RunClickRight));
@@ -1444,7 +1412,6 @@ public sealed partial class AutomationPilot
             Log?.Invoke(LogLevel.Info, $"At {coords}, away from the arrival spot - no pillar turn, walking from the nearest waypoint.");
             _blossomHeadingKnown = false;
             _blossomWaypoint = -1;
-            QueueBlossomTilt();
             BeginBlossomBuff("after the jump", thenTurn: false);
             return;
         }
@@ -1471,7 +1438,6 @@ public sealed partial class AutomationPilot
 
         // No pillar turn here (user, 2026-10-30: "it is possible to start it already in the map and no need to look for the
         // pillar"): away from the arrival spot they are not in view; the walk learns the heading from its first step.
-        QueueBlossomTilt();
         if (await FindBlossomTargetAsync(frame) is { } target && BlossomTargetAtFullHealth(target, Environment.TickCount64))
         {
             Log?.Invoke(LogLevel.Warning, $"Already in {Destination} with '{target}' targeted - fighting it, then walking from the nearest waypoint.");
