@@ -106,5 +106,72 @@ public class JasoDetectorTests
     {
         using var f = Field();
         Assert.Empty(Find(f));
+        Assert.Empty(Candidates(f));
+    }
+
+    // ---- candidates (user, 2026-11-01: "it should be able to click a jaso from afar with just some of the characteristics
+    // of the monster"): smaller and partial figures too - the pilot clicks one only where the cursor turns into a sword.
+
+    private static IReadOnlyList<JasoCandidate> Candidates(Mat bgr)
+    {
+        using var bgra = new Mat();
+        CvInvoke.CvtColor(bgr, bgra, ColorConversion.Bgr2Bgra);
+        return ScreenAnalyzer.FindJasoCandidates(bgra, AutomationPilot.WarWalkBands(W, H));
+    }
+
+    [Fact]
+    public void AFullJaso_IsAFullCandidate()
+    {
+        using var f = Field();
+        DrawJaso(f, 600, 250);
+
+        var c = Assert.Single(Candidates(f));
+        Assert.True(c.Full);
+        Assert.InRange(c.Box.CenterX, 600, 630);
+    }
+
+    [Fact]
+    public void AFarSmallJaso_IsAPartialCandidate_NotAFullHit()
+    {
+        // Far up the field (live 2026-11-01 11:36): about 15x30 px at 2048x1152, under the full hit's 3 % of the height.
+        using var f = Field();
+        CvInvoke.Rectangle(f, new Rectangle(900, 200, 14, 7), Fan, -1);
+        CvInvoke.Rectangle(f, new Rectangle(904, 207, 6, 12), Skirt, -1);
+
+        Assert.Empty(Find(f));
+        var c = Assert.Single(Candidates(f));
+        Assert.False(c.Full);
+        Assert.InRange(c.Box.CenterX, 898, 916);
+    }
+
+    [Fact]
+    public void AFanOnly_IsAPartialCandidate()
+    {
+        // Seen from behind: only the wide fan.
+        using var f = Field();
+        CvInvoke.Rectangle(f, new Rectangle(600, 250, 40, 22), Fan, -1);
+
+        Assert.Empty(Find(f));
+        var c = Assert.Single(Candidates(f));
+        Assert.False(c.Full);
+    }
+
+    [Fact]
+    public void AFlowerDot_IsNoCandidate()
+    {
+        using var f = Field();
+        CvInvoke.Rectangle(f, new Rectangle(700, 300, 5, 5), new MCvScalar(160, 90, 230), -1);   // bright pink
+
+        Assert.Empty(Candidates(f));
+    }
+
+    [Fact]
+    public void Candidates_LeaveOutTheOwnSpotAndTheUi()
+    {
+        using var f = Field();
+        DrawJaso(f, W / 2 - 15, H / 2 - 20);
+        DrawJaso(f, 100, 300);
+
+        Assert.Empty(Candidates(f));
     }
 }

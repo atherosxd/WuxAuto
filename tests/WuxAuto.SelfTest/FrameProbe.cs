@@ -275,8 +275,10 @@ internal static class FrameProbe
     }
 
     /// <summary>
-    /// Auto Blossom without Tab: the Jaso Practitioners <see cref="ScreenAnalyzer.FindJasos"/> sees in every PNG of a folder,
-    /// nearest to the character first, each with the click point the pilot would use. Writes &lt;frame&gt;.jaso.png with the boxes.
+    /// Auto Blossom without Tab: the Jaso figures <see cref="ScreenAnalyzer.FindJasoCandidates"/> sees in every PNG of a folder,
+    /// nearest to the character first - "full" (clicked on its looks when the cursor cannot be read) or "partial" (far or partly
+    /// seen: clicked only where the cursor turns into a sword) - each with the click point used without the cursor. Writes
+    /// &lt;frame&gt;.jaso.png with the boxes (green full, yellow partial).
     /// </summary>
     public static int Jasos(string dir)
     {
@@ -288,18 +290,20 @@ internal static class FrameProbe
                 continue;
 
             var sw = System.Diagnostics.Stopwatch.StartNew();
-            var hits = ScreenAnalyzer.FindJasos(frame, WuxAuto.Automation.AutomationPilot.WarWalkBands(frame.Width, frame.Height));
+            var hits = ScreenAnalyzer.FindJasoCandidates(frame, WuxAuto.Automation.AutomationPilot.WarWalkBands(frame.Width, frame.Height));
             sw.Stop();
             Console.WriteLine($"{Path.GetFileName(path)} {frame.Width}x{frame.Height} {sw.ElapsedMilliseconds}ms | " +
-                              (hits.Count == 0 ? "none" : string.Join("; ", hits.Select(r =>
+                              (hits.Count == 0 ? "none" : string.Join("; ", hits.Select(c =>
                               {
+                                  var r = c.Box;
                                   var (cx, cy) = WuxAuto.Automation.AutomationPilot.JasoClickPoint(r);
-                                  return $"{r.X},{r.Y} {r.Width}x{r.Height} click {cx},{cy}";
+                                  return $"{(c.Full ? "full" : "partial")} {r.X},{r.Y} {r.Width}x{r.Height} click {cx},{cy}";
                               }))));
             if (hits.Count > 0)
             {
-                foreach (var r in hits)
-                    CvInvoke.Rectangle(frame, new Rectangle(r.X, r.Y, r.Width, r.Height), new MCvScalar(0, 255, 0), 2);
+                foreach (var c in hits)
+                    CvInvoke.Rectangle(frame, new Rectangle(c.Box.X, c.Box.Y, c.Box.Width, c.Box.Height),
+                        c.Full ? new MCvScalar(0, 255, 0) : new MCvScalar(0, 255, 255), 2);
                 CvInvoke.Imwrite(Path.ChangeExtension(path, ".jaso.png"), frame);
             }
         }

@@ -806,6 +806,21 @@ public sealed class ScreenAnalyzer : IDisposable
     /// trees, flowers, the character's pet, Eight Symbols Island); a Jaso seen from behind (only the wide fan) is missed.
     /// </summary>
     public static IReadOnlyList<PixelRect> FindJasos(Mat frame, IReadOnlyList<PixelRect> excluded)
+        => JasoFigures(frame, excluded, partialToo: false).Select(c => c.Box).ToList();
+
+    /// <summary>
+    /// <see cref="FindJasos"/>' figures (<see cref="JasoCandidate.Full"/>) and also the ones that show only some of her look
+    /// (user, 2026-11-01: "it should be able to click a jaso from afar with just some of the characteristics of the
+    /// monster"): 1.5-3 % of the client tall (far up the field, 16x30 px at 2048x1152 live), or wider than tall, or the
+    /// fan without the skirt (from behind only the wide fan shows). The dark magenta fan is required: the orange alone
+    /// matched 20-40 flowers and soil patches a frame on the saved Blossom frames, with the fan 0-3 (far Jasos among them,
+    /// also the pet). The pilot clicks a partial one only where the game's cursor turns into a sword over it. Nearest to
+    /// the character first.
+    /// </summary>
+    public static IReadOnlyList<JasoCandidate> FindJasoCandidates(Mat frame, IReadOnlyList<PixelRect> excluded)
+        => JasoFigures(frame, excluded, partialToo: true);
+
+    private static List<JasoCandidate> JasoFigures(Mat frame, IReadOnlyList<PixelRect> excluded, bool partialToo)
     {
         int w = frame.Width, h = frame.Height;
         if (w < 16 || h < 16)
@@ -847,29 +862,30 @@ public sealed class ScreenAnalyzer : IDisposable
             return CvInvoke.CountNonZero(mask);
         }
 
-        var hits = new List<PixelRect>();
+        var hits = new List<JasoCandidate>();
         foreach (var (box, pixels) in Components(reds))
         {
-            if (pixels < 20)
+            if (pixels < (partialToo ? 8 : 20))
                 continue;
             int x0 = box.X * 2, y0 = box.Y * 2, bw = box.Width * 2, bh = box.Height * 2;
-            if (bh < 0.03 * h || bh > 0.14 * h)
+            if (bh < (partialToo ? 0.015 : 0.03) * h || bh > 0.14 * h)
                 continue;
             double aspect = bh / (double)Math.Max(1, bw);
-            if (aspect < 1.1 || aspect > 4.0)
+            if (aspect < (partialToo ? 0.4 : 1.1) || aspect > (partialToo ? 4.5 : 4.0))
                 continue;
             double cx = x0 + bw / 2.0, cy = y0 + bh / 2.0;
             if (Math.Abs(cx - w / 2.0) < 0.13 * h && Math.Abs(cy - 0.50 * h) < 0.16 * h)
                 continue;   // the character's own spot
             int fanTop = Count(new MCvScalar(160, 50, 35), new MCvScalar(180, 255, 130), x0, y0, bw, (int)(bh * 0.4));
             int orangeLow = Count(new MCvScalar(4, 100, 60), new MCvScalar(14, 255, 255), x0, y0 + (int)(bh * 0.35), bw, bh - (int)(bh * 0.35));
-            if (fanTop < 0.03 * bh * bh || orangeLow < 0.015 * bh * bh)
-                continue;
-            hits.Add(new PixelRect(x0, y0, bw, bh));
+            bool fan = fanTop >= 0.03 * bh * bh, skirt = orangeLow >= 0.015 * bh * bh;
+            bool full = fan && skirt && bh >= 0.03 * h && aspect is >= 1.1 and <= 4.0;
+            if (full || (partialToo && fan))
+                hits.Add(new JasoCandidate(new PixelRect(x0, y0, bw, bh), full));
         }
 
         double meX = w / 2.0, meY = h * 0.54;
-        return hits.OrderBy(r => Math.Pow(r.CenterX - meX, 2) + Math.Pow(r.CenterY - meY, 2)).ToList();
+        return hits.OrderBy(c => Math.Pow(c.Box.CenterX - meX, 2) + Math.Pow(c.Box.CenterY - meY, 2)).ToList();
     }
 
     /// <summary>The game world between the HUD panels, where the ring and boss detectors look.</summary>

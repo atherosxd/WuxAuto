@@ -223,6 +223,22 @@ internal static class NativeMethods
     [return: MarshalAs(UnmanagedType.Bool)]
     public static extern bool GetCursorPos(out POINT lpPoint);
 
+    [StructLayout(LayoutKind.Sequential)]
+    public struct CURSORINFO
+    {
+        public int cbSize;
+        public int flags;
+        public IntPtr hCursor;
+        public POINT ptScreenPos;
+    }
+
+    public const int CURSOR_SHOWING = 0x0001;
+
+    /// <summary>The cursor on screen now (its handle: a game that shows its own cursors swaps the handle).</summary>
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static extern bool GetCursorInfo(ref CURSORINFO pci);
+
     /// <summary>High bit = down now; low bit = pressed since the previous call (catches a short click between polls).</summary>
     [DllImport("user32.dll")]
     public static extern short GetAsyncKeyState(int vKey);

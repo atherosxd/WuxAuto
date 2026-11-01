@@ -287,17 +287,20 @@ Blossom Garden needs no key.
 6. Rebuff when **Rebuff every** (Auto War) is due - after a loot or at a waypoint, never mid-fight.
 
 **Tab no longer targets in Blossom Garden** (2026-11-01). With **Click Jasos (no Tab)** on (Settings > Auto Blossom, on by
-default) the pilot looks for the Jaso Practitioner itself: a dark magenta fan over an orange-red skirt, about 3-14 % of the
-screen tall, not under the screen's panels and not at your own feet. The nearest one gets a plain left click. If the target
-bar then shows "[S]Jaso Practitioner" the fight starts; three clicks that target nothing and it leaves Jasos alone for 5 s.
-On the walk, after 4 s without seeing one it stands and turns the camera right in 6 steps, looking after each; in a fight it
-turns the camera one step every 3 s, remembers the next Jaso it sees and clicks her right after the kill. After any camera
-turn the next walk step learns the direction again. A Jaso seen only from behind (just the fan) is not found yet.
+default) the pilot looks for the Jaso Practitioner itself: a dark magenta fan over an orange-red skirt, not under the
+screen's panels and not at your own feet. Far away, or partly hidden, it is enough to see the fan on a small red figure.
+The game's cursor turns into a sword over a monster, so the pilot first moves the pointer over the ground, then over the
+nearest figures, and clicks where the cursor becomes the sword - right on her, even far away, and never on a flower, a pet
+or a player that only looks alike. A figure with her whole look is clicked in her middle even when no sword showed. If
+the target bar then shows "[S]Jaso Practitioner" the fight starts; three clicks that target nothing and it leaves Jasos
+alone for 5 s. On the walk, after 4 s without seeing one it stands and turns the camera right in 6 steps, looking after
+each; in a fight it turns the camera one step every 3 s, remembers the next Jaso it sees and clicks her right after the
+kill. After any camera turn the next walk step learns the direction again.
 
 **Camera tilt** (Settings > Auto Blossom, default 60 px, 0 = off): when the walk starts, and again after each zoom-out, the
 camera is right-dragged down as far as it goes (facing down) and then up by that many pixels, so it looks ahead and shows
-Jasos further away. Starting from the same limit every time, the tilt never adds up. The pillar turn uses the view facing
-down, as its picture was taken that way.
+Jasos further away. Starting from the same limit every time, the tilt never adds up. The turn to the pillars after
+arriving leaves the camera as it is (looking straight down, no pillar would be in view).
 
 **Record your own route** (Settings > Auto Blossom): bind the game, stand at the arrival spot in Blossom Garden lined up on
 the pillars, press **Record route** and walk the road by hand. A waypoint is saved every 120 units, and your own `A` / `D`

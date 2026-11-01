@@ -179,7 +179,7 @@ words and the map scroll-arrow result. `--crop` writes `<frame>.crop.png` next t
 Core tests and the refactor parity gate (M1, 2026-10-27):
 
 ```powershell
-dotnet test tests\WuxAuto.Core.Tests        # xUnit, platform-free Core only (935 tests, ~4-8 min; the pilot tests tick a
+dotnet test tests\WuxAuto.Core.Tests        # xUnit, platform-free Core only (943 tests, ~4-8 min; the pilot tests tick a
                                            # blank Mat with a scripted OCR scene - see tests/ in section 3)
 # probe baseline: runs every SelfTest probe over a frozen, local-only frame set (never committed)
 # and writes normalised output; run it before and after a refactor and diff the two
@@ -1130,11 +1130,22 @@ teleport in again (LOD's rule); still in town after the teleport = "destination 
   skirt** (H 4-14, S >= 100, V >= 60; >= 0.015 bh^2 from 35 % down); nearest the character (0.5 w, 0.54 h) first. Live
   2048x1152 (the user near one, 2026-11-01): hit 748,414 38x66, ~50 ms a frame; 0 hits on the 54 Blossom debug frames, the Eight
   Symbols frames and a Bohai war frame full of players. Measured: fan H 172-177 S ~120 V ~67, skirt H 4-9 S ~157 V ~122, grass
-  H 27-33; shrine gate posts (H 0-16, dark) fail the magenta fan rule, the pet's feathers the orange share. A Jaso from behind
-  (the fan only) is **not found**. `TryClickJaso`: a plain left click (`WalkTo(forceWalk: false)`) at `JasoClickPoint` (centre,
-  60 % down), then `JasoClickWaitMs` 1500 with no walk clicks while the target bar comes up (the usual target read starts the
-  fight); `JasoMaxMisses` 3 clicks without a fight -> Jasos ignored `JasoIgnoreMs` 5 s + `blossom_jaso_miss`. The walk tries it
-  at every target check (700 ms) with nothing in the target bar. **Walk scan** ("also add when running, to rotate the camera to
+  H 27-33; shrine gate posts (H 0-16, dark) fail the magenta fan rule, the pet's feathers the orange share. **Candidates**
+  (user, same day, live: "it should be able to click a jaso from afar with just some of the characteristics of the monster";
+  `ScreenAnalyzer.FindJasoCandidates` -> `JasoCandidate(Box, Full)`): the same pass, also 0.015-0.03 h tall, aspect 0.4-4.5,
+  with the **fan required** (orange alone matched 20-40 flowers / soil patches a frame on the saved Blossom frames; with the
+  fan 0-3, among them far Jasos 16x30 and the pet). **Sword cursor** (user: "when clicking jaso, the cursor will change into
+  a sword"): `IGameInput.CursorAt` / `IGameControls.HoverCursor` (desktop `WindowInput.CursorAt`: pointer to the point, 2 px
+  wiggle, 90 ms, `GetCursorInfo` handle; 0 = cannot tell - phone, dry run, game behind). Live check 2026-11-01 in Piercing
+  City: the game's own arrow `0x4970599` over the ground, the HUD and an NPC (no sword: not attackable). `TryClickJaso`:
+  the normal cursor at (0.5 w, 0.70 h), then the `JasoHoverCandidates` 3 nearest, `JasoProbePoints` (centre x at 60, 35,
+  80, 15 % down) -> the first point whose cursor differs = the sword -> plain left click there (`WalkTo(forceWalk: false)`).
+  No sword: a full figure is clicked at `JasoClickPoint` (centre, 60 % down) anyway (the v0.25.0 floor), a partial one never;
+  look-alikes only -> no hovering for `JasoHoverPauseMs` 2 s. After a click `JasoClickWaitMs` 1500 with no walk clicks while
+  the target bar comes up (the usual target read starts the fight); `JasoMaxMisses` 3 clicks without a fight -> Jasos
+  ignored `JasoIgnoreMs` 5 s + `blossom_jaso_miss`. The walk tries it at every target check (700 ms) with nothing in the
+  target bar. Live v0.25.0 (11:35-11:39): clicks on full figures far up the screen (y 300-440) targeted nothing, one at
+  y 618 did; 3 kills. **Walk scan** ("also add when running, to rotate the camera to
   scan for the mob"): no Jaso seen for `ScanEveryMs` **4000** (0 = off) -> stand, `ScanTaps` **6** taps of `D` `ScanTapMs`
   **250**, a look 300 ms after each; a Jaso -> click, scan over; none -> "Scanned N step(s) - no Jaso in view". **Fight scan**
   ("do the rotate also even when attacking the current mob, and set that as a second subject"): every `FightScanEveryMs`
@@ -1142,19 +1153,19 @@ teleport in again (LOD's rule); still in town after the teleport = "destination 
   remembered ("The next Jaso is in view ..."); at the kill (`LootWhileFighting`) the frame is searched again and the nearest
   clicked at once, the rebuff then waits for the next pause. Every camera turn (scan, fight scan) -> `ForgetBlossomHeading`:
   the next walk step clicks straight up and learns the heading. Pinned by `JasoDetectorTests` (drawn Jasos: found, nearest
-  first, own spot, a red-brown post, a fan without the skirt, under the UI) and `BlossomPilotTests` (`NoTab_*`, `NoJasoInView_*`,
-  `ScanFindsNothing_*`, `InAFight_*`). Probe: `--jaso <dir>` (hits + click points, `<frame>.jaso.png`). **Not seen live:** the
-  click targeting her, the scans, a plain click on another player (whether it attacks; the target bar rule keeps the pilot off
-  anyone else).
+  first, own spot, a red-brown post, a fan without the skirt, under the UI; candidates: far small, fan only, a flower dot) and
+  `BlossomPilotTests` (`NoTab_*`, `NoJasoInView_*`, `ScanFindsNothing_*`, `InAFight_*`, `SwordCursor_*`, `FarPartialJaso_*`).
+  Probe: `--jaso <dir>` (full / partial figures + click points, `<frame>.jaso.png`: green full, yellow partial). **Not seen
+  live:** the sword cursor's handle over a Jaso, a click from afar targeting her, a plain click on another player.
 * **Camera tilt** (user, 2026-11-01: "also try to move the screen up instead of facing down"; `Blossom.CameraTiltPx` **60**,
   0 = off, clamp 0-400, UI "Camera tilt (px)"): `QueueBlossomTilt` / `TickBlossomCameraTilt`, one right-drag per tick
   (`TiltCamera`, 300 ms, 400 ms settle): **down** 0.25 h -> 0.80 h at 0.5 w (the steepest view - assumed the game stops the
   camera there), then **up** `CameraTiltPx` from 0.60 h. From that limit the tilt is the same each time, so repeating it never
   adds up (the Laby gate tilt did, run 34). Queued: `StartBlossomWalk` (after the pillar turn), a Start inside, the respawn
-  path away from the arrival spot, every unblock zoom-out (walk and fight; sent once the walk ticks). The pillar turn's first
-  tick (`_blossomTurnLevelled`, reset by `BeginBlossomTurn`) sends the **down half only** (the pillar template was cropped
-  facing down). Pinned by `BlossomPilotTests.CameraTilt_*` (the
-  harness sets 0). **Not seen live:** that a long drag down stops at a limit, the view at 60 px, whether a zoom-out changes
+  path away from the arrival spot, every unblock zoom-out (walk and fight; sent once the walk ticks). The pillar turn sends
+  nothing: v0.25.0 dragged down to the limit before it, and live (11:35) that looks **straight down** at the grass - no pillar
+  in view, "no pillars lined up" after the 10 s cap. Live, the walk's down + 60 px up showed the field far ahead (Jasos at
+  y ~300). Pinned by `BlossomPilotTests.CameraTilt_*` (the harness sets 0). **Not seen live:** whether a zoom-out changes
   the pitch, and the homing click scale (1.8 px per unit was measured facing down).
 * **Fight / loot:** the skill key **held** through the fight (`Blossom.HoldSkill`, on; check box "Hold skill (Blossom)"; user,
   2026-10-30: "spam or hold attack skill, currently it skills then normal attacks" - one tap casts once, then normal attacks;

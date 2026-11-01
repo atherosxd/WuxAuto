@@ -23,4 +23,11 @@ public interface IGameInput
     /// like the game being behind another window). A platform that cannot tell says yes.
     /// </summary>
     bool IsKnownKey(string keyName) => true;
+
+    /// <summary>
+    /// Moves the pointer to the point (no click) and returns which cursor the game shows there, as a number that only
+    /// means something compared with another: the game shows a sword over a monster (user, 2026-11-01). 0 = this platform
+    /// cannot tell (no pointer, a dry run, the game behind another window).
+    /// </summary>
+    long CursorAt(int clientX, int clientY) => 0;
 }

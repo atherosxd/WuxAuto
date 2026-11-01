@@ -328,6 +328,31 @@ public sealed class WindowInput : IGameInput
         return true;
     }
 
+    /// <summary>
+    /// The pointer over the point (no click), then the Windows cursor the game shows there: its own arrow over the ground,
+    /// another one - the sword - over a monster (user, 2026-11-01; the game's arrow read as one fixed handle over the
+    /// ground, the HUD and an NPC). 0 when it cannot tell: not bound, a dry run, background input, the game behind.
+    /// </summary>
+    public long CursorAt(int clientX, int clientY)
+    {
+        if (!TryPrepare($"hover {clientX},{clientY}") || IsDryRun || _settings.Input.Mode == InputMode.BackgroundMessages)
+            return 0;
+
+        if (!TryClientToScreen(clientX, clientY, out int sx, out int sy))
+            return 0;
+
+        // A small move onto the point, so the game sees the pointer arrive even when it already was there, then a frame or
+        // two for the game to pick its cursor (19-70 fps live).
+        MoveAbsolute(sx + 2, sy);
+        Thread.Sleep(15);
+        MoveAbsolute(sx, sy);
+        Thread.Sleep(HoverSettleMs);
+        var info = new NativeMethods.CURSORINFO { cbSize = Marshal.SizeOf<NativeMethods.CURSORINFO>() };
+        return NativeMethods.GetCursorInfo(ref info) && (info.flags & NativeMethods.CURSOR_SHOWING) != 0 ? info.hCursor.ToInt64() : 0;
+    }
+
+    private const int HoverSettleMs = 90;
+
     private bool TryPrepare(string action)
     {
         if (!IsBound)

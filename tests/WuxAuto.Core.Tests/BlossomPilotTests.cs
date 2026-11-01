@@ -1240,8 +1240,10 @@ public class BlossomPilotTests
         .ToList();
 
     [Fact]
-    public async Task CameraTilt_TheTurnLevelsTheView_AndTheWalkTiltsItUp()
+    public async Task CameraTilt_ThePillarTurnLeavesTheCamera_TheWalkTiltsItUp()
     {
+        // Live 2026-11-01 11:35: the drag down to the limit looks straight down at the grass - no pillar can be in view, so
+        // the turn keeps the camera as it is; only the walk tilts it.
         var (settings, input, ocr) = Harness(() => "19148 , 19062");
         settings.Blossom.TurnMaxTaps = 2;
         settings.Blossom.CameraTiltPx = 60;
@@ -1251,13 +1253,96 @@ public class BlossomPilotTests
 
         string log = string.Join("\n", run.Lines) + "\n" + string.Join("\n", input.Calls);
         var drags = Drags(input);
-        Assert.Equal(3, drags.Count);
-        Assert.True(drags[0].Dy >= Height / 2, log);                                 // down to the steepest view ...
-        Assert.True(drags[0].Index < input.Calls.IndexOf("KeyDown D"), log);          // ... before the pillar turn
-        Assert.True(drags[1].Dy >= Height / 2, log);                                 // the walk: down again ...
-        Assert.Equal(-60, drags[2].Dy);                                              // ... then 60 px up
+        Assert.Equal(2, drags.Count);
+        Assert.True(drags[0].Index > input.Calls.LastIndexOf("KeyDown D"), log);      // no drag before or during the turn
+        Assert.True(drags[0].Dy >= Height / 2, log);                                 // the walk: down to the limit ...
+        Assert.Equal(-60, drags[1].Dy);                                              // ... then 60 px up
         int firstWalkClick = input.Calls.FindIndex(c => c.StartsWith("Click ", StringComparison.Ordinal));
-        Assert.True(firstWalkClick < 0 || firstWalkClick > drags[2].Index, log);
+        Assert.True(firstWalkClick < 0 || firstWalkClick > drags[1].Index, log);
+    }
+
+    // ---- 2026-11-01: "when clicking jaso, the cursor will change into a sword" / "it should be able to click a jaso from
+    // afar with just some of the characteristics of the monster"
+
+    /// <summary>The plain left clicks sent, as points.</summary>
+    private static List<(int X, int Y)> LeftClicks(FakeGameInput input) => input.Calls
+        .Where(c => c.StartsWith("Click ", StringComparison.Ordinal) && c.Split(' ').Length == 2)
+        .Select(c => c["Click ".Length..].Split(',').Select(int.Parse).ToArray())
+        .Select(p => (p[0], p[1]))
+        .ToList();
+
+    [Fact]
+    public async Task SwordCursor_TheClickGoesWhereTheCursorTurnsIntoASword()
+    {
+        var (settings, input, ocr) = Harness(() => "15000 , 15000");
+        static bool Sword(int x, int y) => x is >= 610 and <= 620 && y is >= 264 and <= 272;   // only a small part of her
+        input.Cursor = (x, y) => Sword(x, y) ? 2 : 1;
+        using var frame = Blank.Bgra(Height, Width);
+        DrawJaso(frame, 600, 250);
+
+        var run = await PilotRun.RunAsync(settings, input, ocr, frame, PilotPhase.BlossomWalk,
+            (_, _) => LeftClicks(input).Count > 0, 10000);
+
+        string log = string.Join("\n", run.Lines) + "\n" + string.Join("\n", input.Calls);
+        var (cx, cy) = LeftClicks(input)[0];
+        Assert.True(Sword(cx, cy), log);                                               // clicked where the sword showed
+        Assert.True(input.Calls.Count(c => c.StartsWith("Hover ", StringComparison.Ordinal)) >= 2, log);
+        Assert.Contains(run.Lines, l => l.Contains("sword", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task SwordCursor_NeverShowsOverAFullJaso_SheIsClickedInHerMiddleAnyway()
+    {
+        // The cursor can be read but stays the normal one over her (the hover too quick for the game, say): her whole look
+        // is there, so she is clicked as before the cursor check - after the pointer went over her.
+        var (settings, input, ocr) = Harness(() => "15000 , 15000");
+        input.Cursor = (_, _) => 1;
+        using var frame = Blank.Bgra(Height, Width);
+        DrawJaso(frame, 600, 250);
+
+        var run = await PilotRun.RunAsync(settings, input, ocr, frame, PilotPhase.BlossomWalk,
+            (_, _) => LeftClicks(input).Count > 0, 10000);
+
+        string log = string.Join("\n", run.Lines) + "\n" + string.Join("\n", input.Calls);
+        var first = LeftClicks(input)[0];
+        Assert.True(first.X is >= 596 and <= 634 && first.Y is >= 250 and <= 308, log);
+        Assert.True(input.Calls.Count(c => c.StartsWith("Hover ", StringComparison.Ordinal)) >= 5, log);   // the ground + 4 points over her
+        Assert.Contains(run.Lines, l => l.Contains("no sword cursor", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task FarPartialJaso_ClickedWhenTheSwordShows_NeverWithoutIt()
+    {
+        // Far up the field only part of her shows (a small fan over a red body, no orange skirt to see).
+        static void DrawFar(Mat frame)
+        {
+            CvInvoke.Rectangle(frame, new System.Drawing.Rectangle(900, 200, 14, 7), new MCvScalar(45, 30, 70, 255), -1);
+            CvInvoke.Rectangle(frame, new System.Drawing.Rectangle(904, 207, 6, 12), new MCvScalar(30, 30, 150, 255), -1);
+        }
+
+        static bool OnHer((int X, int Y) p) => p.X is >= 898 and <= 916 && p.Y is >= 198 and <= 221;
+
+        // The cursor cannot be read, or stays the normal one over her: a partial figure is never clicked on its looks alone.
+        foreach (Func<int, int, long>? cursor in (Func<int, int, long>?[])[null, (_, _) => 1])
+        {
+            var (settings, input, ocr) = Harness(() => "15000 , 15000");
+            input.Cursor = cursor;
+            using var frame = Blank.Bgra(Height, Width);
+            DrawFar(frame);
+            await PilotRun.RunAsync(settings, input, ocr, frame, PilotPhase.BlossomWalk, (_, _) => false, 2500);
+            Assert.DoesNotContain(LeftClicks(input), OnHer);
+        }
+
+        // The sword shows over her: clicked.
+        var (settings2, input2, ocr2) = Harness(() => "15000 , 15000");
+        input2.Cursor = (x, y) => x is >= 900 and <= 914 && y is >= 200 and <= 219 ? 2 : 1;
+        using (var frame = Blank.Bgra(Height, Width))
+        {
+            DrawFar(frame);
+            var run = await PilotRun.RunAsync(settings2, input2, ocr2, frame, PilotPhase.BlossomWalk, (_, _) => LeftClicks(input2).Count > 0, 10000);
+            string log = string.Join("\n", run.Lines) + "\n" + string.Join("\n", input2.Calls);
+            Assert.True(LeftClicks(input2).Count > 0 && OnHer(LeftClicks(input2)[0]), log);
+        }
     }
 
     [Fact]

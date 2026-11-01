@@ -25,6 +25,13 @@ public sealed record TemplateMatch(string Template, double Score, PixelRect Boun
 /// </summary>
 public sealed record PillarPair(TemplateMatch Left, TemplateMatch Right, double OffsetFraction);
 
+/// <summary>
+/// A figure that may be a Jaso Practitioner (<see cref="ScreenAnalyzer.FindJasoCandidates"/>). <paramref name="Full"/>:
+/// her whole look (fan over an orange skirt, near enough); otherwise only part of it, or small and far - a look-alike as
+/// likely as not, so only clicked where the cursor turns into a sword.
+/// </summary>
+public sealed record JasoCandidate(PixelRect Box, bool Full);
+
 public sealed record TextHit(string Text, double Similarity, PixelRect Bounds, string LineText, PixelRect LineBounds, double OcrMs)
 {
     public override string ToString() => $"'{Text}' {Similarity:0.00} @ {Bounds} (line '{LineText}')";
