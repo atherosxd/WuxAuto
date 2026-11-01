@@ -47,6 +47,7 @@ public sealed partial class AutomationPilot
     private const int JasoHoverCandidates = 4;       // figures the pointer goes over per look (each up to ~0.6 s)
     private const double JasoMinClickY = 0.21;       // figures centred higher up (at the horizon) are too far to click
     private const int JasoHoverPauseMs = 2000;       // no sword over any: no hovering for this long
+    private const int JasoClickShotsKept = 300;      // debug\jaso-clicks keeps the newest this many
     private const int BlossomScanSettleMs = 300;     // after a camera step, before looking
     private const int BlossomTiltDragMs = 300;       // one camera tilt drag ...
     private const int BlossomTiltSettleMs = 400;     // ... and the wait after it
@@ -96,6 +97,7 @@ public sealed partial class AutomationPilot
     private long _blossomJasoIgnoreUntil;
     private long _blossomHoverPauseUntil;        // look-alikes only at the last look: no hovering until then
     private long _blossomClickCursor;            // the cursor picture at the last click on a Jaso (0 = clicked on her looks)
+    private string? _blossomClickShot;           // that click's snapshot, until it is marked _hit or _miss
     private int _blossomSwordClicks;             // clicks since the last fight made on the learnt sword picture
     private long _blossomJasoSeenAt;             // a Jaso was last seen (or a fight ended): the walk scans ScanEveryMs after
     private int _blossomScanTapsLeft = -1;       // walk scan: camera steps still to go, -1 = not scanning
@@ -170,6 +172,7 @@ public sealed partial class AutomationPilot
         _blossomJasoClicks = 0;
         _blossomJasoIgnoreUntil = 0;
         _blossomHoverPauseUntil = 0;
+        _blossomClickShot = null;
         _blossomJasoSeenAt = 0;
         _blossomScanTapsLeft = -1;
         _blossomScanTurned = 0;
@@ -437,6 +440,7 @@ public sealed partial class AutomationPilot
                 SettingsStore.Save(_settings);
             }
 
+            MarkJasoClickShot("miss");
             _blossomJasoClicks = 0;
             _blossomSwordClicks = 0;
             _blossomJasoIgnoreUntil = now + JasoIgnoreMs;
@@ -495,8 +499,46 @@ public sealed partial class AutomationPilot
             _blossomClickCursor = cursor;
             _blossomJasoClickedAt = now;
             _blossomJasoSeenAt = now;
-            Log?.Invoke(LogLevel.Info, $"Jaso at {at.X},{at.Y} {how} - clicking her.");
+            MarkJasoClickShot("miss");   // a click still waiting for its outcome targeted nothing, or this one would not be
+            _blossomClickShot = SaveJasoClickShot(frame, candidates, c, at);
+            Log?.Invoke(LogLevel.Info, $"Jaso at {at.X},{at.Y} {how} - clicking her" +
+                                       (_blossomClickShot is { } shot ? $" (snapshot jaso-clicks\\{Path.GetFileName(shot)})." : "."));
             return true;
+        }
+    }
+
+    /// <summary>
+    /// User, 2026-11-01: "Yes, add snapshots" (three clicks around the character targeted nothing and nobody could tell what
+    /// they hit): the frame of a click on a Jaso as a JPEG in debug\jaso-clicks - every figure seen (green full, yellow
+    /// partial), the one clicked in blue, the click point crossed - the newest <see cref="JasoClickShotsKept"/> kept.
+    /// <see cref="MarkJasoClickShot"/> adds _hit or _miss to its name once the outcome is known.
+    /// </summary>
+    private static string? SaveJasoClickShot(Mat frame, IReadOnlyList<JasoCandidate> seen, JasoCandidate clicked, (int X, int Y) at)
+    {
+        var marks = seen.Select(s => ReferenceEquals(s, clicked)
+                ? new OverlayItem(s.Box, "clicked", OverlayColor.Blue)
+                : new OverlayItem(s.Box, s.Full ? "jaso" : "jaso?", s.Full ? OverlayColor.Green : OverlayColor.Yellow))
+            .ToList();
+        string file = DebugArtifacts.SaveMarkedJpeg(frame, marks, $"jaso_click_{at.X}_{at.Y}", at, JasoClickShotFolder, JasoClickShotsKept);
+        return file.Length > 0 ? file : null;
+    }
+
+    private static string JasoClickShotFolder => Path.Combine(AppPaths.DebugFolder, "jaso-clicks");
+
+    /// <summary>The click waiting for its outcome: its snapshot's name gets _hit or _miss.</summary>
+    private void MarkJasoClickShot(string outcome)
+    {
+        if (_blossomClickShot is not { } file)
+            return;
+
+        _blossomClickShot = null;
+        try
+        {
+            File.Move(file, Path.Combine(Path.GetDirectoryName(file)!, $"{Path.GetFileNameWithoutExtension(file)}_{outcome}.jpg"));
+        }
+        catch
+        {
+            // pruned already, or open in a viewer - the name stays as it is
         }
     }
 
@@ -654,6 +696,8 @@ public sealed partial class AutomationPilot
             Log?.Invoke(LogLevel.Info, $"Learnt the sword cursor (0x{_blossomClickCursor:X}) from the Jaso just targeted - from now on only it counts.");
         }
 
+        // The click's snapshot: targeted within the wait = that click did it.
+        MarkJasoClickShot(_blossomJasoClickedAt > 0 && now - _blossomJasoClickedAt <= JasoClickWaitMs ? "hit" : "miss");
         _blossomClickCursor = 0;
         _blossomSwordClicks = 0;
         _blossomJasoClicks = 0;
@@ -753,6 +797,8 @@ public sealed partial class AutomationPilot
             _waitUntil = Math.Min(_blossomTargetAt, now + 200);
             return;
         }
+
+        MarkJasoClickShot("miss");   // the wait is over and nothing was targeted
 
         // Scan (user, 2026-11-01: "when running, rotate the camera to scan for the mob"): no Jaso seen for ScanEveryMs ->
         // stand and turn the camera ScanTaps steps, looking after each; then the next walk step learns the heading again.

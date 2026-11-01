@@ -1344,6 +1344,58 @@ public class BlossomPilotTests
         }
     }
 
+    // ---- 2026-11-01 15:55: "Yes, add snapshots" - every click on a Jaso is saved (her box, every other figure seen, the click
+    // point), and once the outcome is known the file is marked _hit (the target bar showed her) or _miss.
+
+    /// <summary>The click snapshots in this run's debug folder (only inside a <see cref="PilotRun.RunAsync"/> callback).</summary>
+    private static string[] ClickShots()
+    {
+        string folder = Path.Combine(AppPaths.DebugFolder, "jaso-clicks");
+        return Directory.Exists(folder) ? Directory.GetFiles(folder, "*.jpg").Select(f => Path.GetFileName(f)).OfType<string>().Order().ToArray() : [];
+    }
+
+    [Fact]
+    public async Task EveryJasoClick_IsSaved_AndMarkedHitWhenTheTargetBarShowsHer()
+    {
+        bool targeted = false;
+        var (settings, input, ocr) = Harness(() => "15000 , 15000", target: _ => targeted ? "[S]Jaso Practitioner" : null);
+        using var frame = Blank.Bgra(Height, Width);
+        DrawJaso(frame, 600, 250);
+        string[] shots = [];
+
+        await PilotRun.RunAsync(settings, input, ocr, frame, PilotPhase.BlossomWalk,
+            (_, lines) =>
+            {
+                shots = ClickShots();
+                return lines.Any(l => l.Contains("Jaso Practitioner targeted", StringComparison.Ordinal));
+            }, 10000,
+            beforeTick: () => targeted = LeftClicks(input).Count > 0);
+
+        var shot = Assert.Single(shots);
+        Assert.EndsWith("_hit.jpg", shot);
+    }
+
+    [Fact]
+    public async Task AClickThatTargetsNothing_IsMarkedMiss()
+    {
+        var (settings, input, ocr) = Harness(() => "15000 , 15000");
+        using var frame = Blank.Bgra(Height, Width);
+        DrawJaso(frame, 600, 250);
+        string[] shots = [];
+
+        var run = await PilotRun.RunAsync(settings, input, ocr, frame, PilotPhase.BlossomWalk,
+            (_, _) =>
+            {
+                shots = ClickShots();
+                return LeftClicks(input).Count >= 2;   // the second click: the first one targeted nothing
+            }, 20000);
+
+        string log = string.Join("\n", run.Lines) + "\n" + string.Join("\n", shots);
+        Assert.True(shots.Length >= 2, log);
+        Assert.EndsWith("_miss.jpg", shots[0]);
+        Assert.Contains(run.Lines, l => l.Contains("jaso-clicks", StringComparison.Ordinal) || l.Contains("snapshot", StringComparison.Ordinal));
+    }
+
     [Fact]
     public async Task TheWalkScan_KeepsTheCharacterMoving()
     {

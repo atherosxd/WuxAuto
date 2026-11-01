@@ -300,6 +300,9 @@ after the kill. After any camera turn the walk learns the direction again. One f
 game ignores a click that far - until the walk brings her closer. Inside her green AOE dome her colours change and she is
 not always found. (`Blossom.UseSwordCursor` in settings.json turns on an extra check that hovers the pointer and clicks
 only where the game's cursor becomes a sword; it is off, because the cursor read from outside the game was unreliable.)
+Every click on a Jaso is saved as a picture in the **Debug snapshots** folder, under `jaso-clicks`: every figure it saw
+boxed (green: her whole look, yellow: partly), the one it clicked in blue, and a cross on the click point. Once it knows,
+the file's name ends in `_hit` (the target bar showed her) or `_miss` (nothing was targeted). The newest 300 are kept.
 
 **Camera tilt** (Settings > Auto Blossom, default 60 px, 0 = off): right after arriving (the teleport leaves the camera
 looking almost straight down), before the turn to the pillars, the camera is right-dragged up by that many pixels once, so

@@ -179,7 +179,7 @@ words and the map scroll-arrow result. `--crop` writes `<frame>.crop.png` next t
 Core tests and the refactor parity gate (M1, 2026-10-27):
 
 ```powershell
-dotnet test tests\WuxAuto.Core.Tests        # xUnit, platform-free Core only (957 tests, ~4-8 min; the pilot tests tick a
+dotnet test tests\WuxAuto.Core.Tests        # xUnit, platform-free Core only (959 tests, ~4-8 min; the pilot tests tick a
                                            # blank Mat with a scripted OCR scene - see tests/ in section 3)
 # probe baseline: runs every SelfTest probe over a frozen, local-only frame set (never committed)
 # and writes normalised output; run it before and after a refactor and diff the two
@@ -1194,8 +1194,14 @@ teleport in again (LOD's rule); still in town after the teleport = "destination 
   own spot as partial) and `BlossomPilotTests` (`NoTab_*`, `NoJasoInView_*`, `ScanFindsNothing_*`, `InAFight_*`,
   `SwordCursor_*`, `FarPartialJaso_*`, `AJasoNextToTheCharacter_*`, `SideOnJaso_*`, `AJasoAtTheHorizon_*`,
   `TheWalkScan_KeepsTheCharacterMoving`, `LearntSword_*`).
-  Probe: `--jaso <dir>` (full / partial figures + click points, `<frame>.jaso.png`: green full, yellow partial). **Not seen
-  live:** the 7 s wait, a plain click on another player.
+  Probe: `--jaso <dir>` (full / partial figures + click points, `<frame>.jaso.png`: green full, yellow partial). **Click
+  snapshots** (user, 2026-11-01 15:55: "Yes, add snapshots" - live 0.25.7 15:49-15:50, three clicks around the character
+  targeted nothing): every click on a Jaso saves `debug\jaso-clicks\<time>_jaso_click_<x>_<y>.jpg`
+  (`DebugArtifacts.SaveMarkedJpeg` = overlays + crosshair through `KillScreenshots.Save`, JPEG q90, newest
+  `JasoClickShotsKept` 300 kept): every figure seen (green full, yellow partial), the one clicked in blue. `MarkJasoClickShot`
+  renames it `_hit` when the fight starts within `JasoClickWaitMs`, `_miss` when the wait runs out, the next click comes first,
+  or Jasos are put aside after 3 misses; the log's click line names the file. Pinned by `BlossomPilotTests.EveryJasoClick_*` /
+  `AClickThatTargetsNothing_IsMarkedMiss`. **Not seen live:** the 7 s wait, a plain click on another player.
 * **Camera tilt** (user, 2026-11-01: "also try to move the screen up instead of facing down", then "also upon teleporting it
   look down, look up by dragging right click up", "upon arrival tilt up a little bit" - the teleport leaves the camera almost
   straight down; `Blossom.CameraTiltPx` **60**, 0 = off, clamp 0-400, UI "Camera tilt (px)"): **once per arrival**, the

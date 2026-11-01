@@ -151,6 +151,25 @@ public static class OverlayRenderer
 
 public static class DebugArtifacts
 {
+    /// <summary>
+    /// The frame with its overlays and the click point drawn, as a JPEG in <paramref name="folder"/>; only the newest
+    /// <paramref name="maxFiles"/> are kept (KillScreenshots' rules). Returns the file, or an empty string when it failed.
+    /// </summary>
+    public static string SaveMarkedJpeg(Mat frameBgra, IEnumerable<OverlayItem> overlays, string tag, (int X, int Y)? click,
+        string folder, int maxFiles)
+    {
+        try
+        {
+            using var copy = frameBgra.Clone();
+            OverlayRenderer.Draw(copy, overlays, click);
+            return KillScreenshots.Save(copy, tag, folder, maxFiles);
+        }
+        catch
+        {
+            return string.Empty;
+        }
+    }
+
     public static string SaveFrame(Mat frameBgra, IEnumerable<OverlayItem> overlays, string tag, (int X, int Y)? click = null)
     {
         try
