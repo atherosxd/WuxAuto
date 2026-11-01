@@ -221,12 +221,14 @@ public class JasoDetectorTests
         DrawJaso(f, 600, barY - 55);                  // pet-sized (55 px), left of the character, feet level with its own
         DrawJaso(f, 850, barY - 107, scale: 2.5);     // Jaso-sized (137 px), right of the character, a little nearer
         DrawJaso(f, 600, 150);                        // small, far up the screen: a far Jaso
+        DrawJaso(f, 990, barY - 55 - (int)(0.07 * H)); // small, feet 0.07 h above the character's: far off (F11 03:17:00)
 
         var hits = Find(f);
 
         string seen = string.Join(", ", hits);
-        Assert.True(hits.Count == 2, seen);
-        Assert.Contains(hits, h => h.CenterX > W / 2 + 100);            // the tall one beside
+        Assert.True(hits.Count == 3, seen);
+        Assert.Contains(hits, h => Math.Abs(h.X - 990) <= 4);           // the far one a little up
+        Assert.Contains(hits, h => h.CenterX > W / 2 + 100 && h.Height > 100);   // the tall one beside
         Assert.Contains(hits, h => h.CenterY < 250);                    // the far one
         Assert.DoesNotContain(Candidates(f), c => c.Full && c.Box.CenterY > 350 && c.Box.CenterX < W / 2);
     }
@@ -255,6 +257,20 @@ public class JasoDetectorTests
 
         var hit = Assert.Single(Find(f));
         Assert.InRange(hit.CenterX, W / 2 - (int)(0.08 * H) - 20, W / 2 - (int)(0.08 * H) + 20);
+    }
+
+    [Fact]
+    public void AJasoInFrontOfTheRiver_IsFound()
+    {
+        // F11 2026-11-02 03:16:57: a Jaso beside the character with the river behind her read navy 0.20 over her box (the
+        // water at her sides) and was taken for the character's wings.
+        using var f = Field();
+        int x = W / 2 - 15 - (int)(0.12 * H), y = H / 2 - 40;
+        CvInvoke.Rectangle(f, new Rectangle(0, y + 15, W, 40), new MCvScalar(140, 80, 40), -1);   // the river, navy blue
+        DrawJaso(f, x, y);
+
+        var hit = Assert.Single(Find(f));
+        Assert.InRange(hit.CenterX, x, x + 30);
     }
 
     [Fact]

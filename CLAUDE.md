@@ -179,7 +179,7 @@ words and the map scroll-arrow result. `--crop` writes `<frame>.crop.png` next t
 Core tests and the refactor parity gate (M1, 2026-10-27):
 
 ```powershell
-dotnet test tests\WuxAuto.Core.Tests        # xUnit, platform-free Core only (979 tests, ~4-8 min; the pilot tests tick a
+dotnet test tests\WuxAuto.Core.Tests        # xUnit, platform-free Core only (981 tests, ~4-8 min; the pilot tests tick a
                                            # blank Mat with a scripted OCR scene - see tests/ in section 3)
 # probe baseline: runs every SelfTest probe over a frozen, local-only frame set (never committed)
 # and writes normalised output; run it before and after a refactor and diff the two
@@ -1143,8 +1143,10 @@ teleport in again (LOD's rule); still in town after the teleport = "destination 
   0.04-0.26 on every miss) a **red dress** - hue 4-8 for >= 45 % of the skirt's orange pixels (Jasos 0.53-0.77; wooden
   pillars, cattail reeds, tulips, autumn leaves, the character's gear 0.00-0.21) - with **B** fan >= 0.012 + dress >= 0.04,
   h/w >= 0.8 (side-on her skirt spreads), or **C** dress >= 0.08 alone on a standing shape (h/w >= 1.25, >= 0.045 h; a red
-  tulip 0.043 h / 1.09 passed otherwise). **Wings**: a figure with >= 5 % navy (H 95-130, S >= 60, V 15-150) is never her -
-  the character's wings were 26-54 % navy, four Jasos 0-0.3 %. **Own spot** shrunk to the body column (|dx| < 0.035 h,
+  tulip 0.043 h / 1.09 passed otherwise). **Wings**: a figure with >= 12 % navy (H 95-130, S >= 60, V 15-150) **in the middle
+  third of its box** is never her - the character's wings were 26-54 % navy, four Jasos 0-0.3 %. Was >= 5 % of the whole box
+  until 2026-11-02: F11 03:16:57 a Jaso beside the character with the river behind her read 0.20 (the water at her sides; 0.07
+  in her middle third) and was dropped as "wings"; the user's character shows no wings at present. **Own spot** shrunk to the body column (|dx| < 0.035 h,
   |cy - 0.5 h| < 0.08 h; was 0.13 h x 0.16 h and hid a Jaso fighting the character - user: "it doesn't detect the Jaso just
   beside the character"). **The character from its HP bar** (live 16:23, 0.25.8: near trees the game pulls the camera in and
   the character is drawn big and low, its bar at 0.75 h instead of 0.56 h - its red mask and legs were clicked as Jasos):
@@ -1156,9 +1158,12 @@ teleport in again (LOD's rule); still in town after the teleport = "destination 
   it in orange ("you"). **Too small for its depth** (live 18:37-18:45, 0.25.11: looking aside showed the character side-on,
   and its small red pet trotting beside it - ~0.07 h against ~0.17 h - and a red rose in front of it were clicked as Jasos
   a dozen times, 0 kills in 20 min): with the HP bar found, a figure whose feet are at the character's depth or nearer
-  (bottom >= the bar - 0.08 h) and shorter than 0.6 of the character's height ((own box - 0.01 h) / 1.15) is rejected,
-  partial or full. On that run's 16 click snapshots it removed the pet hits; a big rose right in front of the camera and a
-  close-up of another player still pass. **Click point** `JasoCandidate.Body` = the middle of the skirt's orange pixels (user: "it click on its
+  (bottom >= the character's feet - 0.03 h; 0.08 h until 2026-11-02, when it dropped a far Jaso on F11 03:17:00) and shorter
+  than 0.6 of the character's height ((own box - 0.01 h) / 1.15) is rejected, partial or full. On that run's 16 click
+  snapshots it removed the pet hits; a big rose right in front of the camera and a close-up of another player still pass.
+  **UI bands for the Jaso search** (`AutomationPilot.JasoBands`, also `--jaso`): `WarWalkBands` without the combat-log band
+  (0-0.31 w x 0.13-0.56 h) - only its buff icons (0-0.25 w x 0.13-0.35 h) stay masked. The combat log hides behind open
+  field in Blossom; on F11 03:17:00 a Jaso at 160,338 (1024x768) stood inside that band and was never seen. **Click point** `JasoCandidate.Body` = the middle of the skirt's orange pixels (user: "it click on its
   right not the body of the monster" - the box's middle was off her body). Result: video 1 every frame she shows in but two
   inside her green dome (22/42 frames, the rest without her), video 2 17/24 (was 13); the saved Blossom frames give only the
   real Jasos (3 in debug, incl. one beside the character at 14:52). `--jaso <dir> --why` prints every figure's size, shape,

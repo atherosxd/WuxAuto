@@ -452,7 +452,7 @@ public sealed partial class AutomationPilot
         // Not the ones at the horizon: the game ignores a click on a monster that far (live 13:37, three clicks with the sword
         // on one at 0.20 h, she stayed put; every click that targeted one was 0.23 h or lower) - the walk brings them closer.
         // Figures at the character's own spot last: mostly its own wings - but a Jaso fighting it stands there too.
-        var candidates = ScreenAnalyzer.FindJasoCandidates(frame, WarWalkBands(frame.Width, frame.Height))
+        var candidates = ScreenAnalyzer.FindJasoCandidates(frame, JasoBands(frame.Width, frame.Height))
             .Where(c => c.Box.CenterY >= frame.Height * JasoMinClickY)
             .OrderBy(c => c.AtOwnSpot ? 1 : 0)
             .ToList();
@@ -622,6 +622,32 @@ public sealed partial class AutomationPilot
 
         _blossomHeadingBeforeAside = null;
         SetBlossomHeading(before, "restored after looking aside");
+    }
+
+    /// <summary>
+    /// The screen parts the Jaso search leaves out: the UI bands of <see cref="WarWalkBands"/>, but of the combat log only
+    /// the buff icons at its top (user, 2026-11-02, F11 at 1024x768: a Jaso at 0.17 w, 0.45 h stood inside the log's band -
+    /// left 31 %, 13-56 % down - and was never looked at; the log's text is yellow, never her).
+    /// </summary>
+    internal static IReadOnlyList<PixelRect> JasoBands(int width, int height)
+    {
+        PixelRect Box(double x0, double y0, double x1, double y1)
+        {
+            int left = (int)(x0 * width), top = (int)(y0 * height);
+            return new PixelRect(left, top, (int)Math.Ceiling(x1 * width) - left, (int)Math.Ceiling(y1 * height) - top);
+        }
+
+        return
+        [
+            Box(0.00, 0.00, 1.00, 0.13),   // top strip
+            Box(0.00, 0.13, 0.25, 0.22),   // the buff icons under the HP bars (the combat log under them is searched)
+            Box(0.00, 0.56, 0.40, 1.00),   // chat, bottom bar (left)
+            Box(0.56, 0.00, 1.00, 0.23),   // pet panel, minimap top
+            Box(0.74, 0.00, 1.00, 0.37),   // minimap panel
+            Box(0.80, 0.37, 1.00, 0.60),   // event notices
+            Box(0.70, 0.55, 1.00, 1.00),   // item list
+            Box(0.20, 0.85, 0.80, 1.00),   // skill bar
+        ];
     }
 
     private static TurnDirection Opposite(TurnDirection direction)
@@ -1638,7 +1664,7 @@ public sealed partial class AutomationPilot
                 return;
 
             _blossomFightLookAt = 0;
-            var jasos = ScreenAnalyzer.FindJasos(frame, WarWalkBands(frame.Width, frame.Height));
+            var jasos = ScreenAnalyzer.FindJasos(frame, JasoBands(frame.Width, frame.Height));
             if (jasos.Count == 0)
                 return;
 

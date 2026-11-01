@@ -1397,6 +1397,23 @@ public class BlossomPilotTests
     }
 
     [Fact]
+    public async Task AJasoOnTheLeftOfTheScreen_WhereTheCombatLogIs_IsClicked()
+    {
+        // User, 2026-11-02 (F11 at 03:17:00, 1024x768): "it didnt able to see Jaso in a distance" - she stood at 0.17 w, 0.45 h,
+        // inside the band left out for the combat log (left 31 %, 13-56 % down). The log's text is yellow, never her; only
+        // the buff icons at its top are left out of the search now.
+        var (settings, input, ocr) = Harness(MovingNorth());
+        using var frame = Blank.Bgra(Height, Width);
+        DrawJaso(frame, 200, 360);   // 0.14 w, 0.40-0.46 h
+
+        var run = await PilotRun.RunAsync(settings, input, ocr, frame, PilotPhase.BlossomWalk,
+            (_, _) => input.Calls.Any(c => c.StartsWith("Click 2", StringComparison.Ordinal)), 6000);
+
+        string log = string.Join("\n", run.Lines) + "\n" + string.Join("\n", input.Calls);
+        Assert.Contains(run.Lines, l => l.StartsWith("Jaso at 2", StringComparison.Ordinal));
+    }
+
+    [Fact]
     public async Task AJasoComingIntoView_IsClickedOnTheNextFrame_NotOnTheNextTargetRead()
     {
         // User, 2026-11-02: "why so long to click can it be faster? like below 100ms?" - the Jaso search ran only with the

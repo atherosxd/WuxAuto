@@ -1010,14 +1010,19 @@ public sealed class ScreenAnalyzer : IDisposable
             if (own is { } me && !ownSpot)
             {
                 double meTall = (me.Height - 0.01 * h) / 1.15, feetY = me.Bottom - 0.01 * h;
-                if (y0 + bh >= feetY - 0.08 * h && bh < 0.6 * meTall
+                // Feet within 0.03 h of the character's or nearer (F11 2026-11-02 03:17, 1024x768: a far Jaso whose feet were
+                // 0.07 h above the character's - far off with the camera tilted up - was taken for the pet at 0.08 h).
+                if (y0 + bh >= feetY - 0.03 * h && bh < 0.6 * meTall
                     && Reject($"too small for its depth ({bh / meTall:0.00} of the character's height - its pet, a flower)"))
                     continue;
             }
             // The character's wings: dark navy with red flame edges - 26-54 % navy in their box beside the character (live
             // 2026-10-30), 0-0.3 % on four real Jasos. A figure with that much navy is not her, wherever it stands.
-            int navy = Count(new MCvScalar(95, 60, 15), new MCvScalar(130, 255, 150), x0, y0, bw, bh);
-            if (navy >= 0.05 * bw * bh && Reject($"navy {navy / (double)(bw * bh):0.00} (wings)"))
+            // Counted in the middle third of the box only (F11 2026-11-02 03:16:57: a Jaso fighting beside the character, the
+            // river behind her, read navy 0.20 over her whole box - the water at her sides; the wings are navy right through).
+            int midW = Math.Max(1, bw / 3);
+            int navy = Count(new MCvScalar(95, 60, 15), new MCvScalar(130, 255, 150), x0 + bw / 3, y0, midW, bh);
+            if (navy >= 0.12 * midW * bh && Reject($"navy {navy / (double)(midW * bh):0.00} (wings)"))
                 continue;
             int fanTop = Count(new MCvScalar(160, 50, 35), new MCvScalar(180, 255, 130), x0, y0, bw, (int)(bh * 0.4));
             int skirtTop = y0 + (int)(bh * 0.35);

@@ -290,7 +290,7 @@ internal static class FrameProbe
                 continue;
 
             var sw = System.Diagnostics.Stopwatch.StartNew();
-            var hits = ScreenAnalyzer.FindJasoCandidates(frame, WuxAuto.Automation.AutomationPilot.WarWalkBands(frame.Width, frame.Height));
+            var hits = ScreenAnalyzer.FindJasoCandidates(frame, WuxAuto.Automation.AutomationPilot.JasoBands(frame.Width, frame.Height));
             sw.Stop();
             Console.WriteLine($"{Path.GetFileName(path)} {frame.Width}x{frame.Height} {sw.ElapsedMilliseconds}ms | " +
                               (hits.Count == 0 ? "none" : string.Join("; ", hits.Select(c =>
@@ -301,7 +301,7 @@ internal static class FrameProbe
                               }))));
             if (why)
             {
-                foreach (string line in ScreenAnalyzer.JasoReport(frame, WuxAuto.Automation.AutomationPilot.WarWalkBands(frame.Width, frame.Height)))
+                foreach (string line in ScreenAnalyzer.JasoReport(frame, WuxAuto.Automation.AutomationPilot.JasoBands(frame.Width, frame.Height)))
                     Console.WriteLine($"    {line}");
             }
             if (hits.Count > 0)

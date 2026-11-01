@@ -288,7 +288,8 @@ Blossom Garden needs no key.
 
 **Tab no longer targets in Blossom Garden** (2026-11-01). With **Click Jasos (no Tab)** on (Settings > Auto Blossom, on by
 default) the pilot looks for the Jaso Practitioner itself: a dark magenta fan over a red-orange dress, not under the
-screen's panels. Attacking or turned away (her fan glows green), her red dress alone is enough on a standing figure; the
+screen's panels (the combat log on the left is not one of them: there it is open field, and a Jaso behind it is
+found). Attacking or turned away (her fan glows green), her red dress alone is enough on a standing figure; the
 pilot tells it apart from wooden pillars, reeds and tulips by its redder colour, and from your own wings by their navy. A
 Jaso right beside your character is found too; your own character is told apart by its HP bar (red over blue, under its
 feet), so it is never clicked even when the camera is pulled in close and it is drawn big. Next to the character a Jaso is
