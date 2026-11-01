@@ -95,6 +95,8 @@ public sealed partial class AutomationPilot
     private int _blossomJasoClicks;              // clicks on Jasos since the last fight
     private long _blossomJasoIgnoreUntil;
     private long _blossomHoverPauseUntil;        // look-alikes only at the last look: no hovering until then
+    private long _blossomClickCursor;            // the cursor picture at the last click on a Jaso (0 = clicked on her looks)
+    private int _blossomSwordClicks;             // clicks since the last fight made on the learnt sword picture
     private long _blossomJasoSeenAt;             // a Jaso was last seen (or a fight ended): the walk scans ScanEveryMs after
     private int _blossomScanTapsLeft = -1;       // walk scan: camera steps still to go, -1 = not scanning
     private int _blossomScanTurned;
@@ -427,15 +429,28 @@ public sealed partial class AutomationPilot
             _blossomJasoSeenAt = now;
         if (_blossomJasoClicks >= JasoMaxMisses)
         {
+            // Every one of them on the learnt sword and none targeted: that picture was not the sword after all.
+            if (_blossomSwordClicks >= JasoMaxMisses && _settings.Blossom.SwordCursor != 0)
+            {
+                Log?.Invoke(LogLevel.Warning, $"{JasoMaxMisses} clicks on the learnt sword cursor (0x{_settings.Blossom.SwordCursor:X}) targeted nothing - forgetting it.");
+                _settings.Blossom.SwordCursor = 0;
+                SettingsStore.Save(_settings);
+            }
+
             _blossomJasoClicks = 0;
+            _blossomSwordClicks = 0;
             _blossomJasoIgnoreUntil = now + JasoIgnoreMs;
             Log?.Invoke(LogLevel.Warning, $"Clicked a Jaso {JasoMaxMisses} times and nothing was targeted - leaving them for {JasoIgnoreMs / 1000}s.");
             BlossomShot(frame, "blossom_jaso_miss");
             return false;
         }
 
-        // The normal cursor, over the ground in front of the character's feet; then each figure, nearest first.
+        // The normal cursor, over the ground in front of the character's feet; then each figure, nearest first. The sword is
+        // a picture other than the normal one, read the same twice (live 14:26: the plain Windows arrow shows for a moment
+        // after the game comes to the front, another picture at the character's own spot) - and, once learnt from a click
+        // that targeted a Jaso (Blossom.SwordCursor), only that picture.
         long normal = _controls.HoverCursor(frame.Width / 2, (int)(frame.Height * 0.70));
+        long sword = _settings.Blossom.SwordCursor;
         if (normal != 0)
         {
             foreach (var c in candidates.Take(JasoHoverCandidates))
@@ -443,11 +458,11 @@ public sealed partial class AutomationPilot
                 foreach (var p in JasoProbePoints(c.Box))
                 {
                     long cursor = _controls.HoverCursor(p.X, p.Y);
-                    if (cursor != 0 && cursor != normal)
-                    {
-                        Log?.Invoke(LogLevel.Trace, $"Cursor over the ground 0x{normal:X}, over {p.X},{p.Y} 0x{cursor:X}.");
-                        return ClickJaso(c, p, $"({why}{(c.Full ? "" : ", far or partly seen")}) - the cursor turned into a sword there");
-                    }
+                    if (cursor == 0 || cursor == normal || (sword != 0 && cursor != sword) || _controls.HoverCursor(p.X, p.Y) != cursor)
+                        continue;
+
+                    Log?.Invoke(LogLevel.Trace, $"Cursor over the ground 0x{normal:X}, over {p.X},{p.Y} 0x{cursor:X} (read twice{(sword != 0 ? ", the learnt sword" : "")}).");
+                    return ClickJaso(c, p, $"({why}{(c.Full ? "" : ", far or partly seen")}) - the cursor turned into a sword there", cursor);
                 }
             }
         }
@@ -455,7 +470,7 @@ public sealed partial class AutomationPilot
         // No sword (or no cursor to read): a full figure is clicked on its looks, in her middle, as before the cursor check -
         // a partial one never.
         if (candidates.FirstOrDefault(c => c.Full) is { } full)
-            return ClickJaso(full, JasoClickPoint(full.Box), normal != 0 ? $"({why}) - no sword cursor over her, clicking her middle" : $"({why})");
+            return ClickJaso(full, JasoClickPoint(full.Box), normal != 0 ? $"({why}) - no sword cursor over her, clicking her middle" : $"({why})", 0);
 
         if (normal != 0)
         {
@@ -466,13 +481,16 @@ public sealed partial class AutomationPilot
 
         return false;
 
-        bool ClickJaso(JasoCandidate c, (int X, int Y) at, string how)
+        bool ClickJaso(JasoCandidate c, (int X, int Y) at, string how, long cursor)
         {
             _overlays.Add(new OverlayItem(c.Box, c.Full ? "jaso" : "jaso?", OverlayColor.Green));
             if (!_controls.WalkTo(at.X, at.Y, forceWalk: false))
                 return false;
 
             _blossomJasoClicks++;
+            if (cursor != 0 && cursor == _settings.Blossom.SwordCursor)
+                _blossomSwordClicks++;
+            _blossomClickCursor = cursor;
             _blossomJasoClickedAt = now;
             _blossomJasoSeenAt = now;
             Log?.Invoke(LogLevel.Info, $"Jaso at {at.X},{at.Y} {how} - clicking her.");
@@ -624,6 +642,18 @@ public sealed partial class AutomationPilot
         _blossomSteps = 0;
         _blossomFightLootAt = 0;
         _blossomRecheckRoute = true;
+        // Targeted after a click on a sword-looking picture: that picture is the sword (user, 2026-11-01: "when clicking jaso,
+        // the cursor will change into a sword") - kept in settings.json, from now on only it counts.
+        if (_blossomClickCursor != 0 && _blossomJasoClickedAt > 0 && now - _blossomJasoClickedAt <= JasoClickWaitMs
+            && _settings.Blossom.SwordCursor != _blossomClickCursor)
+        {
+            _settings.Blossom.SwordCursor = _blossomClickCursor;
+            SettingsStore.Save(_settings);
+            Log?.Invoke(LogLevel.Info, $"Learnt the sword cursor (0x{_blossomClickCursor:X}) from the Jaso just targeted - from now on only it counts.");
+        }
+
+        _blossomClickCursor = 0;
+        _blossomSwordClicks = 0;
         _blossomJasoClicks = 0;
         _blossomJasoClickedAt = 0;
         _blossomJasoSeenAt = now;

@@ -350,8 +350,23 @@ public sealed class WindowInput : IGameInput
         MoveAbsolute(sx, sy);
         Thread.Sleep(HoverSettleMs);
         var info = new NativeMethods.CURSORINFO { cbSize = Marshal.SizeOf<NativeMethods.CURSORINFO>() };
-        return NativeMethods.GetCursorInfo(ref info) && (info.flags & NativeMethods.CURSOR_SHOWING) != 0 ? CursorPicture(info.hCursor) : 0;
+        if (!NativeMethods.GetCursorInfo(ref info) || (info.flags & NativeMethods.CURSOR_SHOWING) == 0)
+            return 0;
+
+        // Windows' own arrow or busy cursor is not the game's yet: live (2026-11-01 14:26) the plain arrow showed for a moment
+        // after the game came to the front, and differing from the game's arrow it passed for the sword.
+        if (SystemCursors.Contains(info.hCursor))
+            return 0;
+
+        return CursorPicture(info.hCursor);
     }
+
+    private static readonly HashSet<IntPtr> SystemCursors =
+    [
+        NativeMethods.LoadCursor(IntPtr.Zero, NativeMethods.IDC_ARROW),
+        NativeMethods.LoadCursor(IntPtr.Zero, NativeMethods.IDC_WAIT),
+        NativeMethods.LoadCursor(IntPtr.Zero, NativeMethods.IDC_APPSTARTING),
+    ];
 
     private const int HoverSettleMs = 90;
 

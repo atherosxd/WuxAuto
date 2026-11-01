@@ -1259,6 +1259,67 @@ public class BlossomPilotTests
         Assert.Contains(run.Lines, l => l.Contains("Tilted the camera up", StringComparison.Ordinal));
     }
 
+    // ---- 2026-11-01 14:26: a different cursor picture also showed where no sword was (the plain Windows arrow right after the
+    // game comes to the front; another picture at the character's own spot) - the sword is confirmed by a second read and
+    // learnt from a click that targeted a Jaso.
+
+    private static void DrawFarPartial(Mat frame)
+    {
+        CvInvoke.Rectangle(frame, new System.Drawing.Rectangle(900, 260, 14, 7), new MCvScalar(45, 30, 70, 255), -1);
+        CvInvoke.Rectangle(frame, new System.Drawing.Rectangle(904, 267, 6, 12), new MCvScalar(30, 30, 150, 255), -1);
+    }
+
+    private static bool OnFarPartial(int x, int y) => x is >= 898 and <= 916 && y is >= 258 and <= 281;
+
+    [Fact]
+    public async Task SwordCursor_AOneReadFlicker_IsNotASword()
+    {
+        var (settings, input, ocr) = Harness(() => "15000 , 15000");
+        var reads = new HashSet<(int, int)>();
+        input.Cursor = (x, y) => reads.Add((x, y)) && OnFarPartial(x, y) ? 2 : 1;   // 2 only on the first read at a point
+        using var frame = Blank.Bgra(Height, Width);
+        DrawFarPartial(frame);
+
+        await PilotRun.RunAsync(settings, input, ocr, frame, PilotPhase.BlossomWalk, (_, _) => false, 2500);
+
+        Assert.DoesNotContain(LeftClicks(input), p => OnFarPartial(p.X, p.Y));
+    }
+
+    [Fact]
+    public async Task SwordCursor_AClickThatTargetsAJaso_TeachesTheSwordPicture()
+    {
+        bool targeted = false;
+        var (settings, input, ocr) = Harness(() => "15000 , 15000", target: _ => targeted ? "[S]Jaso Practitioner" : null);
+        input.Cursor = (x, y) => x is >= 596 and <= 634 && y is >= 250 and <= 308 ? 7 : 1;
+        using var frame = Blank.Bgra(Height, Width);
+        DrawJaso(frame, 600, 250);
+
+        var run = await PilotRun.RunAsync(settings, input, ocr, frame, PilotPhase.BlossomWalk,
+            (_, lines) => lines.Any(l => l.Contains("Jaso Practitioner targeted", StringComparison.Ordinal)), 10000,
+            beforeTick: () => targeted = LeftClicks(input).Count > 0);
+
+        string log = string.Join("\n", run.Lines);
+        Assert.Equal(7, settings.Blossom.SwordCursor);
+        Assert.Contains(run.Lines, l => l.Contains("sword cursor", StringComparison.Ordinal) && l.Contains("0x7", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task LearntSword_OnlyThatPictureCounts()
+    {
+        foreach (var (over, clicked) in ((long, bool)[])[(9, false), (7, true)])
+        {
+            var (settings, input, ocr) = Harness(() => "15000 , 15000");
+            settings.Blossom.SwordCursor = 7;
+            input.Cursor = (x, y) => OnFarPartial(x, y) ? over : 1;
+            using var frame = Blank.Bgra(Height, Width);
+            DrawFarPartial(frame);
+
+            await PilotRun.RunAsync(settings, input, ocr, frame, PilotPhase.BlossomWalk, (_, _) => LeftClicks(input).Count > 0, 2500);
+
+            Assert.Equal(clicked, LeftClicks(input).Any(p => OnFarPartial(p.X, p.Y)));
+        }
+    }
+
     [Fact]
     public async Task TheWalkScan_KeepsTheCharacterMoving()
     {

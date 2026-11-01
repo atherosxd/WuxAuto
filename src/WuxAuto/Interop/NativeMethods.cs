@@ -249,6 +249,14 @@ internal static class NativeMethods
         public IntPtr hbmColor;
     }
 
+    /// <summary>A shared system cursor (<paramref name="hInstance"/> zero): <see cref="IDC_ARROW"/>, <see cref="IDC_WAIT"/>, ...</summary>
+    [DllImport("user32.dll")]
+    public static extern IntPtr LoadCursor(IntPtr hInstance, IntPtr lpCursorName);
+
+    public const int IDC_ARROW = 32512;
+    public const int IDC_WAIT = 32514;
+    public const int IDC_APPSTARTING = 32650;
+
     /// <summary>A cursor's bitmaps (copies the caller must delete with <see cref="DeleteObject"/>).</summary>
     [DllImport("user32.dll")]
     [return: MarshalAs(UnmanagedType.Bool)]

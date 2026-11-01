@@ -417,6 +417,12 @@ public sealed class BlossomSettings
     public int CameraTiltPx { get; set; } = 60;
 
     /// <summary>
+    /// The game's sword cursor (the fingerprint <see cref="IGameControls.HoverCursor"/> gives over a monster), learnt from
+    /// a click whose target bar then showed the Jaso; 0 = not learnt yet. Learnt, only this picture counts as the sword.
+    /// </summary>
+    public long SwordCursor { get; set; }
+
+    /// <summary>
     /// Reached within this many units. Live 2026-10-29: the old waypoints 2, 4 and 5 lay just past a railing (stopped 86, 67,
     /// 71 short at 60), so it went to 100 - which let the walk stop 61 north of waypoint 1 and start every next leg off the
     /// user's line (run 5). Now 40, with the walk homing in on the last 300 units, and blocked within 150 counts as reached.

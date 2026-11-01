@@ -179,7 +179,7 @@ words and the map scroll-arrow result. `--crop` writes `<frame>.crop.png` next t
 Core tests and the refactor parity gate (M1, 2026-10-27):
 
 ```powershell
-dotnet test tests\WuxAuto.Core.Tests        # xUnit, platform-free Core only (950 tests, ~4-8 min; the pilot tests tick a
+dotnet test tests\WuxAuto.Core.Tests        # xUnit, platform-free Core only (953 tests, ~4-8 min; the pilot tests tick a
                                            # blank Mat with a scripted OCR scene - see tests/ in section 3)
 # probe baseline: runs every SelfTest probe over a frozen, local-only frame set (never committed)
 # and writes normalised output; run it before and after a refactor and diff the two
@@ -1145,7 +1145,13 @@ teleport in again (LOD's rule); still in town after the teleport = "destination 
   lower), the character's own spot last; the normal cursor at (0.5 w, 0.70 h), then the `JasoHoverCandidates` **4** nearest,
   `JasoProbePoints` (middle at 60 and 35 % down, then 20 % and 80 % across at 60 % - side-on her body is off the figure's
   middle - then 80 % and 15 % down) -> the first point whose cursor differs = the sword -> plain left click there
-  (`WalkTo(forceWalk: false)`); a Trace line gives both fingerprints. **At the character's own spot** (user 13:45: "doesn't
+  (`WalkTo(forceWalk: false)`); a Trace line gives both fingerprints. **Confirmed and learnt** (live 14:26: a third picture
+  `0x129EF5942A0D946D` showed at the character's own spot and far off, neither click targeted; the plain Windows arrow -
+  handle `0x10003` - shows for a moment after the game comes to the front): a sword must read the same twice; Windows' own
+  arrow / busy cursors read as 0 (`WindowInput.SystemCursors`); a click on a sword picture followed by the target bar within
+  `JasoClickWaitMs` teaches it (`Blossom.SwordCursor`, saved to settings.json, Info "Learnt the sword cursor") - learnt,
+  only that picture counts; `JasoMaxMisses` clicks in a row on the learnt picture without a target forget it. **At the
+  character's own spot** (user 13:45: "doesn't
   target the moving monster / or making it's AOE attack. that is near the character and continues to rotate the cam"):
   `ScreenAnalyzer.IsOwnSpot` figures are partial candidates now (never full, never clicked without the sword) - the own-spot
   rule had hidden a Jaso fighting the character.
@@ -1171,7 +1177,7 @@ teleport in again (LOD's rule); still in town after the teleport = "destination 
   first, own spot, a red-brown post, a fan without the skirt, under the UI; candidates: far small, fan only, a flower dot, the
   own spot as partial) and `BlossomPilotTests` (`NoTab_*`, `NoJasoInView_*`, `ScanFindsNothing_*`, `InAFight_*`,
   `SwordCursor_*`, `FarPartialJaso_*`, `AJasoNextToTheCharacter_*`, `SideOnJaso_*`, `AJasoAtTheHorizon_*`,
-  `TheWalkScan_KeepsTheCharacterMoving`).
+  `TheWalkScan_KeepsTheCharacterMoving`, `LearntSword_*`).
   Probe: `--jaso <dir>` (full / partial figures + click points, `<frame>.jaso.png`: green full, yellow partial). **Not seen
   live:** the 7 s wait, a plain click on another player.
 * **Camera tilt** (user, 2026-11-01: "also try to move the screen up instead of facing down", then "also upon teleporting it
