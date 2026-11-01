@@ -820,6 +820,13 @@ public sealed class ScreenAnalyzer : IDisposable
     public static IReadOnlyList<JasoCandidate> FindJasoCandidates(Mat frame, IReadOnlyList<PixelRect> excluded)
         => JasoFigures(frame, excluded, partialToo: true);
 
+    /// <summary>
+    /// Where the character itself stands on screen (centre within 0.13 h sideways and 0.16 h up or down of (0.5 w, 0.5 h)):
+    /// its wings, pet and effects read like a Jaso there.
+    /// </summary>
+    public static bool IsOwnSpot(PixelRect box, int w, int h)
+        => Math.Abs(box.X + box.Width / 2.0 - w / 2.0) < 0.13 * h && Math.Abs(box.Y + box.Height / 2.0 - 0.50 * h) < 0.16 * h;
+
     private static List<JasoCandidate> JasoFigures(Mat frame, IReadOnlyList<PixelRect> excluded, bool partialToo)
     {
         int w = frame.Width, h = frame.Height;
@@ -873,13 +880,15 @@ public sealed class ScreenAnalyzer : IDisposable
             double aspect = bh / (double)Math.Max(1, bw);
             if (aspect < (partialToo ? 0.4 : 1.1) || aspect > (partialToo ? 4.5 : 4.0))
                 continue;
-            double cx = x0 + bw / 2.0, cy = y0 + bh / 2.0;
-            if (Math.Abs(cx - w / 2.0) < 0.13 * h && Math.Abs(cy - 0.50 * h) < 0.16 * h)
-                continue;   // the character's own spot
+            // The character's own spot (its dark wings with red flame edges read like a Jaso): never a full hit; a partial
+            // candidate there (a Jaso fighting the character stands in it) is clicked only on a sword cursor.
+            bool ownSpot = IsOwnSpot(new PixelRect(x0, y0, bw, bh), w, h);
+            if (ownSpot && !partialToo)
+                continue;
             int fanTop = Count(new MCvScalar(160, 50, 35), new MCvScalar(180, 255, 130), x0, y0, bw, (int)(bh * 0.4));
             int orangeLow = Count(new MCvScalar(4, 100, 60), new MCvScalar(14, 255, 255), x0, y0 + (int)(bh * 0.35), bw, bh - (int)(bh * 0.35));
             bool fan = fanTop >= 0.03 * bh * bh, skirt = orangeLow >= 0.015 * bh * bh;
-            bool full = fan && skirt && bh >= 0.03 * h && aspect is >= 1.1 and <= 4.0;
+            bool full = fan && skirt && bh >= 0.03 * h && aspect is >= 1.1 and <= 4.0 && !ownSpot;
             if (full || (partialToo && fan))
                 hits.Add(new JasoCandidate(new PixelRect(x0, y0, bw, bh), full));
         }

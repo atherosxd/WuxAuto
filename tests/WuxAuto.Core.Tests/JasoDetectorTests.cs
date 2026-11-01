@@ -166,12 +166,26 @@ public class JasoDetectorTests
     }
 
     [Fact]
-    public void Candidates_LeaveOutTheOwnSpotAndTheUi()
+    public void Candidates_LeaveOutTheUi()
     {
         using var f = Field();
-        DrawJaso(f, W / 2 - 15, H / 2 - 20);
-        DrawJaso(f, 100, 300);
+        DrawJaso(f, 100, 300);   // the combat log on the left
 
         Assert.Empty(Candidates(f));
+    }
+
+    [Fact]
+    public void AJasoAtTheCharactersSpot_IsAPartialCandidate_NeverAFullHit()
+    {
+        // User, 2026-11-01 13:45: "doesn't target the moving monster / or making it's AOE attack. that is near the character
+        // and continues to rotate the cam" - the own-spot rule (the character's wings read like a Jaso) hid her. As a partial
+        // candidate she is clicked only where the cursor turns into a sword - never the character's own wings.
+        using var f = Field();
+        DrawJaso(f, W / 2 - 15, H / 2 - 20);
+
+        Assert.Empty(Find(f));
+        var c = Assert.Single(Candidates(f));
+        Assert.False(c.Full);
+        Assert.True(ScreenAnalyzer.IsOwnSpot(c.Box, W, H));
     }
 }

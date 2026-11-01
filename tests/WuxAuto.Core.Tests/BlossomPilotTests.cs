@@ -1260,6 +1260,85 @@ public class BlossomPilotTests
     }
 
     [Fact]
+    public async Task TheWalkScan_KeepsTheCharacterMoving()
+    {
+        // User, 2026-11-01: "as the AFK Checker is fast" - a scan stood still ~3 s at a time. Now a walk click straight ahead
+        // after every camera step.
+        var (settings, input, ocr) = Harness(() => "15000 , 15000");
+        settings.Blossom.ScanEveryMs = 1000;
+        settings.Blossom.ScanTaps = 4;
+
+        var run = await RunAsync(settings, input, ocr, PilotPhase.BlossomWalk,
+            (_, lines) => lines.Any(l => l.Contains("no Jaso", StringComparison.Ordinal)), 12000);
+
+        string log = string.Join("\n", run.Lines) + "\n" + string.Join("\n", input.Calls);
+        int first = input.Calls.IndexOf("KeyDown D"), last = input.Calls.LastIndexOf("KeyDown D");
+        Assert.True(first >= 0, log);
+        int clicksDuringScan = input.Calls.Skip(first).Take(last - first + 1).Count(c => c.StartsWith("Click ", StringComparison.Ordinal));
+        Assert.True(clicksDuringScan >= 3, log);   // one after each of the first three steps at least
+    }
+
+    [Fact]
+    public async Task AJasoNextToTheCharacter_IsClickedWhereTheSwordShows()
+    {
+        // User, 2026-11-01 13:45: the Jaso fighting the character (moving, or in her AOE attack) stood in the character's own
+        // spot, which the search left out - the pilot scanned on instead.
+        var (settings, input, ocr) = Harness(() => "15000 , 15000");
+        int jx = Width / 2 - 15, jy = Height / 2 - 20;
+        input.Cursor = (x, y) => x >= jx && x <= jx + 30 && y >= jy + 15 && y <= jy + 55 ? 2 : 1;   // her body
+        using var frame = Blank.Bgra(Height, Width);
+        DrawJaso(frame, jx, jy);
+
+        var run = await PilotRun.RunAsync(settings, input, ocr, frame, PilotPhase.BlossomWalk,
+            (_, _) => LeftClicks(input).Count > 0, 10000);
+
+        string log = string.Join("\n", run.Lines) + "\n" + string.Join("\n", input.Calls);
+        var (cx, cy) = LeftClicks(input)[0];
+        Assert.True(cx >= jx && cx <= jx + 30 && cy >= jy + 15 && cy <= jy + 55, log);
+    }
+
+    [Fact]
+    public async Task SideOnJaso_TheSwordBesideTheMiddle_IsFound()
+    {
+        // User, 2026-11-01 13:45: "it tried to click the monster but on the side not directly on it". Seen side-on the fan
+        // sticks out to one side and her body is off the figure's middle: points left and right of it are tried as well.
+        var (settings, input, ocr) = Harness(() => "15000 , 15000");
+        input.Cursor = (x, y) => x is >= 600 and <= 606 ? 2 : 1;   // only the left edge of the drawn figure
+        using var frame = Blank.Bgra(Height, Width);
+        DrawJaso(frame, 600, 250);
+
+        var run = await PilotRun.RunAsync(settings, input, ocr, frame, PilotPhase.BlossomWalk,
+            (_, _) => LeftClicks(input).Count > 0, 10000);
+
+        string log = string.Join("\n", run.Lines) + "\n" + string.Join("\n", input.Calls);
+        var (cx, _) = LeftClicks(input)[0];
+        Assert.True(cx is >= 600 and <= 606, log);
+        Assert.Contains(run.Lines, l => l.Contains("sword", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task AJasoAtTheHorizon_IsNotClicked_OneInRangeIs()
+    {
+        // Live 2026-11-01 13:37-13:38 (0.25.3): three clicks on a Jaso at 1106,233 (0.20 h) with the sword cursor over her -
+        // she stayed put, nothing was targeted; every click that targeted one that day was 0.23 h or lower. The game ignores
+        // clicks on a monster that far: figures above JasoMinClickY are left for the walk to bring closer.
+        var (settings, input, ocr) = Harness(() => "15000 , 15000");
+        input.Cursor = (x, y) => (x is >= 596 and <= 634 && y is >= 150 and <= 210) || (x is >= 996 and <= 1034 && y is >= 300 and <= 360) ? 2 : 1;
+        using var frame = Blank.Bgra(Height, Width);
+        DrawJaso(frame, 600, 150);    // at the horizon: 150-205 of 900, centre 0.20 h
+        DrawJaso(frame, 1000, 300);   // in range
+
+        var run = await PilotRun.RunAsync(settings, input, ocr, frame, PilotPhase.BlossomWalk,
+            (_, _) => LeftClicks(input).Count > 0, 10000);
+
+        string log = string.Join("\n", run.Lines) + "\n" + string.Join("\n", input.Calls);
+        var (cx, cy) = LeftClicks(input)[0];
+        Assert.True(cx is >= 996 and <= 1034 && cy is >= 300 and <= 360, log);       // the one in range
+        Assert.DoesNotContain(input.Calls, c => c.StartsWith("Hover ", StringComparison.Ordinal)
+                                                 && c["Hover ".Length..].Split(',').Select(int.Parse).ToArray() is [>= 596 and <= 634, < 210]);
+    }
+
+    [Fact]
     public async Task AfterAClickOnAJaso_TheWalkWaitsForTheTargetBar_NoWalkClickNoScan()
     {
         // Live 2026-11-01 12:27-12:36: a click from afar works - the character runs to her and the target bar shows 3-6 s

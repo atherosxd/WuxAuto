@@ -44,7 +44,8 @@ public sealed partial class AutomationPilot
     private const int JasoClickWaitMs = 7000;
     private const int JasoMaxMisses = 3;             // clicks on Jasos that target nothing before they are left alone ...
     private const int JasoIgnoreMs = 5000;           // ... this long
-    private const int JasoHoverCandidates = 3;       // figures the pointer goes over per look (each ~0.4 s)
+    private const int JasoHoverCandidates = 4;       // figures the pointer goes over per look (each up to ~0.6 s)
+    private const double JasoMinClickY = 0.21;       // figures centred higher up (at the horizon) are too far to click
     private const int JasoHoverPauseMs = 2000;       // no sword over any: no hovering for this long
     private const int BlossomScanSettleMs = 300;     // after a camera step, before looking
     private const int BlossomTiltDragMs = 300;       // one camera tilt drag ...
@@ -97,6 +98,7 @@ public sealed partial class AutomationPilot
     private long _blossomJasoSeenAt;             // a Jaso was last seen (or a fight ended): the walk scans ScanEveryMs after
     private int _blossomScanTapsLeft = -1;       // walk scan: camera steps still to go, -1 = not scanning
     private int _blossomScanTurned;
+    private long _blossomScanStepAt;             // walk scan: the next camera step (the walk goes on in between)
     private long _blossomScanEndedAt;
     private long _blossomFightScanAt;            // fight: the last camera step looking for the next Jaso
     private long _blossomFightLookAt;
@@ -384,13 +386,15 @@ public sealed partial class AutomationPilot
     internal static (int X, int Y) JasoClickPoint(PixelRect jaso) => (jaso.CenterX, jaso.Y + (int)(jaso.Height * 0.6));
 
     /// <summary>
-    /// Where the pointer goes over a Jaso candidate to see whether the cursor turns into a sword: down the middle of the
-    /// figure, the body first (60 %, then 35 %, 80 % and the fan at 15 %).
+    /// Where the pointer goes over a Jaso candidate to see whether the cursor turns into a sword: the body first (the middle
+    /// at 60 % and 35 % down), then left and right of the middle (seen side-on her fan sticks out to one side and her body
+    /// is off the figure's middle - user, 2026-11-01: "it tried to click the monster but on the side"), then 80 % and the
+    /// fan at 15 %.
     /// </summary>
     internal static IEnumerable<(int X, int Y)> JasoProbePoints(PixelRect box)
     {
-        foreach (double f in (double[])[0.6, 0.35, 0.8, 0.15])
-            yield return (box.CenterX, box.Y + (int)(box.Height * f));
+        foreach (var (fx, fy) in ((double, double)[])[(0.5, 0.6), (0.5, 0.35), (0.2, 0.6), (0.8, 0.6), (0.5, 0.8), (0.5, 0.15)])
+            yield return (box.X + (int)(box.Width * fx), box.Y + (int)(box.Height * fy));
     }
 
     /// <summary>
@@ -409,7 +413,13 @@ public sealed partial class AutomationPilot
         if (!_settings.Blossom.ClickToTarget || now < _blossomJasoIgnoreUntil || now < _blossomHoverPauseUntil)
             return false;
 
-        var candidates = ScreenAnalyzer.FindJasoCandidates(frame, WarWalkBands(frame.Width, frame.Height));
+        // Not the ones at the horizon: the game ignores a click on a monster that far (live 13:37, three clicks with the sword
+        // on one at 0.20 h, she stayed put; every click that targeted one was 0.23 h or lower) - the walk brings them closer.
+        // Figures at the character's own spot last: mostly its own wings - but a Jaso fighting it stands there too.
+        var candidates = ScreenAnalyzer.FindJasoCandidates(frame, WarWalkBands(frame.Width, frame.Height))
+            .Where(c => c.Box.CenterY >= frame.Height * JasoMinClickY)
+            .OrderBy(c => ScreenAnalyzer.IsOwnSpot(c.Box, frame.Width, frame.Height) ? 1 : 0)
+            .ToList();
         if (candidates.Count == 0)
             return false;
 
@@ -434,7 +444,10 @@ public sealed partial class AutomationPilot
                 {
                     long cursor = _controls.HoverCursor(p.X, p.Y);
                     if (cursor != 0 && cursor != normal)
+                    {
+                        Log?.Invoke(LogLevel.Trace, $"Cursor over the ground 0x{normal:X}, over {p.X},{p.Y} 0x{cursor:X}.");
                         return ClickJaso(c, p, $"({why}{(c.Full ? "" : ", far or partly seen")}) - the cursor turned into a sword there");
+                    }
                 }
             }
         }
@@ -718,37 +731,37 @@ public sealed partial class AutomationPilot
         {
             _blossomScanTapsLeft = b.ScanTaps;
             _blossomScanTurned = 0;
+            _blossomScanStepAt = now;
             Log?.Invoke(LogLevel.Info, $"No Jaso seen for {(now - Math.Max(_blossomJasoSeenAt, _blossomScanEndedAt)) / 1000.0:0.#}s - Scanning: " +
                                        $"turning the camera ('{_settings.Input.RotateKey}' x{b.ScanTaps}) and looking after each step.");
         }
 
         if (_blossomScanTapsLeft >= 0)
         {
-            if (TryClickJaso(frame, now, "scanning"))
+            // One camera step every ScanTapMs + BlossomScanSettleMs, and the walk below goes on in between (user, 2026-11-01:
+            // "always try to move to the waypoint while tracking" / "the AFK Checker is fast" - the scan stood still ~3 s).
+            if (now >= _blossomScanStepAt)
             {
-                EndBlossomScan(found: true, now);
-                _waitUntil = now + 200;
-                return;
-            }
-
-            if (_blossomScanTapsLeft == 0)
-            {
-                EndBlossomScan(found: false, now);
-            }
-            else
-            {
-                if (!_controls.Turn(TurnDirection.Right, b.ScanTapMs))
+                if (TryClickJaso(frame, now, "scanning"))
                 {
-                    _waitUntil = now + 300;
+                    EndBlossomScan(found: true, now);
+                    _waitUntil = now + 200;
                     return;
                 }
 
-                _blossomScanTapsLeft--;
-                _blossomScanTurned++;
-                _detail = $"scanning for a Jaso (step {_blossomScanTurned} of {b.ScanTaps})";
-                _waitUntil = now + BlossomScanSettleMs;
-                return;
+                if (_blossomScanTapsLeft == 0)
+                {
+                    EndBlossomScan(found: false, now);
+                }
+                else if (_controls.Turn(TurnDirection.Right, b.ScanTapMs))
+                {
+                    _blossomScanTapsLeft--;
+                    _blossomScanTurned++;
+                    _blossomScanStepAt = Environment.TickCount64 + BlossomScanSettleMs;
+                }
             }
+
+            _detail = $"scanning for a Jaso on the walk (step {_blossomScanTurned} of {b.ScanTaps})";
         }
 
         // A rebuff waits for a loot or a waypoint pause; 30 s past due it goes out on the walk.

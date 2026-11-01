@@ -179,7 +179,7 @@ words and the map scroll-arrow result. `--crop` writes `<frame>.crop.png` next t
 Core tests and the refactor parity gate (M1, 2026-10-27):
 
 ```powershell
-dotnet test tests\WuxAuto.Core.Tests        # xUnit, platform-free Core only (944 tests, ~4-8 min; the pilot tests tick a
+dotnet test tests\WuxAuto.Core.Tests        # xUnit, platform-free Core only (949 tests, ~4-8 min; the pilot tests tick a
                                            # blank Mat with a scripted OCR scene - see tests/ in section 3)
 # probe baseline: runs every SelfTest probe over a frozen, local-only frame set (never committed)
 # and writes normalised output; run it before and after a refactor and diff the two
@@ -1136,10 +1136,19 @@ teleport in again (LOD's rule); still in town after the teleport = "destination 
   with the **fan required** (orange alone matched 20-40 flowers / soil patches a frame on the saved Blossom frames; with the
   fan 0-3, among them far Jasos 16x30 and the pet). **Sword cursor** (user: "when clicking jaso, the cursor will change into
   a sword"): `IGameInput.CursorAt` / `IGameControls.HoverCursor` (desktop `WindowInput.CursorAt`: pointer to the point, 2 px
-  wiggle, 90 ms, `GetCursorInfo` handle; 0 = cannot tell - phone, dry run, game behind). Live check 2026-11-01 in Piercing
-  City: the game's own arrow `0x4970599` over the ground, the HUD and an NPC (no sword: not attackable). `TryClickJaso`:
-  the normal cursor at (0.5 w, 0.70 h), then the `JasoHoverCandidates` 3 nearest, `JasoProbePoints` (centre x at 60, 35,
-  80, 15 % down) -> the first point whose cursor differs = the sword -> plain left click there (`WalkTo(forceWalk: false)`).
+  wiggle, 90 ms, `GetCursorInfo`, then **a fingerprint of the cursor's picture** - FNV-1a over `GetIconInfo`'s colour + mask
+  bitmaps and the hot spot; 0 = cannot tell - phone, dry run, game behind). The handle alone failed live: the game's arrow
+  came back under `0x4970599`, `0x14D4184F` and `0x76F1529`, an arrow under a new handle read as the sword and the pilot
+  clicked beside the Jaso (user 13:45: "it tried to click the monster but on the side not directly on it"; three "sword"
+  clicks on one spot that never moved). `TryClickJaso`: candidates centred below `JasoMinClickY` **0.21 h** only (the game
+  ignores a click on one at the horizon: 13:37, three clicks on one at 0.20 h; every click that targeted one was 0.23 h or
+  lower), the character's own spot last; the normal cursor at (0.5 w, 0.70 h), then the `JasoHoverCandidates` **4** nearest,
+  `JasoProbePoints` (middle at 60 and 35 % down, then 20 % and 80 % across at 60 % - side-on her body is off the figure's
+  middle - then 80 % and 15 % down) -> the first point whose cursor differs = the sword -> plain left click there
+  (`WalkTo(forceWalk: false)`); a Trace line gives both fingerprints. **At the character's own spot** (user 13:45: "doesn't
+  target the moving monster / or making it's AOE attack. that is near the character and continues to rotate the cam"):
+  `ScreenAnalyzer.IsOwnSpot` figures are partial candidates now (never full, never clicked without the sword) - the own-spot
+  rule had hidden a Jaso fighting the character.
   No sword: a full figure is clicked at `JasoClickPoint` (centre, 60 % down) anyway (the v0.25.0 floor), a partial one never;
   look-alikes only -> no hovering for `JasoHoverPauseMs` 2 s. After a click `JasoClickWaitMs` **7000** with no walk clicks and
   no scans while the character runs to her (the usual target read starts the fight); `JasoMaxMisses` 3 clicks without a
@@ -1148,16 +1157,21 @@ teleport in again (LOD's rule); still in town after the teleport = "destination 
   nothing, one at y 618 did; 3 kills. Live 0.25.1 test (12:23-12:36): the sword shows over far Jasos (y 160-430), 6 kills,
   each targeted **3-6 s after the click** (the character runs there first) - the 1.5 s wait then let the walk click on and
   the 4 s scan turn the camera away, which made most far clicks "nothing targeted"; hence the 7 s. The normal cursor's handle
-  changes over time (`0x4970599`, `0x14D4184F`, `0x76F1529` seen), so it is read again on every look. **Walk scan** ("also add when running, to rotate the camera to
-  scan for the mob"): no Jaso seen for `ScanEveryMs` **4000** (0 = off) -> stand, `ScanTaps` **6** taps of `D` `ScanTapMs`
-  **250**, a look 300 ms after each; a Jaso -> click, scan over; none -> "Scanned N step(s) - no Jaso in view". **Fight scan**
+  changes over time, hence the picture fingerprint. **Walk scan** ("also add when running, to rotate the camera to scan for
+  the mob"): no Jaso seen for `ScanEveryMs` **4000** (0 = off) -> `ScanTaps` **6** taps of `D` `ScanTapMs` **250**, one every
+  ~0.55 s (`_blossomScanStepAt`), a look before each; **the walk goes on in between** (user 13:50: "always try to move to the
+  waypoint while tracking", "the AFK Checker is fast" - the scan used to stand still ~3 s; the heading drifts while the camera
+  turns and the walk's own correction / re-learn takes it back); a Jaso -> click, scan over; none -> "Scanned N step(s) - no
+  Jaso in view". **Fight scan**
   ("do the rotate also even when attacking the current mob, and set that as a second subject"): every `FightScanEveryMs`
   **3000** (0 = off) one `D` tap and a look 300 ms later until a Jaso is in view (the one fought is at the feet, left out) ->
   remembered ("The next Jaso is in view ..."); at the kill (`LootWhileFighting`) the frame is searched again and the nearest
   clicked at once, the rebuff then waits for the next pause. Every camera turn (scan, fight scan) -> `ForgetBlossomHeading`:
   the next walk step clicks straight up and learns the heading. Pinned by `JasoDetectorTests` (drawn Jasos: found, nearest
-  first, own spot, a red-brown post, a fan without the skirt, under the UI; candidates: far small, fan only, a flower dot) and
-  `BlossomPilotTests` (`NoTab_*`, `NoJasoInView_*`, `ScanFindsNothing_*`, `InAFight_*`, `SwordCursor_*`, `FarPartialJaso_*`).
+  first, own spot, a red-brown post, a fan without the skirt, under the UI; candidates: far small, fan only, a flower dot, the
+  own spot as partial) and `BlossomPilotTests` (`NoTab_*`, `NoJasoInView_*`, `ScanFindsNothing_*`, `InAFight_*`,
+  `SwordCursor_*`, `FarPartialJaso_*`, `AJasoNextToTheCharacter_*`, `SideOnJaso_*`, `AJasoAtTheHorizon_*`,
+  `TheWalkScan_KeepsTheCharacterMoving`).
   Probe: `--jaso <dir>` (full / partial figures + click points, `<frame>.jaso.png`: green full, yellow partial). **Not seen
   live:** the 7 s wait, a plain click on another player.
 * **Camera tilt** (user, 2026-11-01: "also try to move the screen up instead of facing down", then "also upon teleporting it

@@ -329,9 +329,11 @@ public sealed class WindowInput : IGameInput
     }
 
     /// <summary>
-    /// The pointer over the point (no click), then the Windows cursor the game shows there: its own arrow over the ground,
-    /// another one - the sword - over a monster (user, 2026-11-01; the game's arrow read as one fixed handle over the
-    /// ground, the HUD and an NPC). 0 when it cannot tell: not bound, a dry run, background input, the game behind.
+    /// The pointer over the point (no click), then the cursor the game shows there: its own arrow over the ground, another
+    /// one - the sword - over a monster (user, 2026-11-01). Returned as a fingerprint of the cursor's picture, not its
+    /// handle: live the game's arrow came back under three handles (0x4970599, 0x14D4184F, 0x76F1529), and an arrow under a
+    /// new handle read as the sword - clicks beside the Jaso ("it tried to click the monster but on the side"). 0 when it
+    /// cannot tell: not bound, a dry run, background input, the game behind.
     /// </summary>
     public long CursorAt(int clientX, int clientY)
     {
@@ -348,10 +350,52 @@ public sealed class WindowInput : IGameInput
         MoveAbsolute(sx, sy);
         Thread.Sleep(HoverSettleMs);
         var info = new NativeMethods.CURSORINFO { cbSize = Marshal.SizeOf<NativeMethods.CURSORINFO>() };
-        return NativeMethods.GetCursorInfo(ref info) && (info.flags & NativeMethods.CURSOR_SHOWING) != 0 ? info.hCursor.ToInt64() : 0;
+        return NativeMethods.GetCursorInfo(ref info) && (info.flags & NativeMethods.CURSOR_SHOWING) != 0 ? CursorPicture(info.hCursor) : 0;
     }
 
     private const int HoverSettleMs = 90;
+
+    /// <summary>
+    /// A fingerprint (FNV-1a) of the cursor's colour and mask bitmaps and its hot spot: the same picture gives the same
+    /// number whatever handle it comes under. The handle itself when the bitmaps cannot be read.
+    /// </summary>
+    private static long CursorPicture(IntPtr cursor)
+    {
+        if (cursor == IntPtr.Zero)
+            return 0;
+        if (!NativeMethods.GetIconInfo(cursor, out var icon))
+            return cursor.ToInt64();
+
+        try
+        {
+            ulong hash = 14695981039346656037UL;
+            hash = Mix(hash, icon.hbmColor);
+            hash = Mix(hash, icon.hbmMask);
+            hash = (hash ^ (ulong)(icon.xHotspot * 65536 + icon.yHotspot)) * 1099511628211UL;
+            return hash == 0 ? 1 : unchecked((long)hash);
+        }
+        finally
+        {
+            if (icon.hbmColor != IntPtr.Zero)
+                NativeMethods.DeleteObject(icon.hbmColor);
+            if (icon.hbmMask != IntPtr.Zero)
+                NativeMethods.DeleteObject(icon.hbmMask);
+        }
+
+        static ulong Mix(ulong hash, IntPtr bitmap)
+        {
+            if (bitmap == IntPtr.Zero || NativeMethods.GetObject(bitmap, Marshal.SizeOf<NativeMethods.BITMAP>(), out var bm) == 0)
+                return hash;
+            int size = bm.bmWidthBytes * bm.bmHeight;
+            if (size <= 0 || size > 1 << 20)
+                return hash;
+            var bytes = new byte[size];
+            int read = NativeMethods.GetBitmapBits(bitmap, size, bytes);
+            for (int i = 0; i < read; i++)
+                hash = (hash ^ bytes[i]) * 1099511628211UL;
+            return hash;
+        }
+    }
 
     private bool TryPrepare(string action)
     {
