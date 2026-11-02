@@ -650,6 +650,16 @@ public static class WarText
     }
 
     /// <summary>
+    /// The "Smart Farm" box's label in the autohunt settings (right under Regular War; user, 2026-11-02). Short lines only:
+    /// the combat log's "Auto hunt stopped; Smart Farm journey cancelled." names it too.
+    /// </summary>
+    public static bool IsSmartFarmLine(string line)
+    {
+        string n = TextMatcher.Normalize(line);
+        return n.Length <= 13 && (n.StartsWith("smartf", StringComparison.Ordinal) || TextMatcher.Levenshtein(n, "smartfarm") <= 2);
+    }
+
+    /// <summary>
     /// The lines of <paramref name="after"/> not used up by a line of <paramref name="before"/>, in
     /// <paramref name="after"/>'s order. Each line of <paramref name="before"/> is used up once: first by an equal line,
     /// then - for the lines left on both sides - by one at most one letter off (Levenshtein), so an old log line that

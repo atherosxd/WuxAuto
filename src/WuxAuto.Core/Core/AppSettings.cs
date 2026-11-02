@@ -870,10 +870,12 @@ public sealed class SequenceSettings
     public string AutohuntSettingsKey { get; set; } = "S";
 
     /// <summary>
-    /// Auto Laby, in town before the first teleport of a Start (user, 2026-10-29: with "Regular War" ticked the autohunt
-    /// may teleport the character to the war while it attacks a boss): <see cref="AutohuntSettingsKey"/> opens the
-    /// autohunt settings, a ticked "Regular War" box is clicked until it reads empty (at most 2 clicks), the key closes
-    /// the window. Unreadable -> a warning and the run carries on. Check box "Regular War off before Laby".
+    /// In town, once per Start, before the autohunt check, every mode (user, 2026-10-29: with "Regular War" ticked the
+    /// autohunt may teleport the character to the war while it attacks a boss; 2026-11-02: "Smart Farm" too - with it on,
+    /// 'J' in town starts a journey back to a hunting ground): <see cref="AutohuntSettingsKey"/> opens the autohunt
+    /// settings, each ticked box is clicked until it reads empty (at most 2 clicks, 2.5 s apart), the key closes the
+    /// window. Unreadable -> a warning and the run carries on. Check box "Regular War + Smart Farm off in town" (the name
+    /// stays for saved settings).
     /// </summary>
     public bool RegularWarOffForLaby { get; set; } = true;
 

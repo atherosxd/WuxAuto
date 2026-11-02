@@ -254,14 +254,18 @@ public sealed partial class AutomationPilot
         _blossomLastOffset = null;
         _blossomTurnTold = false;
         _blossomCameraTilted = false;   // arrived (teleport or death): the camera looks down again
-        _blossomFirstAsideLeft = true;  // and the first look aside goes left (the wall is on the right)
         Log?.Invoke(LogLevel.Info, $"Turning ('{_settings.Input.RotateKey}' held {Math.Max(_settings.Blossom.TurnTapMs, BlossomPillarStepMs)} ms a step) until the two pillars are centred.");
         Advance(PilotPhase.BlossomTurn, 400);
     }
 
-    /// <summary>After the turn: the walk starts at the nearest waypoint, with the heading learnt from its first step.</summary>
+    /// <summary>
+    /// After the pillar turn (its only caller): the walk starts at the nearest waypoint, with the heading learnt from its
+    /// first step, and its first look aside goes left (user, 2026-11-02: "after the pillar it tries to turn right again" -
+    /// the wall is on the right at the arrival).
+    /// </summary>
     private void StartBlossomWalk()
     {
+        _blossomFirstAsideLeft = true;
         _blossomHeadingKnown = false;
         _blossomWaypoint = -1;
         ResumeBlossomWalk();
