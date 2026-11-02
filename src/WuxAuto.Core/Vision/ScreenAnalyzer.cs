@@ -899,13 +899,18 @@ public sealed class ScreenAnalyzer : IDisposable
     }
 
     /// <summary>
-    /// The character's own body column (centre within 0.035 h sideways and 0.08 h up or down of (0.5 w, 0.5 h)): a Jaso
-    /// cannot stand there, beside it she can (user, 2026-11-01: "it doesn't detect the Jaso just beside the character" -
-    /// this was 0.13 h by 0.16 h, which hid her). The character's wings spread wider; they are told apart by their navy.
-    /// The fallback when <see cref="FindOwnCharacter"/> finds no HP bar.
+    /// The character's own body column when <see cref="FindOwnCharacter"/> finds no HP bar: centre within 0.05 h sideways of
+    /// the middle, from 0.42 h down to 0.95 h. A Jaso cannot stand there, beside it she can (user, 2026-11-01: "it doesn't
+    /// detect the Jaso just beside the character" - this was 0.13 h by 0.16 h, which hid her). It reaches down the screen
+    /// because without a bar the camera is often pulled in and the character drawn big and low (live 2026-11-02 04:01,
+    /// 0.25.17: in the reeds its gear 0.04 h aside, 0.65 h down was clicked; until then the column was 0.035 h x 0.42-0.58 h).
+    /// The character's wings spread wider; they are told apart by their navy.
     /// </summary>
     public static bool IsOwnSpot(PixelRect box, int w, int h)
-        => Math.Abs(box.X + box.Width / 2.0 - w / 2.0) < 0.035 * h && Math.Abs(box.Y + box.Height / 2.0 - 0.50 * h) < 0.08 * h;
+    {
+        double cy = box.Y + box.Height / 2.0;
+        return Math.Abs(box.X + box.Width / 2.0 - w / 2.0) < 0.05 * h && cy >= 0.42 * h && cy <= 0.95 * h;
+    }
 
     /// <summary>
     /// Every red figure 2 % of the height or taller that <see cref="FindJasoCandidates"/> looks at, with its size, shape and
@@ -995,6 +1000,10 @@ public sealed class ScreenAnalyzer : IDisposable
             if ((bh < (partialToo ? 0.015 : 0.03) * h || bh > 0.25 * h) && Reject("too small or too tall"))
                 continue;
             if ((aspect < (partialToo ? 0.4 : 0.8) || aspect > (partialToo ? 4.5 : 4.0)) && Reject("shape"))
+                continue;
+            // Cut off by the left, right or bottom edge of the screen: what is off the screen could be anything, and a click
+            // at the edge is not on her (live 2026-11-02 04:01, 0.25.17: a figure cut by the left edge was clicked at 6,283).
+            if ((box.X <= 0 || box.Right >= sw || box.Bottom >= sh) && Reject("cut off by the screen edge"))
                 continue;
             // The character's own spot (its dark wings with red flame edges read like a Jaso): never a full hit; a partial
             // candidate there (a Jaso fighting the character stands in it) is clicked only on a sword cursor.

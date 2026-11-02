@@ -292,8 +292,10 @@ screen's panels (the combat log on the left is not one of them: there it is open
 found). Attacking or turned away (her fan glows green), her red dress alone is enough on a standing figure; the
 pilot tells it apart from wooden pillars, reeds and tulips by its redder colour, and from your own wings by their navy. A
 Jaso right beside your character is found too; your own character is told apart by its HP bar (red over blue, under its
-feet), so it is never clicked even when the camera is pulled in close and it is drawn big. Next to the character a Jaso is
-about as tall as it, so a small red figure there - its pet, a flower - is left alone. The click goes on her dress (her
+feet), so it is never clicked even when the camera is pulled in close and it is drawn big; with the bar out of sight, the
+middle of the screen down to the bottom counts as your character. Next to the character a Jaso is about as tall as it, so
+a small red figure there - its pet, a flower - is left alone, and a figure cut off by the edge of the screen is never
+clicked. The click goes on her dress (her
 body), not the middle of her outline. It looks for her on about every captured frame, so a Jaso that comes into view
 is clicked within about a tenth of a second.
 After the click it waits up to 7 s, without walking on or turning the camera, while the character runs to her (from afar

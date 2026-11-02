@@ -327,4 +327,33 @@ public class JasoDetectorTests
         Assert.False(c.Full);
         Assert.True(ScreenAnalyzer.IsOwnSpot(c.Box, W, H));
     }
+
+    [Fact]
+    public void AFigureCutOffByTheScreenEdge_IsNoCandidate()
+    {
+        // Live 2026-11-02 04:01 (0.25.17): a small red figure cut off by the left edge of the screen was clicked at 6,283 -
+        // nothing targeted. Half of her is not on the screen, so nothing says what she is, and a click there is not on her.
+        using var f = Field();
+        DrawJaso(f, -10, 400);       // her left half off the screen
+        DrawJaso(f, W - 20, 600);    // her right half off the screen
+
+        using var bgra = new Mat();
+        CvInvoke.CvtColor(f, bgra, ColorConversion.Bgr2Bgra);
+        Assert.Empty(ScreenAnalyzer.FindJasoCandidates(bgra, []));
+    }
+
+    [Fact]
+    public void NoHpBar_CameraClose_AFigureUnderTheMiddle_IsTheCharactersOwn_OneBesideIsAJaso()
+    {
+        // Live 2026-11-02 04:01 (0.25.17): in the reeds the camera pulled in, the character filled the screen with its HP bar
+        // out of sight, and its own gear below the middle (centre 0.04 h aside, 0.65 h down) was clicked as a Jaso.
+        using var f = Field();
+        int y = (int)(0.65 * H) - 27;
+        DrawJaso(f, W / 2 - 15 + (int)(0.04 * H), y);   // the character's gear, under the middle
+        DrawJaso(f, W / 2 - 15 + (int)(0.15 * H), y);   // a Jaso beside it
+
+        var hit = Assert.Single(Find(f));
+        Assert.InRange(hit.CenterX, W / 2 + (int)(0.15 * H) - 10, W / 2 + (int)(0.15 * H) + 25);
+        Assert.Contains(Candidates(f), c => !c.Full && c.AtOwnSpot);
+    }
 }

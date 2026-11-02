@@ -179,7 +179,7 @@ words and the map scroll-arrow result. `--crop` writes `<frame>.crop.png` next t
 Core tests and the refactor parity gate (M1, 2026-10-27):
 
 ```powershell
-dotnet test tests\WuxAuto.Core.Tests        # xUnit, platform-free Core only (981 tests, ~4-8 min; the pilot tests tick a
+dotnet test tests\WuxAuto.Core.Tests        # xUnit, platform-free Core only (983 tests, ~4-8 min; the pilot tests tick a
                                            # blank Mat with a scripted OCR scene - see tests/ in section 3)
 # probe baseline: runs every SelfTest probe over a frozen, local-only frame set (never committed)
 # and writes normalised output; run it before and after a refactor and diff the two
@@ -1148,7 +1148,9 @@ teleport in again (LOD's rule); still in town after the teleport = "destination 
   until 2026-11-02: F11 03:16:57 a Jaso beside the character with the river behind her read 0.20 (the water at her sides; 0.07
   in her middle third) and was dropped as "wings"; the user's character shows no wings at present. **Own spot** shrunk to the body column (|dx| < 0.035 h,
   |cy - 0.5 h| < 0.08 h; was 0.13 h x 0.16 h and hid a Jaso fighting the character - user: "it doesn't detect the Jaso just
-  beside the character"). **The character from its HP bar** (live 16:23, 0.25.8: near trees the game pulls the camera in and
+  beside the character"); since 2026-11-02 |dx| < 0.05 h, cy 0.42-0.95 h (live 04:01, 0.25.17: in the reeds the camera
+  pulled in with the HP bar out of sight and the character's gear 0.04 h aside, 0.65 h down was clicked). **Cut off by the
+  left, right or bottom screen edge** = no candidate (same run: a figure cut by the left edge clicked at 6,283). **The character from its HP bar** (live 16:23, 0.25.8: near trees the game pulls the camera in and
   the character is drawn big and low, its bar at 0.75 h instead of 0.56 h - its red mask and legs were clicked as Jasos):
   `ScreenAnalyzer.FindOwnCharacter` looks in x w/2 ± 0.08 h, y 0.35-0.95 h for a red run (H 0-10 / 170-180, S >= 140,
   V >= 110, >= 0.012 h long, left edge 0.02-0.08 h left of the centre line) with a blue run (H 95-130) starting within 3 px of
