@@ -134,6 +134,41 @@ public class SettingsMigrationTests : AppPathsScope
     }
 
     [Fact]
+    public void V27_TheWalkScanStartsAfter1500ms_ASetValueStays()
+    {
+        // User, 2026-11-01: "can it not scan fast while running" - the scan no longer stops the walk, so it starts after
+        // 1.5 s without a Jaso instead of 4 s.
+        // v28 then moves that 1500 on to 6000, and v29 6000 on to 10000 (below).
+        Assert.Equal(10000, LoadAfterEdit(version: 26, "Blossom", b => b["ScanEveryMs"] = 4000).Blossom.ScanEveryMs);
+        Assert.Equal(2500, LoadAfterEdit(version: 26, "Blossom", b => b["ScanEveryMs"] = 2500).Blossom.ScanEveryMs);
+        Assert.Equal(4000, LoadAfterEdit(version: 27, "Blossom", b => b["ScanEveryMs"] = 4000).Blossom.ScanEveryMs);
+    }
+
+    [Fact]
+    public void V28_TheWalkLooksAheadSixSecondsBetweenLooksAside_ASetValueStays()
+    {
+        // User, 18:10: "randomly do left or right, stay on any direction longer than 5s then return back" - the camera now
+        // looks aside LookAsideMs (6 s), and ahead ScanEveryMs between two looks aside: 6 s too, not the 1.5 s of v27.
+        Assert.Equal(6000, new AppSettings().Blossom.LookAsideMs);
+        Assert.Equal(10000, LoadAfterEdit(version: 27, "Blossom", b => b["ScanEveryMs"] = 1500).Blossom.ScanEveryMs);   // then v29
+        Assert.Equal(2500, LoadAfterEdit(version: 27, "Blossom", b => b["ScanEveryMs"] = 2500).Blossom.ScanEveryMs);
+        Assert.Equal(1500, LoadAfterEdit(version: 28, "Blossom", b => b["ScanEveryMs"] = 1500).Blossom.ScanEveryMs);
+    }
+
+    [Fact]
+    public void V29_TheLookAsideTurnsHalfAsFar_AndComesLessOften_ASetValueStays()
+    {
+        // User, 2026-11-02: "it is trying to move too much and rotate too much" - a 700 ms hold turned ~120 deg live.
+        Assert.Equal((10000, 350), (new AppSettings().Blossom.ScanEveryMs, new AppSettings().Blossom.ScanSideMs));
+        var moved = LoadAfterEdit(version: 28, "Blossom", b => { b["ScanEveryMs"] = 6000; b["ScanSideMs"] = 700; }).Blossom;
+        Assert.Equal((10000, 350), (moved.ScanEveryMs, moved.ScanSideMs));
+        var kept = LoadAfterEdit(version: 28, "Blossom", b => { b["ScanEveryMs"] = 8000; b["ScanSideMs"] = 500; }).Blossom;
+        Assert.Equal((8000, 500), (kept.ScanEveryMs, kept.ScanSideMs));
+        var later = LoadAfterEdit(version: 29, "Blossom", b => { b["ScanEveryMs"] = 6000; b["ScanSideMs"] = 700; }).Blossom;
+        Assert.Equal((6000, 700), (later.ScanEveryMs, later.ScanSideMs));
+    }
+
+    [Fact]
     public void AfterV24_TheOldValuesPutBackByTheUser_Stay()
     {
         var loaded = LoadAfterEdit(version: 24, "Blossom", b =>

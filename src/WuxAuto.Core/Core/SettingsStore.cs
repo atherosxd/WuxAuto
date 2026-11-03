@@ -73,7 +73,7 @@ public static class AppPaths
 public static class SettingsStore
 {
     /// <summary>Bump when an existing settings.json must be migrated (see <see cref="Migrate"/>).</summary>
-    private const int CurrentVersion = 26;
+    private const int CurrentVersion = 29;
 
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
@@ -263,6 +263,26 @@ public static class SettingsStore
         if (s.Version < 26 && s.Dungeon != null)
             s.Dungeon.HoldBeforeAutohunt = false;
 
+        // v27: the Blossom walk scan starts after 1.5 s without a Jaso, not 4 s (user, 2026-11-01: "can it not scan fast while
+        // running") - it no longer stops the walk. Only the old default moves; a value set by hand stays.
+        if (s.Version < 27 && s.Blossom is { ScanEveryMs: 4000 } scan)
+            scan.ScanEveryMs = 1500;
+
+        // v28 (user, 2026-11-01 18:10: "randomly do left or right, stay on any direction longer than 5s then return back"): the
+        // walk scan became a look aside of LookAsideMs (6 s), and the time looking ahead between two of them 6 s too, not 1.5 s.
+        if (s.Version < 28 && s.Blossom is { ScanEveryMs: 1500 } ahead)
+            ahead.ScanEveryMs = 6000;
+
+        // v29 (user, 2026-11-02: "it is trying to move too much and rotate too much"): the look aside half as far (a 700 ms
+        // hold turned ~120 deg live) and less often.
+        if (s.Version < 29 && s.Blossom is { } aside)
+        {
+            if (aside.ScanEveryMs == 6000)
+                aside.ScanEveryMs = 10000;
+            if (aside.ScanSideMs == 700)
+                aside.ScanSideMs = 350;
+        }
+
         s.Version = CurrentVersion;
         return true;
     }
@@ -405,7 +425,12 @@ public static class SettingsStore
         b.RunAheadDistance = Math.Clamp(b.RunAheadDistance, 0, 3000);
         b.RandomSkipMax = Math.Clamp(b.RandomSkipMax, 0, 20);
         b.ScanEveryMs = b.ScanEveryMs <= 0 ? 0 : Math.Clamp(b.ScanEveryMs, 1000, 60000);
-        b.ScanTaps = Math.Clamp(b.ScanTaps, 1, 40);
+        b.ScanSideMs = Math.Clamp(b.ScanSideMs, 100, 3000);
+        b.LookAsideMs = Math.Clamp(b.LookAsideMs, 1000, 60000);
+        b.StuckTurnAfterMs = b.StuckTurnAfterMs <= 0 ? 0 : Math.Clamp(b.StuckTurnAfterMs, 2000, 120000);
+        b.StuckTurnMs = Math.Clamp(b.StuckTurnMs, 200, 5000);
+        b.AfkStepFrom = Math.Clamp(b.AfkStepFrom, 1, 5);
+        b.AfkStepEveryMs = Math.Clamp(b.AfkStepEveryMs, 0, 120000);
         b.ScanTapMs = Math.Clamp(b.ScanTapMs, 30, 2000);
         b.FightScanEveryMs = b.FightScanEveryMs <= 0 ? 0 : Math.Clamp(b.FightScanEveryMs, 1000, 60000);
         b.CameraTiltPx = Math.Clamp(b.CameraTiltPx, 0, 400);

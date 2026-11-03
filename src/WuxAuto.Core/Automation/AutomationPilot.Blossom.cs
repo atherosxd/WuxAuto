@@ -18,7 +18,8 @@ public sealed partial class AutomationPilot
     /// <summary>The short fine-tune tap once both pillars are in view but off centre.</summary>
     private const int BlossomFineTapMs = 40;
     private const int BlossomMaxFineTaps = 12;
-    private const int BlossomTurnSettleMs = 350;
+    private const int BlossomTurnSettleMs = 150;   // was 350 (user, 2026-11-02: "try a faster turn to pillar")
+    private const int BlossomPillarStepMs = 250;   // the pillar search's held step (was TurnTapMs 100 ms taps)
     private const int BlossomMaxStalls = 5;   // ~5-6 s against a wall: the AFK checker kicks idle characters (user)
     private const int BlossomMaxUnread = 40;
     private const int BlossomRebuffOverdueMs = 30000;
@@ -39,10 +40,18 @@ public sealed partial class AutomationPilot
     private const int BlossomOffRouteDistance = 600; // after a fight: this far from the waypoint it was heading for ...
     private const int BlossomRejoinDistance = 300;   // ... and this close to another = walk on from that one
     private const int BlossomSkipReach = 1000;       // a random skip lands only on waypoints this close to the fight's end
-    private const int JasoClickWaitMs = 1500;        // after a click on a Jaso: no walk clicks, the target bar should come up
+    // After a click on a Jaso: no walk clicks and no camera scans while the character runs to her - the target bar showed
+    // 3-6 s after a click from afar (live 2026-11-01 12:27-12:36); at 1.5 s the walk clicked on and took it away.
+    private const int JasoClickWaitMs = 7000;
     private const int JasoMaxMisses = 3;             // clicks on Jasos that target nothing before they are left alone ...
     private const int JasoIgnoreMs = 5000;           // ... this long
+    private const int JasoHoverCandidates = 4;       // figures the pointer goes over per look (each up to ~0.6 s)
+    private const double JasoMinClickY = 0.21;       // figures centred higher up (at the horizon) are too far to click
+    private const int JasoHoverPauseMs = 2000;       // no sword over any: no hovering for this long
+    private const int JasoClickShotsKept = 300;      // debug\jaso-clicks keeps the newest this many
     private const int BlossomScanSettleMs = 300;     // after a camera step, before looking
+    private const int BlossomTurnSteps = 3;          // a look aside's turn: ScanSideMs in this many holds, a look after each
+    private const int JasoLookEveryMs = 80;          // the walk's Jaso search: about every captured frame (~12 a second)
     private const int BlossomTiltDragMs = 300;       // one camera tilt drag ...
     private const int BlossomTiltSettleMs = 400;     // ... and the wait after it
     private const double BlossomHeadingMissRad = 0.6;
@@ -65,7 +74,6 @@ public sealed partial class AutomationPilot
     private int _blossomUnread;
     private bool _blossomHeadingKnown;
     private bool _blossomBuffThenTurn;
-    private bool _blossomHuntOffChecked;
     private int _blossomHeadingMisses;
     private int _blossomHeadingAge;   // steps (>= 60 units) since the heading was set
     private long _blossomIgnoreTargetsUntil;
@@ -86,20 +94,33 @@ public sealed partial class AutomationPilot
     private long _blossomNotFullToldAt;
     private long _blossomFightLootAt;            // LootWhileFighting: the last loot tap
     private int _blossomAfkSteps;
+    private long _blossomAfkStepAt;              // the last AFK step (AfkStepEveryMs apart)
+    private bool _blossomFirstAsideLeft;         // arrived: the first look aside goes left
     private long _blossomJasoClickedAt;          // the last click on a Jaso seen on screen
     private int _blossomJasoClicks;              // clicks on Jasos since the last fight
     private long _blossomJasoIgnoreUntil;
+    private long _blossomHoverPauseUntil;        // look-alikes only at the last look: no hovering until then
+    private long _blossomClickCursor;            // the cursor picture at the last click on a Jaso (0 = clicked on her looks)
+    private string? _blossomClickShot;           // that click's snapshot, until it is marked _hit or _miss
+    private int _blossomSwordClicks;             // clicks since the last fight made on the learnt sword picture
     private long _blossomJasoSeenAt;             // a Jaso was last seen (or a fight ended): the walk scans ScanEveryMs after
-    private int _blossomScanTapsLeft = -1;       // walk scan: camera steps still to go, -1 = not scanning
-    private int _blossomScanTurned;
-    private long _blossomScanEndedAt;
+    private TurnDirection? _blossomAside;        // the walk looks this way (LookAsideMs), null = ahead
+    private long _blossomAsideSince;
+    private long _blossomAsideUntil;
+    private int _blossomAsideSteps;              // turn steps taken aside (the turn back undoes as many)
+    private double? _blossomHeadingBeforeAside;  // the walk's heading when the look aside began (restored when back)
+    private TurnDirection? _blossomTurning;      // a look aside's turn in progress (out or back), one step per tick
+    private int _blossomTurnStepsLeft;
+    private long _blossomScanEndedAt;            // the last look aside ended (looking ahead since)
+    private bool _blossomRemeasure;              // the camera turned: the next step measures the heading again; no turn before it
+    private int _blossomReturnedFrom = -1;       // stuck on the way to this waypoint once: went back to the nearest; not again
+    private long _blossomStillSince;             // the first still step of the current still stretch (0 = moving)
     private long _blossomFightScanAt;            // fight: the last camera step looking for the next Jaso
     private long _blossomFightLookAt;
     private bool _blossomFightTurned;            // fight: the camera turned - the walk learns the heading again after it
     private bool _blossomNextJasoSeen;           // fight: the next Jaso is in view - clicked right after the kill
-    private int _blossomTiltStep;                // camera tilt: 0 = none due, 1 = the drag down, 2 = the drag up
-    private bool _blossomTiltLevelOnly;          // the pillar turn: only down to the steepest view
-    private bool _blossomTurnLevelled;           // this pillar turn has sent its drag down
+    private bool _blossomTiltDue;                // the arrival's camera tilt is still to be sent
+    private bool _blossomCameraTilted;           // tilted since the last arrival
     private (int X, int Y)? _blossomLegFrom;     // where the current leg starts: the waypoint just left
     private (int X, int Y)? _blossomJumpCandidate;
     private long _blossomClickAt;
@@ -143,6 +164,8 @@ public sealed partial class AutomationPilot
         _blossomTargetHp = null;
         _blossomNotFullToldAt = 0;
         _blossomAfkSteps = 0;
+        _blossomAfkStepAt = 0;
+        _blossomFirstAsideLeft = false;
         _blossomLegFrom = null;
         _blossomJumpCandidate = null;
         _blossomDir = null;
@@ -156,19 +179,26 @@ public sealed partial class AutomationPilot
         _blossomUnread = 0;
         _blossomHeadingKnown = false;
         _blossomHeadingMisses = 0;
-        _blossomHuntOffChecked = false;
         _blossomIgnoreTargetsUntil = 0;
         _blossomJasoClickedAt = 0;
         _blossomJasoClicks = 0;
         _blossomJasoIgnoreUntil = 0;
+        _blossomHoverPauseUntil = 0;
+        _blossomClickShot = null;
         _blossomJasoSeenAt = 0;
-        _blossomScanTapsLeft = -1;
-        _blossomScanTurned = 0;
+        _blossomAside = null;
+        _blossomAsideSteps = 0;
+        _blossomHeadingBeforeAside = null;
+        _blossomTurning = null;
+        _blossomTurnStepsLeft = 0;
         _blossomScanEndedAt = 0;
+        _blossomRemeasure = false;
+        _blossomReturnedFrom = -1;
+        _blossomStillSince = 0;
         _blossomFightTurned = false;
         _blossomNextJasoSeen = false;
-        _blossomTiltStep = 0;
-        _blossomTurnLevelled = false;
+        _blossomTiltDue = false;
+        _blossomCameraTilted = false;
     }
 
     /// <summary>In Blossom Garden after the teleport, a restart or a death: the buffs, then the turn to the pillars.</summary>
@@ -223,17 +253,21 @@ public sealed partial class AutomationPilot
         _blossomFineDir = TurnDirection.Right;
         _blossomLastOffset = null;
         _blossomTurnTold = false;
-        _blossomTurnLevelled = false;
-        Log?.Invoke(LogLevel.Info, $"Turning ('{_settings.Input.RotateKey}' {_settings.Blossom.TurnTapMs} ms taps) until the two pillars are centred.");
+        _blossomCameraTilted = false;   // arrived (teleport or death): the camera looks down again
+        Log?.Invoke(LogLevel.Info, $"Turning ('{_settings.Input.RotateKey}' held {Math.Max(_settings.Blossom.TurnTapMs, BlossomPillarStepMs)} ms a step) until the two pillars are centred.");
         Advance(PilotPhase.BlossomTurn, 400);
     }
 
-    /// <summary>After the turn: the walk starts at the nearest waypoint, with the heading learnt from its first step.</summary>
+    /// <summary>
+    /// After the pillar turn (its only caller): the walk starts at the nearest waypoint, with the heading learnt from its
+    /// first step, and its first look aside goes left (user, 2026-11-02: "after the pillar it tries to turn right again" -
+    /// the wall is on the right at the arrival).
+    /// </summary>
     private void StartBlossomWalk()
     {
+        _blossomFirstAsideLeft = true;
         _blossomHeadingKnown = false;
         _blossomWaypoint = -1;
-        QueueBlossomTilt(levelOnly: false);
         ResumeBlossomWalk();
     }
 
@@ -262,14 +296,21 @@ public sealed partial class AutomationPilot
     {
         var b = _settings.Blossom;
         long now = Environment.TickCount64;
-        if (!_blossomTurnLevelled)
-        {
-            _blossomTurnLevelled = true;
-            QueueBlossomTilt(levelOnly: true);   // the pillar template was cropped from the view facing down
-        }
 
+        // User, 2026-11-01: "upon arrival tilt up a little bit" - before the turn's first tap.
+        if (_blossomTurnTaps == 0 && _blossomFineTaps == 0)
+            QueueBlossomTilt();
         if (TickBlossomCameraTilt(frame, now))
             return;
+
+        // No pillar turn by default (user, 2026-11-02: "upon entering it tends to rotate to right. go straight straight or
+        // straight left as the right is the wall"): straight on from the arrival spot, the heading learnt from that step.
+        if (!b.TurnToPillars)
+        {
+            Log?.Invoke(LogLevel.Info, "Arrived - walking straight on (no pillar turn); the heading is learnt from the first step.");
+            StartBlossomWalk();
+            return;
+        }
 
         var pair = _analyzer.FindPillarPair(frame, b.PillarTemplate, b.PillarMatchScore);
         if (pair != null)
@@ -318,7 +359,9 @@ public sealed partial class AutomationPilot
             Log?.Invoke(LogLevel.Info, $"Pillars not lined up after {b.TurnTaps} taps - turning on (up to {b.TurnMaxTaps}).");
         }
 
-        if (!_controls.Turn(TurnDirection.Right, b.TurnTapMs))
+        // A held step, like the look aside's (user, 2026-11-02: "try a faster turn to pillar" / "hold turn, like the same for
+        // the right or left look"): BlossomPillarStepMs a step instead of TurnTapMs taps; the centring stays in fine taps.
+        if (!_controls.Turn(TurnDirection.Right, Math.Max(b.TurnTapMs, BlossomPillarStepMs)))
         {
             _detail = "turn blocked - waiting for the game to be in front";
             _waitUntil = now + 300;
@@ -383,103 +426,304 @@ public sealed partial class AutomationPilot
     internal static (int X, int Y) JasoClickPoint(PixelRect jaso) => (jaso.CenterX, jaso.Y + (int)(jaso.Height * 0.6));
 
     /// <summary>
+    /// Where the pointer goes over a Jaso candidate to see whether the cursor turns into a sword: the body first (the middle
+    /// at 60 % and 35 % down), then left and right of the middle (seen side-on her fan sticks out to one side and her body
+    /// is off the figure's middle - user, 2026-11-01: "it tried to click the monster but on the side"), then 80 % and the
+    /// fan at 15 %.
+    /// </summary>
+    internal static IEnumerable<(int X, int Y)> JasoProbePoints(PixelRect box)
+    {
+        foreach (var (fx, fy) in ((double, double)[])[(0.5, 0.6), (0.5, 0.35), (0.2, 0.6), (0.8, 0.6), (0.5, 0.8), (0.5, 0.15)])
+            yield return (box.X + (int)(box.Width * fx), box.Y + (int)(box.Height * fy));
+    }
+
+    /// <summary>
     /// Tab no longer targets in Blossom Garden (user, 2026-11-01: "can you possibly click this mob instead by using the color,
-    /// shape"): the Jaso nearest the character on this frame (<see cref="ScreenAnalyzer.FindJasos"/>) gets a plain left click,
-    /// which targets her; the target bar then starts the fight. JasoMaxMisses clicks that target nothing -> Jasos are left
-    /// alone for JasoIgnoreMs (a look-alike, or one out of reach). True when it clicked.
+    /// shape"): a Jaso on this frame gets a plain left click, which targets her; the target bar then starts the fight.
+    /// <see cref="ScreenAnalyzer.FindJasoCandidates"/> also gives far and partial figures (user: "click a jaso from afar with
+    /// just some of the characteristics"). The game shows a sword cursor over a monster (user: "when clicking jaso, the
+    /// cursor will change into a sword"): the pointer goes over the ground first (the normal cursor), then over the
+    /// JasoHoverCandidates nearest figures, and the click goes where the cursor changes - on her body. A partial figure is
+    /// clicked only there; a full one (her whole look) is also clicked in her middle (<see cref="JasoClickPoint"/>) when no
+    /// sword showed or the cursor cannot be read (0), as before the cursor check. JasoMaxMisses clicks that target nothing
+    /// -> Jasos are left alone for JasoIgnoreMs. True when it clicked.
     /// </summary>
     private bool TryClickJaso(Mat frame, long now, string why)
     {
-        if (!_settings.Blossom.ClickToTarget || now < _blossomJasoIgnoreUntil)
+        if (!_settings.Blossom.ClickToTarget || now < _blossomJasoIgnoreUntil || now < _blossomHoverPauseUntil)
             return false;
 
-        var jasos = ScreenAnalyzer.FindJasos(frame, WarWalkBands(frame.Width, frame.Height));
-        if (jasos.Count == 0)
+        // Not the ones at the horizon: the game ignores a click on a monster that far (live 13:37, three clicks with the sword
+        // on one at 0.20 h, she stayed put; every click that targeted one was 0.23 h or lower) - the walk brings them closer.
+        // Figures at the character's own spot last: mostly its own wings - but a Jaso fighting it stands there too.
+        var candidates = ScreenAnalyzer.FindJasoCandidates(frame, JasoBands(frame.Width, frame.Height))
+            .Where(c => c.Box.CenterY >= frame.Height * JasoMinClickY)
+            .OrderBy(c => c.AtOwnSpot ? 1 : 0)
+            .ToList();
+        if (candidates.Count == 0)
             return false;
 
-        _blossomJasoSeenAt = now;
+        if (candidates.Any(c => c.Full))
+            _blossomJasoSeenAt = now;
         if (_blossomJasoClicks >= JasoMaxMisses)
         {
+            // Every one of them on the learnt sword and none targeted: that picture was not the sword after all.
+            if (_blossomSwordClicks >= JasoMaxMisses && _settings.Blossom.SwordCursor != 0)
+            {
+                Log?.Invoke(LogLevel.Warning, $"{JasoMaxMisses} clicks on the learnt sword cursor (0x{_settings.Blossom.SwordCursor:X}) targeted nothing - forgetting it.");
+                _settings.Blossom.SwordCursor = 0;
+                SettingsStore.Save(_settings);
+            }
+
+            MarkJasoClickShot("miss");
             _blossomJasoClicks = 0;
+            _blossomSwordClicks = 0;
             _blossomJasoIgnoreUntil = now + JasoIgnoreMs;
             Log?.Invoke(LogLevel.Warning, $"Clicked a Jaso {JasoMaxMisses} times and nothing was targeted - leaving them for {JasoIgnoreMs / 1000}s.");
             BlossomShot(frame, "blossom_jaso_miss");
             return false;
         }
 
-        var jaso = jasos[0];
-        var (x, y) = JasoClickPoint(jaso);
-        _overlays.Add(new OverlayItem(jaso, "jaso", OverlayColor.Green));
-        if (!_controls.WalkTo(x, y, forceWalk: false))
+        // The normal cursor, over the ground in front of the character's feet; then each figure, nearest first. The sword is
+        // a picture other than the normal one, read the same twice (live 14:26: the plain Windows arrow shows for a moment
+        // after the game comes to the front, another picture at the character's own spot) - and, once learnt from a click
+        // that targeted a Jaso (Blossom.SwordCursor), only that picture.
+        // Off by default (user, 2026-11-01: "Turn it off" / "sword is a fallback"): the cursor read from outside was not
+        // reliable; full figures are then clicked on her body and partial ones not at all.
+        long normal = _settings.Blossom.UseSwordCursor ? _controls.HoverCursor(frame.Width / 2, (int)(frame.Height * 0.70)) : 0;
+        long sword = _settings.Blossom.SwordCursor;
+        if (normal != 0)
+        {
+            foreach (var c in candidates.Take(JasoHoverCandidates))
+            {
+                foreach (var p in JasoProbePoints(c.Box).Prepend(c.Body))
+                {
+                    long cursor = _controls.HoverCursor(p.X, p.Y);
+                    if (cursor == 0 || cursor == normal || (sword != 0 && cursor != sword) || _controls.HoverCursor(p.X, p.Y) != cursor)
+                        continue;
+
+                    Log?.Invoke(LogLevel.Trace, $"Cursor over the ground 0x{normal:X}, over {p.X},{p.Y} 0x{cursor:X} (read twice{(sword != 0 ? ", the learnt sword" : "")}).");
+                    return ClickJaso(c, p, $"({why}{(c.Full ? "" : ", far or partly seen")}) - the cursor turned into a sword there", cursor);
+                }
+            }
+        }
+
+        // No sword (or the cursor not read): a full figure is clicked on its looks, on her body (the middle of her red dress)
+        // - a partial one never.
+        if (candidates.FirstOrDefault(c => c.Full) is { } full)
+            return ClickJaso(full, full.Body, normal != 0 ? $"({why}) - no sword cursor over her, clicking her body" : $"({why})", 0);
+
+        if (normal != 0)
+        {
+            // Look-alikes only (flowers, the pet, players): no hovering over them on every look.
+            _blossomHoverPauseUntil = now + JasoHoverPauseMs;
+            Log?.Invoke(LogLevel.Trace, $"{Math.Min(candidates.Count, JasoHoverCandidates)} Jaso-like figure(s) in view, the cursor (0x{normal:X}) turned into a sword over none.");
+        }
+
+        return false;
+
+        bool ClickJaso(JasoCandidate c, (int X, int Y) at, string how, long cursor)
+        {
+            _overlays.Add(new OverlayItem(c.Box, c.Full ? "jaso" : "jaso?", OverlayColor.Green));
+            if (!_controls.WalkTo(at.X, at.Y, forceWalk: false))
+                return false;
+
+            _blossomJasoClicks++;
+            if (cursor != 0 && cursor == _settings.Blossom.SwordCursor)
+                _blossomSwordClicks++;
+            _blossomClickCursor = cursor;
+            _blossomJasoClickedAt = now;
+            _blossomJasoSeenAt = now;
+            MarkJasoClickShot("miss");   // a click still waiting for its outcome targeted nothing, or this one would not be
+            _blossomClickShot = SaveJasoClickShot(frame, candidates, c, at);
+            Log?.Invoke(LogLevel.Info, $"Jaso at {at.X},{at.Y} {how} - clicking her" +
+                                       (_blossomClickShot is { } shot ? $" (snapshot jaso-clicks\\{Path.GetFileName(shot)})." : "."));
+            return true;
+        }
+    }
+
+    /// <summary>
+    /// User, 2026-11-01: "Yes, add snapshots" (three clicks around the character targeted nothing and nobody could tell what
+    /// they hit): the frame of a click on a Jaso as a JPEG in debug\jaso-clicks - every figure seen (green full, yellow
+    /// partial), the one clicked in blue, the click point crossed - the newest <see cref="JasoClickShotsKept"/> kept.
+    /// <see cref="MarkJasoClickShot"/> adds _hit or _miss to its name once the outcome is known.
+    /// </summary>
+    private static string? SaveJasoClickShot(Mat frame, IReadOnlyList<JasoCandidate> seen, JasoCandidate clicked, (int X, int Y) at)
+    {
+        var marks = seen.Select(s => ReferenceEquals(s, clicked)
+                ? new OverlayItem(s.Box, "clicked", OverlayColor.Blue)
+                : new OverlayItem(s.Box, s.Full ? "jaso" : "jaso?", s.Full ? OverlayColor.Green : OverlayColor.Yellow))
+            .ToList();
+        if (ScreenAnalyzer.FindOwnCharacter(frame) is { } you)
+            marks.Add(new OverlayItem(you, "you", OverlayColor.Orange));
+        string file = DebugArtifacts.SaveMarkedJpeg(frame, marks, $"jaso_click_{at.X}_{at.Y}", at, JasoClickShotFolder, JasoClickShotsKept);
+        return file.Length > 0 ? file : null;
+    }
+
+    private static string JasoClickShotFolder => Path.Combine(AppPaths.DebugFolder, "jaso-clicks");
+
+    /// <summary>The click waiting for its outcome: its snapshot's name gets _hit or _miss.</summary>
+    private void MarkJasoClickShot(string outcome)
+    {
+        if (_blossomClickShot is not { } file)
+            return;
+
+        _blossomClickShot = null;
+        try
+        {
+            File.Move(file, Path.Combine(Path.GetDirectoryName(file)!, $"{Path.GetFileNameWithoutExtension(file)}_{outcome}.jpg"));
+        }
+        catch
+        {
+            // pruned already, or open in a viewer - the name stays as it is
+        }
+    }
+
+    /// <summary>
+    /// One step of a look aside's camera turn: <paramref name="ms"/> held. The walk's clicks are screen directions, so the step after it
+    /// re-measures the heading (<see cref="_blossomRemeasure"/>) - the camera never turns back exactly, and live 17:35-17:48
+    /// (0.25.9) the small turns added up until the walk ran ~2700 units off the route into a wall. The read before the turn
+    /// teaches nothing (the next read only takes the spot). False when the input was refused (the game behind a window).
+    /// </summary>
+    private bool TurnBlossomCamera(TurnDirection direction, int ms)
+    {
+        if (!_controls.Turn(direction, ms))
             return false;
 
-        _blossomJasoClicks++;
-        _blossomJasoClickedAt = now;
-        Log?.Invoke(LogLevel.Info, $"Jaso seen at {x},{y} ({why}) - clicking her.");
+        _lastCoords = null;
+        _blossomRemeasure = _blossomHeadingKnown;
         return true;
     }
 
-    /// <summary>A walk scan is over: the camera turned, so the next walk step learns the heading again.</summary>
-    private void EndBlossomScan(bool found, long now)
+    /// <summary>A look aside's turn is over: out - the look aside's time starts; back - looking ahead again.</summary>
+    private void EndBlossomTurn(bool goingBack, long now)
     {
-        if (_blossomScanTapsLeft < 0)
-            return;
-
-        int turned = _blossomScanTurned;
-        _blossomScanTapsLeft = -1;
-        _blossomScanTurned = 0;
-        _blossomScanEndedAt = now;
-        if (turned > 0)
-            ForgetBlossomHeading();
-        if (!found)
-            Log?.Invoke(LogLevel.Info, $"Scanned {turned} step(s) - no Jaso in view; the next step learns the heading again.");
+        _blossomTurning = null;
+        _blossomTurnStepsLeft = 0;
+        if (goingBack)
+        {
+            _blossomAside = null;
+            _blossomAsideSteps = 0;
+            _blossomScanEndedAt = now;
+        }
+        else
+        {
+            _blossomAsideSince = now;
+            _blossomAsideUntil = now + _settings.Blossom.LookAsideMs;
+        }
     }
 
     /// <summary>
-    /// User, 2026-11-01: "also try to move the screen up instead of facing down". Queued at the walk's start (after the pillar
-    /// turn, a Start inside, a jump away from the arrival spot) and after every zoom-out of the unblock steps; the pillar turn
-    /// queues only the first half, the view its template was cropped from. <see cref="TickBlossomCameraTilt"/> sends it.
+    /// Turned back as far as it went: the walk takes the heading it had before looking aside - learnt over many steps with
+    /// the camera ahead - instead of one step measured right after the turn (live 18:44-18:48, 0.25.11: those read 19 -> -11 ->
+    /// 169 -> 27 deg in a walled stretch, sliding along walls, and the walk lost the route). What the turn left over is small:
+    /// the walk's own correction takes it, a bigger one is re-learnt after BlossomHeadingMissesToRelearn steps.
     /// </summary>
-    private void QueueBlossomTilt(bool levelOnly)
+    private void RestoreBlossomHeading()
     {
-        if (_settings.Blossom.CameraTiltPx <= 0)
-            return;
+        if (_blossomHeadingBeforeAside is not double before || !_blossomHeadingKnown)
+            return;   // the heading was lost meanwhile (a fight's camera turn): the next step learns it
 
-        _blossomTiltStep = 1;
-        _blossomTiltLevelOnly = levelOnly;
+        _blossomHeadingBeforeAside = null;
+        SetBlossomHeading(before, "restored after looking aside");
     }
 
     /// <summary>
-    /// One right-drag per tick: first a long drag down (the game stops the camera at its steepest, facing down), then
-    /// CameraTiltPx up. Starting from that limit the tilt is the same every time - repeated after a zoom-out or a restart
-    /// it never adds up (the Laby's gate tilt did, run 34). True when it sent (or tried to send) a drag: the caller waits.
+    /// The screen parts the Jaso search leaves out: the UI bands of <see cref="WarWalkBands"/>, but of the combat log only
+    /// the buff icons at its top (user, 2026-11-02, F11 at 1024x768: a Jaso at 0.17 w, 0.45 h stood inside the log's band -
+    /// left 31 %, 13-56 % down - and was never looked at; the log's text is yellow, never her).
     /// </summary>
+    internal static IReadOnlyList<PixelRect> JasoBands(int width, int height)
+    {
+        PixelRect Box(double x0, double y0, double x1, double y1)
+        {
+            int left = (int)(x0 * width), top = (int)(y0 * height);
+            return new PixelRect(left, top, (int)Math.Ceiling(x1 * width) - left, (int)Math.Ceiling(y1 * height) - top);
+        }
+
+        return
+        [
+            Box(0.00, 0.00, 1.00, 0.13),   // top strip
+            Box(0.00, 0.13, 0.25, 0.22),   // the buff icons under the HP bars (the combat log under them is searched)
+            Box(0.00, 0.56, 0.40, 1.00),   // chat, bottom bar (left)
+            Box(0.56, 0.00, 1.00, 0.23),   // pet panel, minimap top
+            Box(0.74, 0.00, 1.00, 0.37),   // minimap panel
+            Box(0.80, 0.37, 1.00, 0.60),   // event notices
+            Box(0.70, 0.55, 1.00, 1.00),   // item list
+            Box(0.20, 0.85, 0.80, 1.00),   // skill bar
+        ];
+    }
+
+    private static TurnDirection Opposite(TurnDirection direction)
+        => direction == TurnDirection.Left ? TurnDirection.Right : TurnDirection.Left;
+
+    private string TurnKey(TurnDirection direction)
+        => direction == TurnDirection.Left ? _settings.Dungeon.RotateLeftKey : _settings.Input.RotateKey;
+
+    private static string TurnName(TurnDirection direction) => direction == TurnDirection.Left ? "left" : "right";
+
+    /// <summary>
+    /// The walk click (<paramref name="ox"/>, <paramref name="oy"/> from the middle, from the feet near a waypoint), scaled into
+    /// the click area.
+    /// </summary>
+    private bool BlossomWalkClick(Mat frame, double ox, double oy, long now)
+    {
+        int centerX = frame.Width / 2;
+        // Near a waypoint the click is measured from the character's feet (0.55 h), elsewhere from the middle.
+        int centerY = _blossomNear ? (int)(frame.Height * 0.55) : frame.Height / 2;
+        double scale = 1;
+        double roomLeft = centerX - frame.Width * 0.25, roomRight = frame.Width * RunClickRight - centerX;
+        double roomUp = centerY - frame.Height * RunClickTop, roomDown = frame.Height * 0.78 - centerY;
+        if (ox < 0) scale = Math.Min(scale, roomLeft / -ox);
+        if (ox > 0) scale = Math.Min(scale, roomRight / ox);
+        if (oy < 0) scale = Math.Min(scale, roomUp / -oy);
+        if (oy > 0) scale = Math.Min(scale, roomDown / oy);
+
+        int clickX = (int)Math.Round(centerX + ox * scale);
+        int clickY = (int)Math.Round(centerY + oy * scale);
+        if (!_controls.WalkTo(clickX, clickY, forceWalk: false))
+            return false;
+
+        _simpleClick = (ox, oy);
+        _lastClick = (clickX, clickY, now);
+        // Near a waypoint one click per read (the read sets the next one); else the same click again shortly.
+        _blossomClickAt = _blossomNear ? long.MaxValue : now + _settings.Blossom.WalkClickEveryMs;
+        return true;
+    }
+
+    /// <summary>
+    /// User, 2026-11-01: "also upon teleporting it look down, look up by dragging right click up" / "upon arrival tilt up a
+    /// little bit" (the teleport leaves the camera looking almost straight down): once per arrival - the pillar turn's first
+    /// tick, after a teleport or a death - one right-drag up of CameraTiltPx. Nowhere else: from the same arrival view the
+    /// tilt is the same every time, while a drag on a Start inside or after a zoom-out would add up. (0.25.x first dragged
+    /// down to the camera's limit: that looked straight down - "becuase you tilt it down!") <see cref="TickBlossomCameraTilt"/>
+    /// sends it.
+    /// </summary>
+    private void QueueBlossomTilt()
+    {
+        if (_settings.Blossom.CameraTiltPx > 0 && !_blossomCameraTilted)
+            _blossomTiltDue = true;
+    }
+
+    /// <summary>The queued tilt: one right-drag up from 0.60 h. True when it sent (or tried to send) it: the caller waits.</summary>
     private bool TickBlossomCameraTilt(Mat frame, long now)
     {
         int tilt = _settings.Blossom.CameraTiltPx;
-        if (_blossomTiltStep == 0 || tilt <= 0)
+        if (!_blossomTiltDue || tilt <= 0)
         {
-            _blossomTiltStep = 0;
+            _blossomTiltDue = false;
             return false;
         }
 
-        int cx = frame.Width / 2, h = frame.Height;
-        bool down = _blossomTiltStep == 1;
-        // Down: 0.25 h -> 0.80 h, the world above the skill bar (0.85 h); up: from 0.60 h.
-        bool sent = down
-            ? _controls.TiltCamera(cx, (int)(h * 0.25), (int)(h * 0.55), BlossomTiltDragMs)
-            : _controls.TiltCamera(cx, (int)(h * 0.60), -tilt, BlossomTiltDragMs);
-        if (!sent)
+        if (!_controls.TiltCamera(frame.Width / 2, (int)(frame.Height * 0.60), -tilt, BlossomTiltDragMs))
         {
             _waitUntil = now + 300;
             return true;
         }
 
-        if (down && _blossomTiltLevelOnly)
-            Log?.Invoke(LogLevel.Trace, "Camera down to its steepest view for the pillars.");
-        else if (!down)
-            Log?.Invoke(LogLevel.Info, $"Tilted the camera up ({tilt} px right-drag from the steepest view) to see further ahead.");
-        _blossomTiltStep = down && !_blossomTiltLevelOnly ? 2 : 0;
+        _blossomCameraTilted = true;
+        _blossomTiltDue = false;
+        Log?.Invoke(LogLevel.Info, $"Tilted the camera up ({tilt} px right-drag) to see further ahead.");
         _detail = "tilting the camera";
         _waitUntil = now + BlossomTiltSettleMs;
         return true;
@@ -489,6 +733,7 @@ public sealed partial class AutomationPilot
     private void ForgetBlossomHeading()
     {
         _blossomHeadingKnown = false;
+        _blossomRemeasure = false;
         _blossomHeadingMisses = 0;
         _lastCoords = null;
         _simpleClick = null;
@@ -508,8 +753,11 @@ public sealed partial class AutomationPilot
     private bool TryBlossomAfkStep(Mat frame, IReadOnlyList<OcrWord> words, long now)
     {
         var b = _settings.Blossom;
+        // From AfkStepFrom of 5, at most every AfkStepEveryMs (user, 2026-11-02: "it is trying to move too much" / "the afk maxes
+        // out at mostly a minute, plenty of time to try moving again" - it stepped at every 1/5, every 5 s); more than 5 is a
+        // misread (live "6/5", "7/5", "9/5").
         if (BlossomText.AfkCheckerCount(ScreenAnalyzer.ToLines(words), b.AfkCheckerText, frame.Width, frame.Height) is not int count
-            || count < 1)
+            || count < b.AfkStepFrom || count > 5 || (_blossomAfkStepAt > 0 && now - _blossomAfkStepAt < b.AfkStepEveryMs))
             return false;
 
         var (ux, uy, side) = BlossomStepWays[_blossomAfkSteps % BlossomStepWays.Length];
@@ -522,6 +770,7 @@ public sealed partial class AutomationPilot
             return false;
 
         _blossomAfkSteps++;
+        _blossomAfkStepAt = now;
         Log?.Invoke(LogLevel.Warning, $"AFK Checker at {count}/5 - stepping {side} a little.");
         BlossomShot(frame, "blossom_afk");
         if (_phase == PilotPhase.BlossomAttack)
@@ -575,13 +824,29 @@ public sealed partial class AutomationPilot
         _blossomSteps = 0;
         _blossomFightLootAt = 0;
         _blossomRecheckRoute = true;
+        // Targeted after a click on a sword-looking picture: that picture is the sword (user, 2026-11-01: "when clicking jaso,
+        // the cursor will change into a sword") - kept in settings.json, from now on only it counts.
+        if (_blossomClickCursor != 0 && _blossomJasoClickedAt > 0 && now - _blossomJasoClickedAt <= JasoClickWaitMs
+            && _settings.Blossom.SwordCursor != _blossomClickCursor)
+        {
+            _settings.Blossom.SwordCursor = _blossomClickCursor;
+            SettingsStore.Save(_settings);
+            Log?.Invoke(LogLevel.Info, $"Learnt the sword cursor (0x{_blossomClickCursor:X}) from the Jaso just targeted - from now on only it counts.");
+        }
+
+        // The click's snapshot: targeted within the wait = that click did it.
+        MarkJasoClickShot(_blossomJasoClickedAt > 0 && now - _blossomJasoClickedAt <= JasoClickWaitMs ? "hit" : "miss");
+        _blossomClickCursor = 0;
+        _blossomSwordClicks = 0;
         _blossomJasoClicks = 0;
         _blossomJasoClickedAt = 0;
         _blossomJasoSeenAt = now;
         _blossomFightScanAt = now;
         _blossomFightLookAt = 0;
         _blossomNextJasoSeen = false;
-        EndBlossomScan(found: true, now);
+        _blossomStillSince = 0;   // standing to fight is not being stuck
+        if (_blossomTurning is TurnDirection turning)
+            EndBlossomTurn(goingBack: turning != _blossomAside, now);   // a target mid-turn: the camera stays where it is
         Log?.Invoke(LogLevel.Success, $"Jaso Practitioner targeted ('{target}') - {(_settings.Blossom.HoldSkill ? "holding" : "attacking with")} {SkillText(_settings.Dungeon.SkillKey)} ({_blossomKills} kill(s) so far).");
         Advance(PilotPhase.BlossomAttack, 0);
     }
@@ -607,6 +872,7 @@ public sealed partial class AutomationPilot
         {
             _lastCoords = null;
             _blossomDir = null;
+            _blossomStillSince = 0;
             _detail = "waiting for the game window to be in front";
             if (!_blossomFocusTold)
             {
@@ -623,10 +889,6 @@ public sealed partial class AutomationPilot
             _blossomFocusTold = false;
             Log?.Invoke(LogLevel.Info, "The game is back in front - walking on.");
         }
-
-        // The camera tilted up to look ahead (user, 2026-11-01), before the first walk click and after a zoom-out.
-        if (TickBlossomCameraTilt(frame, now))
-            return;
 
         // The camera turn when leaving a waypoint (user), one tap per tick.
         if (_blossomCamTaps > 0)
@@ -659,14 +921,21 @@ public sealed partial class AutomationPilot
                 BeginBlossomFight(target);
                 return;
             }
+        }
 
-            // No target: a Jaso seen on screen is clicked (2026-11-01: Tab no longer targets in Blossom Garden).
-            if (now >= _blossomIgnoreTargetsUntil && now - _blossomJasoClickedAt >= JasoClickWaitMs && TryClickJaso(frame, now, "on the walk"))
-            {
-                EndBlossomScan(found: true, now);
-                _waitUntil = now + 200;
-                return;
-            }
+        // No target: a Jaso seen on screen is clicked (2026-11-01: Tab no longer targets in Blossom Garden) - on every frame,
+        // not only with the target read above (user, 2026-11-02: "why so long to click can it be faster? like below 100ms?" -
+        // it waited up to 700 ms plus that whole-screen read; the search itself takes ~15-50 ms).
+        string where = _blossomAside is TurnDirection lookingTo ? $"looking {TurnName(lookingTo)}" : "on the walk";
+        if (now >= _blossomIgnoreTargetsUntil && now - _blossomJasoClickedAt >= JasoClickWaitMs && TryClickJaso(frame, now, where))
+        {
+            // Clicked mid-turn: the turn ends where she is (live 18:37, 0.25.11: it carried on after the 7 s wait, away from
+            // her). The target read comes right after, so the fight starts as soon as the bar shows her.
+            if (_blossomTurning is TurnDirection midTurn)
+                EndBlossomTurn(goingBack: midTurn != _blossomAside, now);
+            _blossomTargetAt = Math.Min(_blossomTargetAt, now + 300);
+            _waitUntil = now + 200;
+            return;
         }
 
         // Just clicked a Jaso: no walk clicks while the character runs to her and the target bar comes up.
@@ -677,46 +946,83 @@ public sealed partial class AutomationPilot
             return;
         }
 
-        // Scan (user, 2026-11-01: "when running, rotate the camera to scan for the mob"): no Jaso seen for ScanEveryMs ->
-        // stand and turn the camera ScanTaps steps, looking after each; then the next walk step learns the heading again.
-        if (_blossomJasoSeenAt == 0)
-            _blossomJasoSeenAt = now;   // the first scan comes ScanEveryMs into the walk
-        if (b.ClickToTarget && b.ScanEveryMs > 0 && _blossomScanTapsLeft < 0
-            && now - Math.Max(_blossomJasoSeenAt, _blossomScanEndedAt) >= b.ScanEveryMs)
-        {
-            _blossomScanTapsLeft = b.ScanTaps;
-            _blossomScanTurned = 0;
-            Log?.Invoke(LogLevel.Info, $"No Jaso seen for {(now - Math.Max(_blossomJasoSeenAt, _blossomScanEndedAt)) / 1000.0:0.#}s - Scanning: " +
-                                       $"turning the camera ('{_settings.Input.RotateKey}' x{b.ScanTaps}) and looking after each step.");
-        }
+        MarkJasoClickShot("miss");   // the wait is over and nothing was targeted
 
-        if (_blossomScanTapsLeft >= 0)
+        // Look aside (user, 18:10: "actively walk to the waypoints but randomly do left or right, stay on any direction longer
+        // than 5s then return back, as when you are trying to rotate there is a jaso but it continued to rotate back and never
+        // target it" / "it should be still similar to when tab is allowed"): no Jaso seen for ScanEveryMs -> the camera turns
+        // left or right at random (ScanSideMs in all) and stays that way LookAsideMs while the walk goes on as always - walk
+        // clicks, the target read, a Jaso clicked as soon as she is in view; then it turns back as far as it went. A turn is
+        // BlossomTurnSteps short holds with a look after each (user, 18:20: "rotating to right, sees jaso rotates left then
+        // continues instead of going back and retargeting"): a Jaso in view stops the turn right there and is clicked. Each
+        // step, the next walk step re-measures the heading (TurnBlossomCamera), and the next look aside waits for that and for
+        // a known heading. Not while standing at a waypoint (the pause is kept short - the AFK checker). It replaced the 16:30
+        // left-right-back sweep, which looked each way only once, for an instant (17:30-18:00: Jasos in view were turned past).
+        if (_blossomJasoSeenAt == 0)
+            _blossomJasoSeenAt = now;   // the first look aside comes ScanEveryMs into the walk
+        if (_blossomTurning is TurnDirection turning)
         {
-            if (TryClickJaso(frame, now, "scanning"))
+            bool goingBack = turning != _blossomAside;
+            if (now >= _blossomIgnoreTargetsUntil && TryClickJaso(frame, now, $"turning {TurnName(turning)}"))
             {
-                EndBlossomScan(found: true, now);
+                // She stays in view: the turn ends here (going back, the look aside is over; going out, it starts now).
+                EndBlossomTurn(goingBack, now);
                 _waitUntil = now + 200;
                 return;
             }
 
-            if (_blossomScanTapsLeft == 0)
+            if (!TurnBlossomCamera(turning, _settings.Blossom.ScanSideMs / BlossomTurnSteps))
             {
-                EndBlossomScan(found: false, now);
+                _waitUntil = now + 300;   // the game behind another window: again then
+                return;
+            }
+
+            _blossomAsideSteps += goingBack ? -1 : 1;
+            if (--_blossomTurnStepsLeft <= 0)
+            {
+                EndBlossomTurn(goingBack, now);
+                if (goingBack)
+                    RestoreBlossomHeading();
+            }
+            _detail = $"turning the camera {TurnName(turning)}";
+            _waitUntil = now + BlossomScanSettleMs;
+            return;
+        }
+
+        if (_blossomAside is TurnDirection aside && now >= _blossomAsideUntil)
+        {
+            Log?.Invoke(LogLevel.Info, $"Looked {TurnName(aside)} for {(now - _blossomAsideSince) / 1000.0:0.#}s - turning back ('{TurnKey(Opposite(aside))}'), walking on.");
+            if (_blossomAsideSteps <= 0)
+            {
+                EndBlossomTurn(goingBack: true, now);   // never turned out (a Jaso stopped it first): the camera is where it was
+                RestoreBlossomHeading();
             }
             else
             {
-                if (!_controls.Turn(TurnDirection.Right, b.ScanTapMs))
-                {
-                    _waitUntil = now + 300;
-                    return;
-                }
-
-                _blossomScanTapsLeft--;
-                _blossomScanTurned++;
-                _detail = $"scanning for a Jaso (step {_blossomScanTurned} of {b.ScanTaps})";
-                _waitUntil = now + BlossomScanSettleMs;
-                return;
+                _blossomTurning = Opposite(aside);
+                _blossomTurnStepsLeft = _blossomAsideSteps;
             }
+
+            _waitUntil = now;
+            return;
+        }
+
+        if (_blossomAside == null && b.ClickToTarget && b.ScanEveryMs > 0 && _blossomPauseSince == 0
+            && _blossomHeadingKnown && !_blossomRemeasure && now - Math.Max(_blossomJasoSeenAt, _blossomScanEndedAt) >= b.ScanEveryMs)
+        {
+            // The first one after an arrival goes left (user, 2026-11-02: "after the pillar it tries to turn right again" -
+            // "go straight straight or straight left as the right is the wall"); after that at random.
+            var side = _blossomFirstAsideLeft || Random.Shared.Next(2) == 0 ? TurnDirection.Left : TurnDirection.Right;
+            _blossomFirstAsideLeft = false;
+            _blossomAside = side;
+            _blossomAsideSteps = 0;
+            _blossomHeadingBeforeAside = _headingError;
+            _blossomTurning = side;
+            _blossomTurnStepsLeft = BlossomTurnSteps;
+            Log?.Invoke(LogLevel.Info, $"No Jaso seen for {(now - Math.Max(_blossomJasoSeenAt, _blossomScanEndedAt)) / 1000.0:0.#}s - " +
+                                       $"looking {TurnName(side)} ('{TurnKey(side)}' {b.ScanSideMs / 1000.0:0.0#}s) for {b.LookAsideMs / 1000.0:0.#}s while walking on.");
+            _waitUntil = now;
+            return;
         }
 
         // A rebuff waits for a loot or a waypoint pause; 30 s past due it goes out on the walk.
@@ -740,7 +1046,7 @@ public sealed partial class AutomationPilot
             if (now - _blossomPauseSince < b.WaypointWaitMs)
             {
                 _detail = $"at waypoint {_blossomWaypoint + 1}, tabbing ({(now - _blossomPauseSince) / 1000.0:0.0}s of {b.WaypointWaitMs / 1000.0:0.#}s)";
-                _waitUntil = Math.Min(now + 300, _blossomPauseSince + b.WaypointWaitMs);
+                _waitUntil = Math.Min(now + (b.ClickToTarget ? JasoLookEveryMs : 300), _blossomPauseSince + b.WaypointWaitMs);
                 return;
             }
 
@@ -753,35 +1059,45 @@ public sealed partial class AutomationPilot
         if ((now >= _blossomReadAt || _blossomDir == null) && !await BlossomReadStepAsync(frame, now))
             return;
 
-        if (_blossomDir is (double ox, double oy) && now >= _blossomClickAt)
+        // Still for StuckTurnAfterMs while the walk clicks on (user, 20:35: "If it didnt move while trying to move for 10s. Try
+        // a 180° rotate ... D or A then try to" / "Click to move while still scanning for jaso"): the camera turns round, the
+        // heading is forgotten - the next step goes the way the camera faces now, away from what blocked it - and the walk,
+        // with its Jaso checks, goes on. The sidesteps and the return to the nearest waypoint keep their own counts.
+        if (b.StuckTurnAfterMs > 0 && _blossomStillSince > 0 && now - _blossomStillSince >= b.StuckTurnAfterMs)
         {
-            int centerX = frame.Width / 2;
-            // Near a waypoint the click is measured from the character's feet (0.55 h), elsewhere from the middle.
-            int centerY = _blossomNear ? (int)(frame.Height * 0.55) : frame.Height / 2;
-            double scale = 1;
-            double roomLeft = centerX - frame.Width * 0.25, roomRight = frame.Width * RunClickRight - centerX;
-            double roomUp = centerY - frame.Height * RunClickTop, roomDown = frame.Height * 0.78 - centerY;
-            if (ox < 0) scale = Math.Min(scale, roomLeft / -ox);
-            if (ox > 0) scale = Math.Min(scale, roomRight / ox);
-            if (oy < 0) scale = Math.Min(scale, roomUp / -oy);
-            if (oy > 0) scale = Math.Min(scale, roomDown / oy);
-
-            int clickX = (int)Math.Round(centerX + ox * scale);
-            int clickY = (int)Math.Round(centerY + oy * scale);
-            if (!_controls.WalkTo(clickX, clickY, forceWalk: false))
+            var round = Random.Shared.Next(2) == 0 ? TurnDirection.Left : TurnDirection.Right;
+            if (!_controls.Turn(round, b.StuckTurnMs))
             {
-                _detail = "walk click blocked - waiting for the game to be in front";
                 _waitUntil = now + 300;
                 return;
             }
 
-            _simpleClick = (ox, oy);
-            _lastClick = (clickX, clickY, now);
-            // Near a waypoint one click per read (the read sets the next one); else the same click again shortly.
-            _blossomClickAt = _blossomNear ? long.MaxValue : now + b.WalkClickEveryMs;
+            Log?.Invoke(LogLevel.Warning, $"Not moving for {(now - _blossomStillSince) / 1000.0:0}s - turning the camera round ('{TurnKey(round)}' " +
+                                          $"{b.StuckTurnMs / 1000.0:0.0#}s) and walking on the way it faces now.");
+            _blossomStillSince = 0;
+            // A look aside in progress is over: the camera faces elsewhere now.
+            _blossomAside = null;
+            _blossomTurning = null;
+            _blossomTurnStepsLeft = 0;
+            _blossomAsideSteps = 0;
+            _blossomHeadingBeforeAside = null;
+            _blossomScanEndedAt = now;
+            ForgetBlossomHeading();
+            BlossomShot(frame, "blossom_turn_round");
+            _waitUntil = now + BlossomScanSettleMs;
+            return;
+        }
+
+        if (_blossomDir is (double ox, double oy) && now >= _blossomClickAt && !BlossomWalkClick(frame, ox, oy, now))
+        {
+            _detail = "walk click blocked - waiting for the game to be in front";
+            _waitUntil = now + 300;
+            return;
         }
 
         long next = Math.Min(Math.Min(_blossomClickAt, _blossomReadAt), Math.Min(_blossomTargetAt, _blossomTabAt + b.TabEveryMs));
+        if (b.ClickToTarget)
+            next = Math.Min(next, now + JasoLookEveryMs);   // the Jaso search on (about) every frame
         _waitUntil = Math.Max(now + 50, next);
     }
 
@@ -887,6 +1203,11 @@ public sealed partial class AutomationPilot
                 {
                     SetBlossomHeading(angle, "learnt from the first step");
                 }
+                else if (_blossomRemeasure)
+                {
+                    // The first step after a look aside's turn: by how much the camera turned is not known (TurnBlossomCamera).
+                    SetBlossomHeading(angle, "re-measured after the camera turned");
+                }
                 else if (Math.Abs(Math.IEEERemainder(angle - _headingError, 2 * Math.PI)) > BlossomHeadingMissRad)
                 {
                     // Far from what the heading says: a wall or a mob pushed one step - or the first step was such a push
@@ -905,7 +1226,12 @@ public sealed partial class AutomationPilot
             }
 
             // Near a waypoint the clicks are short, so a smaller step still counts as moving.
-            _blossomStalls = step < (_blossomNear ? 8 : 20) ? _blossomStalls + 1 : 0;
+            bool still = step < (_blossomNear ? 8 : 20);
+            _blossomStalls = still ? _blossomStalls + 1 : 0;
+            if (!still)
+                _blossomStillSince = 0;
+            else if (_blossomStillSince == 0)
+                _blossomStillSince = now;
         }
 
         _lastCoords = (coords.X, coords.Y);
@@ -936,6 +1262,27 @@ public sealed partial class AutomationPilot
         {
             Log?.Invoke(LogLevel.Warning, $"Not moving for {_blossomStalls} steps at {coords} on the way to waypoint {_blossomWaypoint + 1} - trying every way until it moves.");
             BlossomShot(frame, "blossom_stuck");
+
+            // User, 18:10: "if stuck try to sidestep and return back to nearest waypoint" - the sidesteps go on (BlossomUnblock),
+            // now towards the nearest waypoint, back on the road the route was recorded along; from there on to this one again.
+            // Once per waypoint: stuck on its way a second time, the steps and the no-progress skip below carry on instead.
+            int nearest = BlossomRoute.Nearest(_blossomRoute, coords.X, coords.Y);
+            if (nearest != _blossomWaypoint && _blossomReturnedFrom != _blossomWaypoint)
+            {
+                var near = _blossomRoute[nearest];
+                Log?.Invoke(LogLevel.Info, $"Stuck on the way to waypoint {_blossomWaypoint + 1} - going back to the nearest waypoint {nearest + 1} " +
+                                           $"({near.X},{near.Y}, {coords.DistanceTo(near.X, near.Y):0} away), then on along the route.");
+                _blossomReturnedFrom = _blossomWaypoint;
+                _blossomWaypoint = nearest;
+                _blossomLegFrom = (coords.X, coords.Y);
+                _blossomWaypointSteps = 0;
+                _blossomBestDistance = double.MaxValue;
+                goal = near;
+                needX = goal.X - coords.X;
+                needY = goal.Y - coords.Y;
+                distance = Math.Sqrt(needX * needX + needY * needY);
+                _blossomNear = distance < BlossomNearDistance;
+            }
         }
 
         // Moving, but no closer (round an obstacle and back): skipped after BlossomNoProgressSteps reads without getting 30
@@ -958,8 +1305,10 @@ public sealed partial class AutomationPilot
 
         if (!_blossomHeadingKnown)
         {
-            // The first step: straight up the screen (see the summary).
-            _blossomDir = (0, -b.WalkClickPx);
+            // The first step: straight up the screen (see the summary) - blocked, the ways round it in turn, and the step that
+            // moves teaches the heading (live 18:08, 0.25.10: after a fight the heading was unknown, straight up was a wall,
+            // and it stood there 20 s until the AFK checker's step moved it).
+            _blossomDir = _blossomStalls >= 2 ? BlossomUnblock(frame, coords, 0, -b.WalkClickPx) : (0, -b.WalkClickPx);
         }
         else
         {
@@ -1009,10 +1358,7 @@ public sealed partial class AutomationPilot
         int index = _blossomUnblockWay++ % BlossomStepWays.Length;
         if (index == 0 && _settings.Dungeon.ZoomOutNotches > 0
             && _controls.ZoomOut(frame.Width / 2, (int)(frame.Height * 0.40), _settings.Dungeon.ZoomOutNotches))
-        {
             Log?.Invoke(LogLevel.Info, $"Blocked at {coords} - zoomed out again.");
-            QueueBlossomTilt(levelOnly: false);   // the walk's next tick tilts the camera up again
-        }
 
         var (x, y, name) = BlossomStepWays[index];   // x: right of the way, y: back
         Log?.Invoke(LogLevel.Info, $"Blocked at {coords} ({_blossomStalls} still steps towards waypoint {_blossomWaypoint + 1}) - stepping {name}.");
@@ -1028,6 +1374,7 @@ public sealed partial class AutomationPilot
         _blossomHeadingKnown = true;
         _blossomHeadingMisses = 0;
         _blossomHeadingAge = 0;
+        _blossomRemeasure = false;
         Log?.Invoke(LogLevel.Info, $"Heading {how}: the view is turned {angle * 180 / Math.PI:0} deg from north.");
     }
 
@@ -1045,6 +1392,8 @@ public sealed partial class AutomationPilot
     {
         int left = _blossomWaypoint + 1;
         bool wasForward = _blossomForward;
+        if (_blossomWaypoint == _blossomReturnedFrom)
+            _blossomReturnedFrom = -1;   // past the waypoint it once went back from (reached or skipped)
         _blossomLegFrom = _blossomRoute[_blossomWaypoint];   // the next leg runs from the waypoint just left
         _blossomWaypoint = BlossomRoute.Next(_blossomWaypoint, _blossomRoute.Count, _settings.Blossom.LoopFrom,
             _settings.Blossom.BackAndForth, ref _blossomForward);
@@ -1053,6 +1402,7 @@ public sealed partial class AutomationPilot
         Log?.Invoke(LogLevel.Info, $"{what} - on to waypoint {_blossomWaypoint + 1} ({next.X},{next.Y}).");
         _blossomPauseSince = 0;
         _blossomStalls = 0;
+        _blossomStillSince = 0;
         _blossomWaypointSteps = 0;
         _blossomBestDistance = double.MaxValue;
         _simpleClick = null;
@@ -1278,10 +1628,7 @@ public sealed partial class AutomationPilot
         var (ux, uy, side) = BlossomStepWays[_blossomSteps % BlossomStepWays.Length];
         if (_blossomSteps % BlossomStepWays.Length == 0 && _settings.Dungeon.ZoomOutNotches > 0
             && _controls.ZoomOut(frame.Width / 2, (int)(frame.Height * 0.40), _settings.Dungeon.ZoomOutNotches))
-        {
             Log?.Invoke(LogLevel.Info, $"Stuck on '{_blossomTarget}' - zoomed out again.");
-            QueueBlossomTilt(levelOnly: false);   // tilted up again once the walk goes on
-        }
         _blossomSteps++;
         int feetX = frame.Width / 2, feetY = (int)(frame.Height * 0.55);
         int clickX = (int)Math.Round(Math.Clamp(feetX + ux * b.WalkClickPx, frame.Width * 0.25, frame.Width * RunClickRight));
@@ -1321,7 +1668,7 @@ public sealed partial class AutomationPilot
                 return;
 
             _blossomFightLookAt = 0;
-            var jasos = ScreenAnalyzer.FindJasos(frame, WarWalkBands(frame.Width, frame.Height));
+            var jasos = ScreenAnalyzer.FindJasos(frame, JasoBands(frame.Width, frame.Height));
             if (jasos.Count == 0)
                 return;
 
@@ -1386,7 +1733,6 @@ public sealed partial class AutomationPilot
             Log?.Invoke(LogLevel.Info, $"At {coords}, away from the arrival spot - no pillar turn, walking from the nearest waypoint.");
             _blossomHeadingKnown = false;
             _blossomWaypoint = -1;
-            QueueBlossomTilt(levelOnly: false);
             BeginBlossomBuff("after the jump", thenTurn: false);
             return;
         }
@@ -1402,18 +1748,11 @@ public sealed partial class AutomationPilot
     {
         _zoneConfirmedAt = Environment.TickCount64;
 
-        // Start inside with the autohunt running: it would fight everything beside the walk. The newest autohunt line in
-        // the combat log decides (J is a toggle), as at the Laby's final boss; ticked until it is off or given up.
-        if (!_blossomHuntOffChecked && !_controls.IsDryRun && _controls.Has(GameAction.ToggleAutohunt))
-        {
-            if (!await EnsureAutohuntOffAsync(frame, $"in {Destination}", trustVisibleLine: true))
-                return;
-            _blossomHuntOffChecked = true;
-        }
+        // No autohunt check here (user, 2026-11-02: "you can't activate autohunt inside, so make sure it is off in the
+        // city"): inside, 'J' prints nothing - live 02:28 two presses and ~10 s for "cannot tell". The town check does it.
 
         // No pillar turn here (user, 2026-10-30: "it is possible to start it already in the map and no need to look for the
         // pillar"): away from the arrival spot they are not in view; the walk learns the heading from its first step.
-        QueueBlossomTilt(levelOnly: false);
         if (await FindBlossomTargetAsync(frame) is { } target && BlossomTargetAtFullHealth(target, Environment.TickCount64))
         {
             Log?.Invoke(LogLevel.Warning, $"Already in {Destination} with '{target}' targeted - fighting it, then walking from the nearest waypoint.");

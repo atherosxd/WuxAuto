@@ -800,16 +800,138 @@ public sealed class ScreenAnalyzer : IDisposable
     /// first. A Jaso is a standing red figure: a dark magenta-red fan on top (blue above green - a shrine gate's red-brown
     /// posts are not) over a magenta top and an orange-red skirt. Live 2026-11-01 at 2048x1152: 38x66, fan H 172-177 S ~120
     /// V ~67, skirt H 4-9 S ~157 V ~122; the grass and the road are H 27-33. Red pixels outside <paramref name="excluded"/>
-    /// (the HUD) are joined into figures at half size; a figure 3-14 % of the client tall, 1.1-4x taller than wide, with
-    /// fan pixels in its top 40 % and orange ones below counts - unless it stands where the character does (its dark wings
-    /// with red flame edges read like one). Prototype on 60 saved frames: the live Jaso found, nothing else (gate posts,
-    /// trees, flowers, the character's pet, Eight Symbols Island); a Jaso seen from behind (only the wide fan) is missed.
+    /// (the HUD) are joined into figures at half size; a figure 3-25 % of the client tall counts when it has her look: the
+    /// fan in its top 40 % and orange below (1.1-4x taller than wide), or - attacking or turned away, the fan glows green or
+    /// splits off (the user's videos, 2026-11-01) - a red dress (hue 4-8 for 45 %+ of its orange) with a weaker fan (0.8x+)
+    /// or alone on a standing shape (1.25x+, 4.5 % tall). Not the character's own body column, not navy (its wings). On the
+    /// saved Blossom frames: the real Jasos only (pillars, reeds, tulips, leaves, the pet and the gear stay out); in the
+    /// user's videos every frame she shows in but two inside her green dome and a few back views.
     /// </summary>
     public static IReadOnlyList<PixelRect> FindJasos(Mat frame, IReadOnlyList<PixelRect> excluded)
+        => JasoFigures(frame, excluded, partialToo: false).Select(c => c.Box).ToList();
+
+    /// <summary>
+    /// <see cref="FindJasos"/>' figures (<see cref="JasoCandidate.Full"/>) and also the ones that show only some of her look
+    /// (user, 2026-11-01: "it should be able to click a jaso from afar with just some of the characteristics of the
+    /// monster"): 1.5-3 % of the client tall (far up the field, 16x30 px at 2048x1152 live), or wider than tall, or the
+    /// fan without the skirt (from behind only the wide fan shows). The dark magenta fan is required: the orange alone
+    /// matched 20-40 flowers and soil patches a frame on the saved Blossom frames, with the fan 0-3 (far Jasos among them,
+    /// also the pet). The pilot clicks a partial one only where the game's cursor turns into a sword over it. Nearest to
+    /// the character first.
+    /// </summary>
+    public static IReadOnlyList<JasoCandidate> FindJasoCandidates(Mat frame, IReadOnlyList<PixelRect> excluded)
+        => JasoFigures(frame, excluded, partialToo: true);
+
+    /// <summary>
+    /// The character itself, from its own HP bar (live 2026-11-01 16:23: near trees the game pulls the camera in and the
+    /// character is drawn big and low - its HP bar at 0.75 h instead of 0.56 h - and its red mask and legs were clicked as
+    /// Jasos). The bar sits under its feet, centred: a red strip (HP) over a blue one (MP), both starting at the same left
+    /// edge - at 2048x1152 108x8 red, 4 px gap, 92x6 blue, left edge at w/2 - 54. The character's height on screen follows
+    /// the bar's height (0.15 h tall with the bar at 0.556 h, 0.41 h with it at 0.752 h); the box covers it with a margin.
+    /// Null when no bar is found (a window over it, the character dead).
+    /// </summary>
+    public static PixelRect? FindOwnCharacter(Mat frame)
+    {
+        int w = frame.Width, h = frame.Height;
+        var roi = new PixelRect((int)(w / 2.0 - 0.08 * h), (int)(0.35 * h), (int)(0.16 * h), (int)(0.60 * h)).Clamp(w, h);
+        if (roi.Width < 16 || roi.Height < 16)
+            return null;
+
+        using var hsv = ToHsv(frame, roi);
+        using var red = new Mat();
+        using var red2 = new Mat();
+        using var blue = new Mat();
+        CvHelpers.InRange(hsv, new MCvScalar(0, 140, 110), new MCvScalar(10, 255, 255), red);
+        CvHelpers.InRange(hsv, new MCvScalar(170, 140, 110), new MCvScalar(180, 255, 255), red2);
+        CvInvoke.BitwiseOr(red, red2, red);
+        CvHelpers.InRange(hsv, new MCvScalar(95, 120, 100), new MCvScalar(130, 255, 255), blue);
+        byte[] r = CvHelpers.Bytes(red), b = CvHelpers.Bytes(blue);
+        int rw = roi.Width, minRun = Math.Max(6, (int)(0.012 * h)), maxGap = Math.Max(12, (int)(0.02 * h));
+
+        for (int y = 0; y < roi.Height; y++)
+        {
+            var (start, length) = LongestRun(r, y * rw, rw);
+            if (length < minRun)
+                continue;
+            double fromCentre = w / 2.0 - (roi.X + start);   // the bar's left edge, left of the centre line
+            if (fromCentre < 0.02 * h || fromCentre > 0.08 * h)
+                continue;
+
+            for (int dy = 2; dy <= maxGap && y + dy < roi.Height; dy++)
+            {
+                var (blueStart, blueLength) = LongestRun(b, (y + dy) * rw, rw);
+                if (blueLength < minRun || Math.Abs(blueStart - start) > 3)
+                    continue;
+
+                int barY = roi.Y + y;
+                double tall = Math.Clamp(0.15 * h + 1.33 * (barY - 0.556 * h), 0.12 * h, 0.5 * h) * 1.15;
+                double half = Math.Max(0.05 * h, 0.35 * tall);
+                return new PixelRect((int)(w / 2.0 - half), (int)(barY - tall), (int)(2 * half), (int)(tall + 0.01 * h));
+            }
+        }
+
+        return null;
+
+        // The longest run of set pixels in one row (gaps of 1-2 pixels bridged: JPEG / scaling noise).
+        static (int Start, int Length) LongestRun(byte[] mask, int offset, int width)
+        {
+            int bestStart = 0, bestLength = 0, start = -1, gap = 0;
+            for (int x = 0; x < width; x++)
+            {
+                if (mask[offset + x] != 0)
+                {
+                    if (start < 0)
+                        start = x;
+                    gap = 0;
+                    int length = x - start + 1;
+                    if (length > bestLength)
+                        (bestStart, bestLength) = (start, length);
+                }
+                else if (start >= 0 && ++gap > 2)
+                {
+                    start = -1;
+                    gap = 0;
+                }
+            }
+
+            return (bestStart, bestLength);
+        }
+    }
+
+    /// <summary>
+    /// The character's own body column when <see cref="FindOwnCharacter"/> finds no HP bar: centre within 0.05 h sideways of
+    /// the middle, from 0.42 h down to 0.95 h. A Jaso cannot stand there, beside it she can (user, 2026-11-01: "it doesn't
+    /// detect the Jaso just beside the character" - this was 0.13 h by 0.16 h, which hid her). It reaches down the screen
+    /// because without a bar the camera is often pulled in and the character drawn big and low (live 2026-11-02 04:01,
+    /// 0.25.17: in the reeds its gear 0.04 h aside, 0.65 h down was clicked; until then the column was 0.035 h x 0.42-0.58 h).
+    /// The character's wings spread wider; they are told apart by their navy.
+    /// </summary>
+    public static bool IsOwnSpot(PixelRect box, int w, int h)
+    {
+        double cy = box.Y + box.Height / 2.0;
+        return Math.Abs(box.X + box.Width / 2.0 - w / 2.0) < 0.05 * h && cy >= 0.42 * h && cy <= 0.95 * h;
+    }
+
+    /// <summary>
+    /// Every red figure 2 % of the height or taller that <see cref="FindJasoCandidates"/> looks at, with its size, shape and
+    /// colour shares and why it was or was not taken (the --jaso probe's --why).
+    /// </summary>
+    public static IReadOnlyList<string> JasoReport(Mat frame, IReadOnlyList<PixelRect> excluded)
+    {
+        var why = new List<string>();
+        JasoFigures(frame, excluded, partialToo: true, why);
+        return why;
+    }
+
+    private static List<JasoCandidate> JasoFigures(Mat frame, IReadOnlyList<PixelRect> excluded, bool partialToo, List<string>? why = null)
     {
         int w = frame.Width, h = frame.Height;
         if (w < 16 || h < 16)
             return [];
+
+        // The character itself, from its HP bar; without one, the fixed spot at the screen's middle (IsOwnSpot).
+        var own = FindOwnCharacter(frame);
+        why?.Add(own is { } ownBox ? $"own character (HP bar): {ownBox.X},{ownBox.Y} {ownBox.Width}x{ownBox.Height}" : "own character: no HP bar - the fixed spot");
 
         // The figures are found at half size (nearest pixel: the same mask a full-size pass shrunk would give) - the walk
         // looks every 0.7 s and a full-size pass (~130 ms at 2048x1152) held its clicks back. The fan and skirt shares are
@@ -847,29 +969,102 @@ public sealed class ScreenAnalyzer : IDisposable
             return CvInvoke.CountNonZero(mask);
         }
 
-        var hits = new List<PixelRect>();
+        // Pixels of one colour range in a part of the frame and their middle (null when there are none), at full size.
+        (int Count, (int X, int Y)? Middle) Centroid(MCvScalar lower, MCvScalar upper, int x, int y, int cw, int ch)
+        {
+            var r = new PixelRect(x, y, cw, ch).Clamp(w, h);
+            if (r.Width <= 0 || r.Height <= 0)
+                return (0, null);
+            using var part = ToHsv(frame, r);
+            using var mask = new Mat();
+            CvHelpers.InRange(part, lower, upper, mask);
+            var m = CvInvoke.Moments(mask, true);
+            return m.M00 <= 0 ? (0, null) : ((int)m.M00, (r.X + (int)Math.Round(m.M10 / m.M00), r.Y + (int)Math.Round(m.M01 / m.M00)));
+        }
+
+        var hits = new List<JasoCandidate>();
         foreach (var (box, pixels) in Components(reds))
         {
-            if (pixels < 20)
-                continue;
             int x0 = box.X * 2, y0 = box.Y * 2, bw = box.Width * 2, bh = box.Height * 2;
-            if (bh < 0.03 * h || bh > 0.14 * h)
-                continue;
             double aspect = bh / (double)Math.Max(1, bw);
-            if (aspect < 1.1 || aspect > 4.0)
+            string figure = $"{x0},{y0} {bw}x{bh} ({bh / (double)h:0.000} h, h/w {aspect:0.00}, {pixels} px)";
+            bool Reject(string reason)
+            {
+                if (why != null && bh >= 0.02 * h)
+                    why.Add($"{figure}: {reason}");
+                return true;
+            }
+
+            if (pixels < (partialToo ? 8 : 20) && Reject("too few pixels"))
                 continue;
-            double cx = x0 + bw / 2.0, cy = y0 + bh / 2.0;
-            if (Math.Abs(cx - w / 2.0) < 0.13 * h && Math.Abs(cy - 0.50 * h) < 0.16 * h)
-                continue;   // the character's own spot
+            if ((bh < (partialToo ? 0.015 : 0.03) * h || bh > 0.25 * h) && Reject("too small or too tall"))
+                continue;
+            if ((aspect < (partialToo ? 0.4 : 0.8) || aspect > (partialToo ? 4.5 : 4.0)) && Reject("shape"))
+                continue;
+            // Cut off by the left, right or bottom edge of the screen: what is off the screen could be anything, and a click
+            // at the edge is not on her (live 2026-11-02 04:01, 0.25.17: a figure cut by the left edge was clicked at 6,283).
+            if ((box.X <= 0 || box.Right >= sw || box.Bottom >= sh) && Reject("cut off by the screen edge"))
+                continue;
+            // The character's own spot (its dark wings with red flame edges read like a Jaso): never a full hit; a partial
+            // candidate there (a Jaso fighting the character stands in it) is clicked only on a sword cursor.
+            double fx = x0 + bw / 2.0, fy = y0 + bh / 2.0;
+            bool ownSpot = own is { } o
+                ? fx >= o.X && fx <= o.Right && fy >= o.Y && fy <= o.Bottom
+                : IsOwnSpot(new PixelRect(x0, y0, bw, bh), w, h);
+            if (ownSpot && !partialToo && Reject("the character's own spot"))
+                continue;
+            // Standing as near as the character or nearer, she is about as tall as it (live 18:37-18:45, 0.25.11: looking
+            // aside showed the character side-on, and its small red pet trotting beside it - ~0.07 h against ~0.17 h - and a
+            // red rose in front of it were clicked as Jasos a dozen times). Further up the screen (further off) all are small.
+            if (own is { } me && !ownSpot)
+            {
+                double meTall = (me.Height - 0.01 * h) / 1.15, feetY = me.Bottom - 0.01 * h;
+                // Feet within 0.03 h of the character's or nearer (F11 2026-11-02 03:17, 1024x768: a far Jaso whose feet were
+                // 0.07 h above the character's - far off with the camera tilted up - was taken for the pet at 0.08 h).
+                if (y0 + bh >= feetY - 0.03 * h && bh < 0.6 * meTall
+                    && Reject($"too small for its depth ({bh / meTall:0.00} of the character's height - its pet, a flower)"))
+                    continue;
+            }
+            // The character's wings: dark navy with red flame edges - 26-54 % navy in their box beside the character (live
+            // 2026-10-30), 0-0.3 % on four real Jasos. A figure with that much navy is not her, wherever it stands.
+            // Counted in the middle third of the box only (F11 2026-11-02 03:16:57: a Jaso fighting beside the character, the
+            // river behind her, read navy 0.20 over her whole box - the water at her sides; the wings are navy right through).
+            int midW = Math.Max(1, bw / 3);
+            int navy = Count(new MCvScalar(95, 60, 15), new MCvScalar(130, 255, 150), x0 + bw / 3, y0, midW, bh);
+            if (navy >= 0.12 * midW * bh && Reject($"navy {navy / (double)(midW * bh):0.00} (wings)"))
+                continue;
             int fanTop = Count(new MCvScalar(160, 50, 35), new MCvScalar(180, 255, 130), x0, y0, bw, (int)(bh * 0.4));
-            int orangeLow = Count(new MCvScalar(4, 100, 60), new MCvScalar(14, 255, 255), x0, y0 + (int)(bh * 0.35), bw, bh - (int)(bh * 0.35));
-            if (fanTop < 0.03 * bh * bh || orangeLow < 0.015 * bh * bh)
-                continue;
-            hits.Add(new PixelRect(x0, y0, bw, bh));
+            int skirtTop = y0 + (int)(bh * 0.35);
+            var (orangeLow, body) = Centroid(new MCvScalar(4, 100, 60), new MCvScalar(14, 255, 255), x0, skirtTop, bw, bh - (int)(bh * 0.35));
+            bool fan = fanTop >= 0.03 * bh * bh, skirt = orangeLow >= 0.015 * bh * bh;
+            // Attacking or turned away, her fan glows green or splits from the rest of her and only her red dress shows
+            // (user's videos, 2026-11-01: fan 0.00-0.027, dress 0.04-0.26 on every miss): a weaker fan with more dress, or
+            // a big red dress alone, count too.
+            // Her dress is red-orange (hue 4-8 for 0.53-0.77 of its orange pixels); wooden pillars, cattail reeds, tulips,
+            // autumn leaves and the character's own gear are browner (0.00-0.21) - without the fan, only a red dress counts.
+            double fanShare = fanTop / (double)(bh * bh), dress = orangeLow / (double)(bh * bh);
+            bool red = orangeLow > 0
+                       && Count(new MCvScalar(4, 100, 60), new MCvScalar(8, 255, 255), x0, skirtTop, bw, bh - (int)(bh * 0.35)) >= 0.45 * orangeLow;
+            // Side-on, her spread skirt makes her nearly as wide as tall (h/w 0.8-1.1), with some fan still showing; the dress
+            // alone counts only on a standing shape (h/w >= 1.25, 0.045 h tall) - a red tulip (0.043 h, 1.09) passed otherwise.
+            bool look = (fan && skirt && aspect >= 1.1)
+                        || (red && fanShare >= 0.012 && dress >= 0.04 && aspect >= 0.8)
+                        || (red && dress >= 0.08 && bh >= 0.045 * h && aspect >= 1.25);
+            bool full = look && bh >= 0.03 * h && aspect <= 4.0 && !ownSpot;
+            why?.Add($"{figure}: fan {fanTop / (double)(bh * bh):0.000} (>= 0.03), skirt {orangeLow / (double)(bh * bh):0.000} (>= 0.015)"
+                     + $" -> {(full ? "FULL" : partialToo && fan ? "partial" : "no")}");
+            if (full || (partialToo && fan))
+            {
+                var box2 = new PixelRect(x0, y0, bw, bh);
+                // User, 2026-11-01: "it click on its right not the body of the monster" - the box's middle can be off her body
+                // (her fan sticks out to one side); the middle of her orange skirt is on it.
+                var found = new JasoCandidate(box2, full) { AtOwnSpot = ownSpot };
+                hits.Add(body is { } b ? found with { Body = b } : found);
+            }
         }
 
         double meX = w / 2.0, meY = h * 0.54;
-        return hits.OrderBy(r => Math.Pow(r.CenterX - meX, 2) + Math.Pow(r.CenterY - meY, 2)).ToList();
+        return hits.OrderBy(c => Math.Pow(c.Box.CenterX - meX, 2) + Math.Pow(c.Box.CenterY - meY, 2)).ToList();
     }
 
     /// <summary>The game world between the HUD panels, where the ring and boss detectors look.</summary>

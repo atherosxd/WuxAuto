@@ -192,6 +192,15 @@ public class WarTextTests
     [InlineData("", false)]
     public void IsRegularWarLine(string line, bool expected) => Assert.Equal(expected, WarText.IsRegularWarLine(line));
 
+    [Theory]
+    [InlineData("Smart Farm", true)]
+    [InlineData("Smart Fann", true)]
+    [InlineData("[] Smart Farm", true)]
+    [InlineData("Auto hunt stopped; Smart Farm journey cancelled.", false)]   // the combat log line, not the box's label
+    [InlineData("Regular War", false)]
+    [InlineData("", false)]
+    public void IsSmartFarmLine(string line, bool expected) => Assert.Equal(expected, WarText.IsSmartFarmLine(line));
+
     [Fact]
     public void NewLines_IsAMultisetDifference()
     {

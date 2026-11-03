@@ -393,13 +393,48 @@ public sealed class BlossomSettings
     public bool ClickToTarget { get; set; } = true;
 
     /// <summary>
-    /// On the walk, no Jaso seen this long -> stand and turn the camera ScanTaps steps of ScanTapMs, looking after each
-    /// (user, same day: "when running, rotate the camera to scan for the mob"). 0 = off.
+    /// On the walk, looking ahead with no Jaso seen this long -> the camera looks left or right at random for LookAsideMs
+    /// while the walk goes on, then turns back (user, same day: "when running, rotate the camera to scan for the mob"; 18:10:
+    /// "randomly do left or right, stay on any direction longer than 5s then return back"). 4000 until settings v27, 1500
+    /// until v28, 6000 until v29 (user, 2026-11-02: "it is trying to move too much and rotate too much"). 0 = off.
     /// </summary>
-    public int ScanEveryMs { get; set; } = 4000;
+    public int ScanEveryMs { get; set; } = 10000;
 
-    public int ScanTaps { get; set; } = 6;
+    /// <summary>How long the walk looks aside before it turns back (user, 18:10: "stay on any direction longer than 5s").</summary>
+    public int LookAsideMs { get; set; } = 6000;
 
+    /// <summary>
+    /// The look aside's camera turn: A (left) or D (right) held this long, and the other key as long to turn back. 700 (~120
+    /// deg live) until settings v29 - "rotate too much".
+    /// </summary>
+    public int ScanSideMs { get; set; } = 350;
+
+    /// <summary>
+    /// On arrival, turn ('D' taps) until the two pillars are centred before walking (user, 2026-11-02: "always turn to
+    /// pillars"). Off = the walk goes straight on from the arrival spot.
+    /// </summary>
+    public bool TurnToPillars { get; set; } = true;
+
+    /// <summary>
+    /// The AFK Checker's count ("k/5" in the chat) from which the walk steps aside, at most every AfkStepEveryMs (user,
+    /// 2026-11-02: "it is trying to move too much" / "the afk maxes out at mostly a minute, plenty of time to try moving
+    /// again"; it stepped at every 1/5 before).
+    /// </summary>
+    public int AfkStepFrom { get; set; } = 3;
+
+    public int AfkStepEveryMs { get; set; } = 15000;
+
+    /// <summary>
+    /// The walk clicking on and the character not moving this long -> the camera turns round (StuckTurnMs) and the walk goes
+    /// the way it faces now (user, 2026-11-01 20:35: "If it didnt move while trying to move for 10s. Try a 180° rotate").
+    /// 0 = off.
+    /// </summary>
+    public int StuckTurnAfterMs { get; set; } = 10000;
+
+    /// <summary>How long A or D is held for that turn round (~180 deg; a 700 ms hold turned ~120 deg live).</summary>
+    public int StuckTurnMs { get; set; } = 1400;
+
+    /// <summary>The fight scan's camera step (one D tap of this length).</summary>
     public int ScanTapMs { get; set; } = 250;
 
     /// <summary>
@@ -409,11 +444,25 @@ public sealed class BlossomSettings
     public int FightScanEveryMs { get; set; } = 3000;
 
     /// <summary>
-    /// The camera tilted up this many px (right-drag) for the walk, so it looks ahead instead of down at the floor (user,
-    /// 2026-11-01: "also try to move the screen up instead of facing down"). Always from the steepest view: a long drag down
-    /// first (the game stops the camera there), so the tilt is the same however often it is done. 0 = off.
+    /// On arrival in Blossom Garden (teleport or death), one right-drag up of this many px, so the camera looks ahead instead
+    /// of down at the floor (user, 2026-11-01: "upon arrival tilt up a little bit" - the teleport leaves it looking almost
+    /// straight down). Only then, so it never adds up. 0 = off.
     /// </summary>
     public int CameraTiltPx { get; set; } = 60;
+
+    /// <summary>
+    /// Hover over the figures and click only where the game's cursor turns into a sword (also the far and partly seen ones,
+    /// and one beside the character). Off (user, 2026-11-01: "Turn it off"): read from outside, the cursor was not reliable -
+    /// the plain Windows arrow for a moment after the game comes to the front, the game's pointer over any character, at
+    /// times no cursor at all. Off, a figure with the Jaso's whole look is clicked in her middle and no other.
+    /// </summary>
+    public bool UseSwordCursor { get; set; }
+
+    /// <summary>
+    /// The game's sword cursor (the fingerprint <see cref="IGameControls.HoverCursor"/> gives over a monster), learnt from
+    /// a click whose target bar then showed the Jaso; 0 = not learnt yet. Learnt, only this picture counts as the sword.
+    /// </summary>
+    public long SwordCursor { get; set; }
 
     /// <summary>
     /// Reached within this many units. Live 2026-10-29: the old waypoints 2, 4 and 5 lay just past a railing (stopped 86, 67,
@@ -821,10 +870,12 @@ public sealed class SequenceSettings
     public string AutohuntSettingsKey { get; set; } = "S";
 
     /// <summary>
-    /// Auto Laby, in town before the first teleport of a Start (user, 2026-10-29: with "Regular War" ticked the autohunt
-    /// may teleport the character to the war while it attacks a boss): <see cref="AutohuntSettingsKey"/> opens the
-    /// autohunt settings, a ticked "Regular War" box is clicked until it reads empty (at most 2 clicks), the key closes
-    /// the window. Unreadable -> a warning and the run carries on. Check box "Regular War off before Laby".
+    /// In town, once per Start, before the autohunt check, every mode (user, 2026-10-29: with "Regular War" ticked the
+    /// autohunt may teleport the character to the war while it attacks a boss; 2026-11-02: "Smart Farm" too - with it on,
+    /// 'J' in town starts a journey back to a hunting ground): <see cref="AutohuntSettingsKey"/> opens the autohunt
+    /// settings, each ticked box is clicked until it reads empty (at most 2 clicks, 2.5 s apart), the key closes the
+    /// window. Unreadable -> a warning and the run carries on. Check box "Regular War + Smart Farm off in town" (the name
+    /// stays for saved settings).
     /// </summary>
     public bool RegularWarOffForLaby { get; set; } = true;
 

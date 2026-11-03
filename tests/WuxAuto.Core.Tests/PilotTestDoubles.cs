@@ -94,6 +94,15 @@ sealed class FakeGameInput : IGameInput
         return Record($"Click {clientX},{clientY}" + (button == MouseButton.Left ? "" : $" {button}"));
     }
 
+    /// <summary>The cursor the game shows at a point (1 = the normal one, 2 = the sword over a monster); null = cannot tell (0).</summary>
+    public Func<int, int, long>? Cursor { get; set; }
+
+    public long CursorAt(int clientX, int clientY)
+    {
+        Record($"Hover {clientX},{clientY}");
+        return Cursor?.Invoke(clientX, clientY) ?? 0;
+    }
+
     private bool Record(string call)
     {
         Calls.Add(call);

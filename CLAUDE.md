@@ -142,7 +142,7 @@ dotnet run --project .\tests\WuxAuto.SelfTest -- --tribe "$env:LOCALAPPDATA\WuxA
 dotnet run --project .\tests\WuxAuto.SelfTest -- --pillars <dir>
 
 # Auto Blossom: the Jasos found by colour and shape (ScreenAnalyzer.FindJasos) + their click points per PNG; writes <frame>.jaso.png
-dotnet run --project .\tests\WuxAuto.SelfTest -- --jaso <dir>
+dotnet run --project .\tests\WuxAuto.SelfTest -- --jaso <dir> [--why]   # --why: every red figure's size, shape, shares, verdict
 
 # M2 parity: the pilot's detectors and x1.5 OCR reads on the frozen legacy vision (tests\...\Legacy,
 # OpenCvSharp 4.13) vs Core's (Emgu CV), per frame; ends with two summary lines (see below)
@@ -179,7 +179,7 @@ words and the map scroll-arrow result. `--crop` writes `<frame>.crop.png` next t
 Core tests and the refactor parity gate (M1, 2026-10-27):
 
 ```powershell
-dotnet test tests\WuxAuto.Core.Tests        # xUnit, platform-free Core only (935 tests, ~4-8 min; the pilot tests tick a
+dotnet test tests\WuxAuto.Core.Tests        # xUnit, platform-free Core only (994 tests, ~4-8 min; the pilot tests tick a
                                            # blank Mat with a scripted OCR scene - see tests/ in section 3)
 # probe baseline: runs every SelfTest probe over a frozen, local-only frame set (never committed)
 # and writes normalised output; run it before and after a refactor and diff the two
@@ -397,9 +397,9 @@ RunToTarget, ReturnToTown, Done, Failed`.
 | Focus | activates the bound HWND (`FocusOnStart`), then waits `Input.FocusSettleMs` (800 ms) before the first key |
 | CheckZone | **before any teleport** (run 28, user): reads the minimap title. Labyrinth → no teleport: the highest stage whose boss name is on screen (whole name, `IsFullName`; Tab up to 5×; the open map lists every name, so it waits for the map to close) → `SelectBoss` at that stage (`_autohuntPressed` = true, J is a toggle). No name, but the coordinates are within 400 of the arrival point (3595, 3415) → a late teleport: carry on from `ZoomOut` (run 31). Otherwise → fail, never teleport. Anywhere else → `OpenInventory`. A re-login puts the character back where it was (Labyrinth mid-fight), and Start after an Alt-Tab did the same; both ran the teleport inside the dungeon before. The probe prints `stage name '...'` for every stage |
 | FontSize | once per Start, in town (user, 2026-10-21): **Escape** opens SETTINGS (Escape toggles it; the first press right after focusing was eaten once) → click the `VISUAL` tab → `ReadSettingRowAsync("Font size")` reads the value (`110%`) and the bright `<` / `>` glyphs beside it (1024×768: value 590,259, chevrons 541/671,263) → within `Sequence.FontSizePercent` … `FontSizeMaxPercent` (110 … 120, user 2026-10-23; min 0 = off) it is left alone, outside it the chevrons move it to the nearer end, ≤ 12 clicks → **SAVE** (exact word) if changed → Escape. Only text-found buttons are clicked — the window also has CHARACTER SELECT and EXIT. Anything unexpected just closes it and carries on. It was already 110 % when mapped. The VISUAL click right after Escape did not take once (still on SOUND, run 32): no "Font size" row → click VISUAL again (≤ 3), 900 ms after each. First live try read no value: the hit was the single word "Font" (< 60 % of "Font size") — the whole OCR line is judged now, and a miss saves `fontsize_unread`. **TAB target (user, 2026-10-24, `Sequence.TabTargetDefault` on, check box "TAB target: Default"):** same visit, after the font: the VISUAL list is first wheeled to the top (`TopStep`; the game reopens it at the top anyway), then down (10 notches, ≤ 3×) at a point 10 text heights under the VISUAL tab word until `ReadSettingRowAsync(…, numeric: false)` reads the row (`ValueText` = leftmost OCR line right of the label with 2+ letter words, must start in the left ¾ of the band). Options, in order: **Default → Nearest enemy → Enemy worth CP → Nearest monster**; the left chevron (found even when dimmed) is clicked until it reads Default (≤ 5) → one **SAVE** for both settings (SAVE leaves the window open) → Escape; a miss saves `tabtarget_unread`. 1920×1080: label (724,786), value ≈1063,784, chevrons 995 / 1178 x; all four values read right. Verified live 2026-10-24: Nearest monster → Default, saved, still Default after reopening. **Open:** at 1920×1080 the font row's right chevron (1178–1189) lies past the 30 h band end (label right 794 + 30×13 = 1184) and is dropped, so a font below the range cannot be raised there ("could not be set to 120%") |
-| AutohuntOff | in town, **every run**, right after CheckZone (user, 2026-10-25: a restart, a closed stage 5, the LOD timer or a re-login can leave the autohunt running in town). `Sequence.AutohuntOffInTown` (on, check box "Autohunt off in town"). J is a toggle, so: baseline of the combat log's (`Regions.AttackMessage`) autohunt lines → tap `AutohuntKey` → a **new** line (multiset diff vs the baseline, `AutohuntLog.NewState`; keyed from "autohunt" onward, the tail compared fuzzily, bottom-most new line decides) reading `AutohuntEndedText` "Auto hunt ended" **or `AutohuntStoppedText` "Auto hunt stopped"** (town wording, seen 2026-10-27 at 1440×900: "Auto hunt stopped; Smart Farm journey cancelled." — J in town starts a *Smart Farm journey* "Returning to the hunting ground: [The Labyrinth (Adept)]", the second J cancels it; until then every town check ended "cannot tell", `autohunt_unread`; `AutohuntLog.Score` takes a rest that *starts with* the expected words as a full match) = it was on, off now → done; `AutohuntStartedText` "Auto hunt started" = it was off → tap again (≤ 3 taps, snapshot `autohunt_on` if it still reads started). Nothing new 2 s after the first tap → one more tap (the first key after focusing is sometimes eaten; two unread taps = parity kept), still nothing → warning + `autohunt_unread`, carry on → FontSize / OpenInventory (`AfterTownChecks`). Dry run skips it. Not yet seen live — the message wording comes from the user |
+| AutohuntOff | in town, **every run**, right after CheckZone (user, 2026-10-25: a restart, a closed stage 5, the LOD timer or a re-login can leave the autohunt running in town). `Sequence.AutohuntOffInTown` (on, check box "Autohunt off in town"). J is a toggle, so: baseline of the combat log's (`Regions.AttackMessage`) autohunt lines → tap `AutohuntKey` → a **new** line (multiset diff vs the baseline, `AutohuntLog.NewState`; keyed from "autohunt" onward, the tail compared fuzzily, bottom-most new line decides) reading `AutohuntEndedText` "Auto hunt ended" **or `AutohuntStoppedText` "Auto hunt stopped"** (town wording, seen 2026-10-27 at 1440×900: "Auto hunt stopped; Smart Farm journey cancelled." — J in town starts a *Smart Farm journey* "Returning to the hunting ground: [The Labyrinth (Adept)]", the second J cancels it; until then every town check ended "cannot tell", `autohunt_unread`; `AutohuntLog.Score` takes a rest that *starts with* the expected words as a full match) = it was on, off now → done; `AutohuntStartedText` "Auto hunt started" = it was off → tap again (≤ 3 taps, snapshot `autohunt_on` if it still reads started). **A new line decides only once the log has settled** (`AutohuntQuietMs` 1200 ms unchanged, at most `AutohuntDecideMaxMs` 7 s after the tap) and **nothing new `AutohuntLineWaitMs` 4.5 s after the first tap → one more tap** (was 2 s; live 2026-11-01 22:31 each line showed ~2.5-3 s after its tap, the check took press 1's late "started" for press 2's answer, pressed a third time and left the autohunt on - its Smart Farm journey then pulled the character back to town 12 s after it arrived in Blossom Garden, also 17:30; user: "you can't activate autohunt inside, so make sure it is off in the city"; pinned by `BlossomPilotTests.InTown_TheAutohuntLinesComeLate_*`) (the first key after focusing is sometimes eaten; two unread taps = parity kept), still nothing → warning + `autohunt_unread`, carry on → FontSize / OpenInventory (`AfterTownChecks`). Dry run skips it. Not yet seen live — the message wording comes from the user |
 | RunSkill | in town, **every run**, after AutohuntOff (user, 2026-10-25: "before running LOD or Laby add a check if the Run skill is activated, it will have a ring on it"). `Sequence.RunSkillCheck` (on, check box "Run skill on in town"). `Assets/runskill.png` = the user's 54×57 crop of the active icon cut to the 33×33 inside the ring (the ring lies at radius 23–27 round its centre; the flame icon: red left, black right, yellow-gold flame bottom right). `FindRunSkill` matches it in `Regions.Hotbar` ≥ `RunSkillMatchScore` **0.88** (saved frames: 0.975–1.000 on every bar from 1024 to 2304 wide, 277 frames; a login screen hit 0.81 at ×0.5, nothing else above 0.74; frames whose bar is hidden read ≤ 0.70) → `ScreenAnalyzer.RingFraction`: 36 directions from the icon's centre, a gold pixel (H 15–30, S 60–150, V ≥ 150 scaled by the icon's brightest pixel / 255 — under a modal dialog the screen is dimmed, ring V 66–86, flame 102) at 0.68–0.85 of the box width out = that direction counts; ≥ `RunSkillRingMin` **0.25** = on. Every saved frame with the icon reads 0.47–0.56 (the icon covers parts of the ring; the user's crop 0.5, 20 of 36 directions) — **no frame with the skill off exists yet**, the "no ring" side is the user's word. No ring → click the icon, fresh frame 0.9 s later, ≤ 3 clicks → warning + `runskill_off`. Icon not on the bar → `RunSkillKey` **W** (UI "Run key") **once per Start** (`_runKeyPressed`): the key is a toggle and without the icon nothing says whether it was on, so a second press could turn it off; warning + `runskill_unread`. Dry run only reports. Not yet seen live |
-| RegularWarOff | **Auto Laby only**, in town, **once per Start** (`_regularWarOffChecked`), after RunSkill, before FontSize (user, 2026-10-29: "check if the regular war is turned on in the autohunt, disable it if enabled, as it may get teleported to the war when the autohunt is on while attacking the boss"). `Sequence.RegularWarOffForLaby` (on, check box "Regular War off before Laby"). `AutomationPilot.RegularWarOff.cs`: `AutohuntSettingsKey` **S** (≤ 2 presses, 2.5 s apart - even, so a window that opened but never read is shut again) → whole-screen OCR (×2, ×1 when < 3 words) → AUTO BUFF title → its X (`FindCloseBlobRightOf`, never a guess; ≤ 3) → the "Regular War" line (`WarText.IsRegularWarLine`) → box (`FindCheckboxLeftOf`) → `IsCheckboxTicked` → ticked: click, fresh frame 0.9 s later, ≤ 2 clicks (even, so a box that only *reads* ticked ends as it was; → warning + `regularwar_on`) → `S` closes (first press blind, then the label must be gone 1.2 s later, ≤ 2, else `regularwar_open`). Window seen open, then nothing reads → re-read 5 s, never a blind `S` → warning + `regularwar_unread`. Unreadable from the start → warning + `regularwar_unread`, carry on. Dry run skips it. The keys-out "Regular War on" step (§4.5b) still ticks it back on. Pinned by `tests/WuxAuto.Core.Tests/RegularWarOffTests` (drawn gold box, `S` toggles the window). **The Regular War row has never been seen in a real frame** - not verified live |
+| RegularWarOff | **Regular War + Smart Farm off**, every mode that visits town (Laby, LOD, Blossom; desktop only - on the phone the key is a menu tap not known to open these settings), **once per Start** (`_regularWarOffChecked`), **right after CheckZone, before AutohuntOff** (`AfterHuntOptions` → AutohuntOff when due → `AfterTownChecks`) (user, 2026-10-29: "check if the regular war is turned on in the autohunt, disable it if enabled, as it may get teleported to the war when the autohunt is on while attacking the boss"; 2026-11-02: "so before trying to turn off auto hunt check if regular war and smart farm is off first" - with Smart Farm on, `J` in town starts a journey back to a hunting ground; until then Auto Laby only, after RunSkill). `Sequence.RegularWarOffForLaby` (name kept for saved files; on, check box "Regular War + Smart Farm off in town"). `AutomationPilot.RegularWarOff.cs`: `AutohuntSettingsKey` **S** (≤ 2 presses, 2.5 s apart - even, so a window that opened but never read is shut again) → whole-screen OCR (×2, ×1 when < 3 words) → AUTO BUFF title → its X (`FindCloseBlobRightOf`, never a guess; ≤ 3) → the rows of `HuntOptionRows` top to bottom: "Regular War" (`WarText.IsRegularWarLine`), "Smart Farm" (`WarText.IsSmartFarmLine`, ≤ 13 letters - the combat log's "...Smart Farm journey cancelled." never passes) → box (`FindCheckboxLeftOf`, measured from the label's first word) → `IsCheckboxTicked` → ticked: click, then **the box gets `HuntOptionSettleMs` 2.5 s to read empty before another click** (live 2026-11-01 16:51, 2048x1152 `regularwar_on`: clicks at 212,732 - on the box - 0.9 s apart, both reads still ticked; either the second click undid the first or neither took), ≤ 2 clicks (even, so a box that only *reads* ticked ends as it was; → warning + `regularwar_on`); a row not read on 3 reads of the open window → warning, not checked → `S` closes (first press blind, then the label must be gone 1.2 s later, ≤ 2, else `regularwar_open`). Window seen open, then nothing reads → re-read 5 s, never a blind `S` → warning + `regularwar_unread`. Unreadable from the start → warning + `regularwar_unread`, carry on. Dry run skips it. The keys-out "Regular War on" step (§4.5b) still ticks it back on. Pinned by `tests/WuxAuto.Core.Tests/RegularWarOffTests` (drawn gold boxes, `S` toggles the window, a box that shows its click 1.5 s late gets one click, LOD and Blossom checked too, no `J` before the window is shut). The window was seen live once (2026-11-01 16:51: AUTO HUNT "(J: start/stop)" with the Regular War, Smart Farm, Take level bonus & equip, Always run boxes under Pick up, beside SKILLS and AUTO BUFF); the untick itself is not verified live |
 | Inventory | taps `Input.InventoryKey` (default `I`) |
 | Scroll | finds `teleportscroll.png` in `Regions.Scroll` (threshold 0.78: real ≈0.83, a town-screen look-alike scored 0.70 and made the pilot skip `I`) and **right-clicks** it (left click only picks it up in this client) |
 | List | OCRs `Regions.TeleportList` for `Sequence.DestinationText` (`Labyrinth`, matches `[The Labyrinth (Adept)]` on page 2); pages with `rightchevron.png` while missing |
@@ -1053,13 +1053,16 @@ Blossom Garden needs no key (user). Phases: `BlossomTurn, BlossomWalk, BlossomAt
 shared `WarBuff`). The zone guard covers them (and `WarBuff` in this mode); a home town = the AFK checker's kick (user) ->
 teleport in again (LOD's rule); still in town after the teleport = "destination closed?" fail, never out-of-keys.
 
-* **Town -> map:** the shared steps (autohunt off, Run skill, font size), TAB target **`Blossom.TabTargetOption` "Nearest monster"** (user, 2026-10-30: "make sure that the tab target is nearest monster" - Tab then reaches monsters further off; `AutomationPilot.TownTabTarget`, whatever the Laby/LOD "TAB target: Default" box says; once per Start, in town only - a Start inside Blossom Garden leaves the game's value alone), no Regular War untick, scroll page 1
+* **Town -> map:** the shared steps (autohunt off, Run skill, font size), TAB target **`Blossom.TabTargetOption` "Nearest monster"** (user, 2026-10-30: "make sure that the tab target is nearest monster" - Tab then reaches monsters further off; `AutomationPilot.TownTabTarget`, whatever the Laby/LOD "TAB target: Default" box says; once per Start, in town only - a Start inside Blossom Garden leaves the game's value alone), Regular War + Smart Farm off first (since 2026-11-02, §4.1), scroll page 1
   "Blossom Garden", zoom out after the minimap title reads -> `BeginBlossomArrival` = buffs (`BeginBlossomBuff(thenTurn: true)`)
   -> `BlossomTurn`.
 * **Turn:** `ScreenAnalyzer.FindPillarPair` (`Assets/blossompillar.png` = the left pillar's grey base, 96x42, cropped from the
   user's zoomed-out 2000x1168 frame at 788,270; hits in `PillarBand` (0.15, 0.05, 0.62, 0.45), duplicates per place dropped, a
   pair = one row, 0.10-0.40 w apart, the most central). User's frame: left 0.979, right (green-tinted) 0.807, offset +0.020.
-  No pair -> `D` (`TurnDirection.Right` = `Input.RotateKey`) `TurnTapMs` 100, 350 ms settle; after `TurnTaps` 7 one Info, after
+  `Blossom.TurnToPillars` (on; user, 2026-11-02: "always turn to pillars"; off = straight on from the arrival spot).
+  No pair -> `D` (`TurnDirection.Right` = `Input.RotateKey`) **held `BlossomPillarStepMs` 250 ms a step, 150 ms settle** (user,
+  2026-11-02: "try a faster turn to pillar" / "hold turn, like the same for the right or left look"; was `TurnTapMs` 100 ms taps
+  and 350 ms); after `TurnTaps` 7 one Info, after
   `TurnMaxTaps` **15** or `TurnMaxMs` **10000** (whichever first; user, 2026-10-30: "reduce the turn to pillars to 15 turns or
   10s"; was 50 taps, ~1 min; v24 moves a saved 50) a warning + `blossom_no_pillars` and the walk. Pair off centre (> `PillarCenterTolerance` 0.06 w) -> 40 ms fine
   taps, direction flipped when the offset grew (D's direction is not assumed), <= 12. No Tab while turning.
@@ -1103,17 +1106,20 @@ teleport in again (LOD's rule); still in town after the teleport = "destination 
 * **AFK Checker** (user, 2026-10-30: the chat whispers "(Whisper) [AFK Checker] : Start 1/5" ... "Reset 0/5" - "if 1+/5, try
   to move a little bit to other directions"): `Blossom.AfkCheckerText` "AFK Checker" (empty = off). The shared 5 s
   whole-screen OCR (`BlossomAfkWatch`: Blossom phases or the buff round, game in front) -> `BlossomText.AfkCheckerCount`:
-  the bottom-most chat line (left 45 % w, below 55 % h) naming it with a "k/5" -> k >= 1 -> `TryBlossomAfkStep`: the held
-  skill let go, a Ctrl+click half `WalkClickPx` from the feet, a different way each time; `blossom_afk`. Not yet seen live
-  (the whisper lines are from the 10:20 snapshot).
+  the bottom-most chat line (left 45 % w, below 55 % h) naming it with a "k/5" -> k >= `AfkStepFrom` **3** (k > 5 = a misread,
+  live "6/5", "7/5", "9/5"), at most every `AfkStepEveryMs` **15000** -> `TryBlossomAfkStep`: the held skill let go, a
+  Ctrl+click half `WalkClickPx` from the feet, a different way each time; `blossom_afk`. Until 2026-11-02 it stepped from 1/5
+  at every 5 s check (user: "it is trying to move too much" / "the afk maxes out at mostly a minute, plenty of time to try
+  moving again"); `AfkChecker_FromThreeOfFive_*`, `AfkChecker_StepsAtMostEvery*`.
 * **Walk back** (user, 2026-10-30, with a recorded 83-waypoint first-island route: "1 - 83 then 83, 82, 81 to 1 then loop"): `Blossom.BackAndForth` (check box "Walk back the same way"; on by default since v25, for the recorded default route) -> `BlossomRoute.Next(..., backAndForth, ref forward)`: forward to the last waypoint, back to `LoopFrom`, forward again (`_blossomForward`, reset per run; a log line at each turnaround). On the way back a waypoint's camera turn is undone when leaving it (the key flipped, A <-> D, same taps), so each stretch has the camera it had on the way out; a turnaround taps nothing (the last waypoint's own turn is never made). Record route ticks it when the recording ends > 400 from its loop start (`RouteRecording.WalkBack`, `ClosingGap`): a loop would cross the map in one straight line. Pinned by `BlossomRouteTests` / `BlossomPilotTests.BackAndForth_WalksTheRouteBack_AndUndoesItsCameraTurns` / `RouteRecordingTests`. Not yet seen live.
 * **Following the road** (user, live run 7: "not aligned by the dirt road ... goes straight to the water beside the bridge"): along a leg the walk aims 250 units ahead on the line from the waypoint just left to the next one (`BlossomRoute.LookAhead`, pure pursuit), so drift is pulled back onto the user's line; within 300 of the waypoint it clicks the waypoint's own spot from the character's feet (0.55 h, >= 80 px - a short click just under the feet lands on the character's body and does nothing; 1.8 px per unit). A death mid-fight needs two coordinate reads that agree (run 7: "13521" read as "1352" sent it back to the pillars).
 * **Record route** (user, 2026-10-29: "I walk the road once by hand and WuxAuto saves the waypoints"): Settings > Auto Blossom > **Record route** / **Loop starts here** / **Stop recording**. `Automation/RouteRecorder` (desktop, ticked by `WuxEngine` beside `AutoConfirm` while the pilot is not running) reads the coordinates every 500 ms and polls the turn keys (`GetAsyncKeyState`, game in front) into `RouteRecording` (Core, pinned by `RouteRecordingTests`): a waypoint every 120 units, a jump > 400 only when the next read agrees, A / D presses = the latest waypoint's camera turns (net, "N:5A"), the loop at the latest waypoint (or the spot, >= 60 past it). Stop (>= 2 waypoints) replaces `Waypoints` / `LoopFrom` / `WaypointTurns`, saves, and writes `blossom-route.txt` (a copy - a pre-Blossom WuxAuto drops the block when it saves). Start while recording saves the recording first. Not yet used live.
 * **Minimap title:** `ScreenAnalyzer.ReadMinimapLinesAsync` (all modes): the band read, and without a title-like line the
   `MinimapTitleStrip` (0.76, 0.03, 0.23, 0.08) x2 then x3 - live 2026-10-29 the whole-band OCR over Blossom Garden's bright
   yellow map read **no words at all** and the arrival failed "never showed on the minimap" twice.
-* **Start inside:** the autohunt is made off first (`EnsureAutohuntOffAsync`, `trustVisibleLine: true`; skipped in a dry run),
-  then the buffs (or the fight, a Jaso already targeted) and the walk from the nearest waypoint - **no pillar turn** (user,
+* **Start inside:** no autohunt check (user, 2026-11-02: "you can't activate autohunt inside, so make sure it is off in the
+  city" - inside, 'J' prints nothing; live 02:28 two presses and ~10 s for "cannot tell"; until then
+  `EnsureAutohuntOffAsync` ran here), the buffs (or the fight, a Jaso already targeted) and the walk from the nearest waypoint - **no pillar turn** (user,
   2026-10-30: "it is possible to start it already in the map and no need to look for the pillar"; away from the arrival spot
   they are not in view, and the turn took 50 taps for nothing). The turn stays for the teleport's arrival and after a death.
 * **Target:** whole-screen OCR line in the target-bar band (y < 13 % h, |x - 50 %| < 22 % w) containing the name after its "[S]"
@@ -1130,32 +1136,152 @@ teleport in again (LOD's rule); still in town after the teleport = "destination 
   skirt** (H 4-14, S >= 100, V >= 60; >= 0.015 bh^2 from 35 % down); nearest the character (0.5 w, 0.54 h) first. Live
   2048x1152 (the user near one, 2026-11-01): hit 748,414 38x66, ~50 ms a frame; 0 hits on the 54 Blossom debug frames, the Eight
   Symbols frames and a Bohai war frame full of players. Measured: fan H 172-177 S ~120 V ~67, skirt H 4-9 S ~157 V ~122, grass
-  H 27-33; shrine gate posts (H 0-16, dark) fail the magenta fan rule, the pet's feathers the orange share. A Jaso from behind
-  (the fan only) is **not found**. `TryClickJaso`: a plain left click (`WalkTo(forceWalk: false)`) at `JasoClickPoint` (centre,
-  60 % down), then `JasoClickWaitMs` 1500 with no walk clicks while the target bar comes up (the usual target read starts the
-  fight); `JasoMaxMisses` 3 clicks without a fight -> Jasos ignored `JasoIgnoreMs` 5 s + `blossom_jaso_miss`. The walk tries it
-  at every target check (700 ms) with nothing in the target bar. **Walk scan** ("also add when running, to rotate the camera to
-  scan for the mob"): no Jaso seen for `ScanEveryMs` **4000** (0 = off) -> stand, `ScanTaps` **6** taps of `D` `ScanTapMs`
-  **250**, a look 300 ms after each; a Jaso -> click, scan over; none -> "Scanned N step(s) - no Jaso in view". **Fight scan**
+  H 27-33; shrine gate posts (H 0-16, dark) fail the magenta fan rule, the pet's feathers the orange share. **Reworked from
+  the user's two videos** (2026-11-01, `Videos\jaso.mp4` / `jaso2.mp4`, native-size crops beside the character, frames pasted
+  into a 2048x1152 Blossom frame; never in git): size 0.03-**0.25 h** (close by she is ~0.13-0.17 h); her look = **A** fan
+  >= 0.03 + skirt >= 0.015, h/w >= 1.1, or (attacking / turned away the fan glows green or splits off: fan 0.00-0.027, dress
+  0.04-0.26 on every miss) a **red dress** - hue 4-8 for >= 45 % of the skirt's orange pixels (Jasos 0.53-0.77; wooden
+  pillars, cattail reeds, tulips, autumn leaves, the character's gear 0.00-0.21) - with **B** fan >= 0.012 + dress >= 0.04,
+  h/w >= 0.8 (side-on her skirt spreads), or **C** dress >= 0.08 alone on a standing shape (h/w >= 1.25, >= 0.045 h; a red
+  tulip 0.043 h / 1.09 passed otherwise). **Wings**: a figure with >= 12 % navy (H 95-130, S >= 60, V 15-150) **in the middle
+  third of its box** is never her - the character's wings were 26-54 % navy, four Jasos 0-0.3 %. Was >= 5 % of the whole box
+  until 2026-11-02: F11 03:16:57 a Jaso beside the character with the river behind her read 0.20 (the water at her sides; 0.07
+  in her middle third) and was dropped as "wings"; the user's character shows no wings at present. **Own spot** shrunk to the body column (|dx| < 0.035 h,
+  |cy - 0.5 h| < 0.08 h; was 0.13 h x 0.16 h and hid a Jaso fighting the character - user: "it doesn't detect the Jaso just
+  beside the character"); since 2026-11-02 |dx| < 0.05 h, cy 0.42-0.95 h (live 04:01, 0.25.17: in the reeds the camera
+  pulled in with the HP bar out of sight and the character's gear 0.04 h aside, 0.65 h down was clicked). **Cut off by the
+  left, right or bottom screen edge** = no candidate (same run: a figure cut by the left edge clicked at 6,283). **The character from its HP bar** (live 16:23, 0.25.8: near trees the game pulls the camera in and
+  the character is drawn big and low, its bar at 0.75 h instead of 0.56 h - its red mask and legs were clicked as Jasos):
+  `ScreenAnalyzer.FindOwnCharacter` looks in x w/2 ± 0.08 h, y 0.35-0.95 h for a red run (H 0-10 / 170-180, S >= 140,
+  V >= 110, >= 0.012 h long, left edge 0.02-0.08 h left of the centre line) with a blue run (H 95-130) starting within 3 px of
+  the same edge 2 px to 0.02 h below (2048x1152: 108x8 red, 4 px gap, 92x6 blue, left edge w/2 - 54); the box above it is
+  `tall = clamp(0.15 h + 1.33 (barY - 0.556 h), 0.12 h, 0.5 h) x 1.15` high, 0.35 x that each side (>= 0.05 h). A figure
+  centred in it is `JasoCandidate.AtOwnSpot` (never full); no bar -> the `IsOwnSpot` column below. The click snapshots draw
+  it in orange ("you"). **Too small for its depth** (live 18:37-18:45, 0.25.11: looking aside showed the character side-on,
+  and its small red pet trotting beside it - ~0.07 h against ~0.17 h - and a red rose in front of it were clicked as Jasos
+  a dozen times, 0 kills in 20 min): with the HP bar found, a figure whose feet are at the character's depth or nearer
+  (bottom >= the character's feet - 0.03 h; 0.08 h until 2026-11-02, when it dropped a far Jaso on F11 03:17:00) and shorter
+  than 0.6 of the character's height ((own box - 0.01 h) / 1.15) is rejected, partial or full. On that run's 16 click
+  snapshots it removed the pet hits; a big rose right in front of the camera and a close-up of another player still pass.
+  **UI bands for the Jaso search** (`AutomationPilot.JasoBands`, also `--jaso`): `WarWalkBands` without the combat-log band
+  (0-0.31 w x 0.13-0.56 h) - only its buff icons (0-0.25 w x 0.13-0.35 h) stay masked. The combat log hides behind open
+  field in Blossom; on F11 03:17:00 a Jaso at 160,338 (1024x768) stood inside that band and was never seen. **Click point** `JasoCandidate.Body` = the middle of the skirt's orange pixels (user: "it click on its
+  right not the body of the monster" - the box's middle was off her body). Result: video 1 every frame she shows in but two
+  inside her green dome (22/42 frames, the rest without her), video 2 17/24 (was 13); the saved Blossom frames give only the
+  real Jasos (3 in debug, incl. one beside the character at 14:52). `--jaso <dir> --why` prints every figure's size, shape,
+  shares and verdict (`ScreenAnalyzer.JasoReport`). **Sword cursor off by default** (`Blossom.UseSwordCursor`, user 15:00:
+  "Turn it off" / "sword is a fallback"): with it off nothing is hovered, full figures are clicked on `Body`, partial ones
+  never; on, everything below applies. **Candidates**
+  (user, same day, live: "it should be able to click a jaso from afar with just some of the characteristics of the monster";
+  `ScreenAnalyzer.FindJasoCandidates` -> `JasoCandidate(Box, Full)`): the same pass, also 0.015-0.03 h tall, aspect 0.4-4.5,
+  with the **fan required** (orange alone matched 20-40 flowers / soil patches a frame on the saved Blossom frames; with the
+  fan 0-3, among them far Jasos 16x30 and the pet). **Sword cursor** (user: "when clicking jaso, the cursor will change into
+  a sword"): `IGameInput.CursorAt` / `IGameControls.HoverCursor` (desktop `WindowInput.CursorAt`: pointer to the point, 2 px
+  wiggle, 90 ms, `GetCursorInfo`, then **a fingerprint of the cursor's picture** - FNV-1a over `GetIconInfo`'s colour + mask
+  bitmaps and the hot spot; 0 = cannot tell - phone, dry run, game behind). The handle alone failed live: the game's arrow
+  came back under `0x4970599`, `0x14D4184F` and `0x76F1529`, an arrow under a new handle read as the sword and the pilot
+  clicked beside the Jaso (user 13:45: "it tried to click the monster but on the side not directly on it"; three "sword"
+  clicks on one spot that never moved). `TryClickJaso`: candidates centred below `JasoMinClickY` **0.21 h** only (the game
+  ignores a click on one at the horizon: 13:37, three clicks on one at 0.20 h; every click that targeted one was 0.23 h or
+  lower), the character's own spot last; the normal cursor at (0.5 w, 0.70 h), then the `JasoHoverCandidates` **4** nearest,
+  `JasoProbePoints` (middle at 60 and 35 % down, then 20 % and 80 % across at 60 % - side-on her body is off the figure's
+  middle - then 80 % and 15 % down) -> the first point whose cursor differs = the sword -> plain left click there
+  (`WalkTo(forceWalk: false)`); a Trace line gives both fingerprints. **Confirmed and learnt** (live 14:26: a third picture
+  `0x129EF5942A0D946D` showed at the character's own spot and far off, neither click targeted; the plain Windows arrow -
+  handle `0x10003` - shows for a moment after the game comes to the front): a sword must read the same twice; Windows' own
+  arrow / busy cursors read as 0 (`WindowInput.SystemCursors`); a click on a sword picture followed by the target bar within
+  `JasoClickWaitMs` teaches it (`Blossom.SwordCursor`, saved to settings.json, Info "Learnt the sword cursor") - learnt,
+  only that picture counts; `JasoMaxMisses` clicks in a row on the learnt picture without a target forget it. **At the
+  character's own spot** (user 13:45: "doesn't
+  target the moving monster / or making it's AOE attack. that is near the character and continues to rotate the cam"):
+  own-spot figures (`AtOwnSpot`: the HP-bar box, else `ScreenAnalyzer.IsOwnSpot`) are partial candidates now (never full,
+  never clicked without the sword) - the own-spot rule had hidden a Jaso fighting the character.
+  No sword: a full figure is clicked at `JasoClickPoint` (centre, 60 % down) anyway (the v0.25.0 floor), a partial one never;
+  look-alikes only -> no hovering for `JasoHoverPauseMs` 2 s. After a click `JasoClickWaitMs` **7000** with no walk clicks and
+  no scans while the character runs to her (the usual target read starts the fight); `JasoMaxMisses` 3 clicks without a
+  fight -> Jasos ignored `JasoIgnoreMs` 5 s + `blossom_jaso_miss`. The walk searches **on every tick, about every frame**
+  (`JasoLookEveryMs` 80 caps the walk's wait while `ClickToTarget` is on, also in a waypoint pause; user, 2026-11-02: "why so
+  long to click can it be faster? like below 100ms?" - it searched only with the target-bar read, every 700 ms and after
+  that whole-screen OCR; the search itself is ~15-50 ms a frame at 2048x1152); the target read keeps its own 700 ms timer and
+  comes 300 ms after a click (`AJasoComingIntoView_IsClickedOnTheNextFrame_*`). Live v0.25.0 (11:35-11:39): clicks on full figures far up the screen (y 300-440) targeted
+  nothing, one at y 618 did; 3 kills. Live 0.25.1 test (12:23-12:36): the sword shows over far Jasos (y 160-430), 6 kills,
+  each targeted **3-6 s after the click** (the character runs there first) - the 1.5 s wait then let the walk click on and
+  the 4 s scan turn the camera away, which made most far clicks "nothing targeted"; hence the 7 s. The normal cursor's handle
+  changes over time, hence the picture fingerprint. **Look aside** (user, 18:10: "actively walk to the waypoints but randomly
+  do left or right, stay on any direction longer than 5s then return back, as when you are trying to rotate there is a jaso
+  but it continued to rotate back and never target it" / "it should be still similar to when tab is allowed"): looking ahead
+  with no Jaso seen for `ScanEveryMs` **10000** (0 = off; v28 moved the v27 1500 to 6000, v29 6000 to 10000 - user, 2026-11-02:
+  "it is trying to move too much and rotate too much"), heading known and measured since the last turn, not in a waypoint
+  pause -> left or right at random (`Random.Shared`; **the first after an arrival always left**, `_blossomFirstAsideLeft` -
+  user: "after the pillar it tries to turn right again" / "the right is the wall"), **one turn of `ScanSideMs` 350** (700
+  until v29, ~120 deg live)
+  (clamp 100-3000) in `BlossomTurnSteps` **3** short holds with a look after each (`BlossomScanSettleMs` 300; user 18:20:
+  "rotating to right, sees jaso rotates left then continues instead of going back and retargeting" - a Jaso in view stops the
+  turn right there and is clicked, on the way out or back), then **`LookAsideMs` 6000** (clamp 1000-60000) of the normal walk
+  with the camera that way - walk clicks, coordinate reads, the target read every 700 ms, a Jaso clicked as soon as she is in
+  view - then the same number of steps back (`_blossomAside`, `_blossomTurning`, `_blossomAsideSteps`; `EndBlossomTurn`; a
+  target or **any Jaso click** mid-turn ends the turn where it is - live 18:37, 0.25.11: the walk's own check clicked one
+  mid-turn and after the 7 s wait the turn carried on, away from her). **Turned all the way back, the heading the walk had
+  before looking aside is restored** (`_blossomHeadingBeforeAside`, `RestoreBlossomHeading`, "Heading restored after looking
+  aside"; live 18:44-18:48, 0.25.11: single steps measured right after a turn read 19 -> -11 -> 169 -> 27 deg in a walled
+  stretch, sliding along walls, and the walk lost the route - the "taking too long" skips ran the target on from waypoint 22
+  to 30 while the character stayed put); while looking aside, and after a turn back stopped early by a Jaso,
+  **the next walk step re-measures the heading**
+  (`TurnBlossomCamera` -> `_blossomRemeasure` -> `SetBlossomHeading(..., "re-measured after the camera turned")`;
+  `_lastCoords` cleared) - the walk's clicks are screen directions, and the camera never turns back exactly (live
+  17:35-17:48, 0.25.9: the minimap beam went from north-west to east; with every tick waiting for the target read the next
+  scan always started before the walk's next coordinate read, the heading was learnt once in 13 min and the walk ran ~2700
+  units east of the route into a wall; live 0.25.10 re-measures read 139 -> 159 -> 131 deg, 20-30 deg off per turn).
+  Blocked (no step >= 60) = no new look aside, which leaves the unblock steps alone. History: 16:30-18:10 the scan looked
+  left, right and back in one go (one walk click before it and one in the middle, no Tab and no target read during it,
+  4.5 s with 0.25.10) and looked each way only once, for an instant; until 16:30 it was `ScanTaps` 6 taps of `D` with the
+  walk clicking on in between, so every "forward" click went right in the world, into the wall near the entrance
+  (`ScanTaps` is gone; a saved value is ignored). **Stuck -> the nearest waypoint** (user, 18:10: "if stuck try to sidestep
+  and return back to nearest waypoint"): at the 5th still step (`BlossomMaxStalls`) the walk retargets the nearest waypoint
+  (`BlossomRoute.Nearest`, the leg from the spot) while the sidesteps go on, then on along the route from there; once per
+  waypoint (`_blossomReturnedFrom`, cleared when the walk leaves that waypoint behind) - stuck on its way again, the steps and
+  the no-progress skip carry on, so it cannot loop. **Still 10 s -> turn round** (user, 20:35-20:42: "If it didnt move while
+  trying to move for 10s. Try a 180° rotate 1.4s D or A then ... Click to move while still scanning for jaso"): the read
+  step keeps `_blossomStillSince` (the first still step of a still stretch; reset by a move, a waypoint, a fight, the game
+  behind a window); still for `StuckTurnAfterMs` **10000** (0 = off, clamp 2000-120000) -> A or D at random held
+  `StuckTurnMs` **1400** (clamp 200-5000; a 700 ms hold turned ~120 deg live), any look aside dropped, `ForgetBlossomHeading`
+  - the next step goes straight up, the way the camera faces now, away from what blocked it - and the walk with its Jaso
+  checks goes on; Warning "Not moving for Ns - turning the camera round ...", `blossom_turn_round`. **No heading + blocked** (live 18:08, 0.25.10: after a fight the heading
+  was unknown, straight up was a wall, 20 s still until the AFK step moved it): the unblock ways now also run round the
+  straight-up step, and the step that moves teaches the heading.
+  `WindowInput.KeyUp` now lets go of any key it sent down even after an F10 unbind or Dry run ticked mid-hold (it refused an
+  unbound window, so a held A could stick for every program; checked with a scratch probe: A held, unbind, released).
+  **Fight scan**
   ("do the rotate also even when attacking the current mob, and set that as a second subject"): every `FightScanEveryMs`
   **3000** (0 = off) one `D` tap and a look 300 ms later until a Jaso is in view (the one fought is at the feet, left out) ->
   remembered ("The next Jaso is in view ..."); at the kill (`LootWhileFighting`) the frame is searched again and the nearest
-  clicked at once, the rebuff then waits for the next pause. Every camera turn (scan, fight scan) -> `ForgetBlossomHeading`:
-  the next walk step clicks straight up and learns the heading. Pinned by `JasoDetectorTests` (drawn Jasos: found, nearest
-  first, own spot, a red-brown post, a fan without the skirt, under the UI) and `BlossomPilotTests` (`NoTab_*`, `NoJasoInView_*`,
-  `ScanFindsNothing_*`, `InAFight_*`). Probe: `--jaso <dir>` (hits + click points, `<frame>.jaso.png`). **Not seen live:** the
-  click targeting her, the scans, a plain click on another player (whether it attacks; the target bar rule keeps the pilot off
-  anyone else).
-* **Camera tilt** (user, 2026-11-01: "also try to move the screen up instead of facing down"; `Blossom.CameraTiltPx` **60**,
-  0 = off, clamp 0-400, UI "Camera tilt (px)"): `QueueBlossomTilt` / `TickBlossomCameraTilt`, one right-drag per tick
-  (`TiltCamera`, 300 ms, 400 ms settle): **down** 0.25 h -> 0.80 h at 0.5 w (the steepest view - assumed the game stops the
-  camera there), then **up** `CameraTiltPx` from 0.60 h. From that limit the tilt is the same each time, so repeating it never
-  adds up (the Laby gate tilt did, run 34). Queued: `StartBlossomWalk` (after the pillar turn), a Start inside, the respawn
-  path away from the arrival spot, every unblock zoom-out (walk and fight; sent once the walk ticks). The pillar turn's first
-  tick (`_blossomTurnLevelled`, reset by `BeginBlossomTurn`) sends the **down half only** (the pillar template was cropped
-  facing down). Pinned by `BlossomPilotTests.CameraTilt_*` (the
-  harness sets 0). **Not seen live:** that a long drag down stops at a limit, the view at 60 px, whether a zoom-out changes
-  the pitch, and the homing click scale (1.8 px per unit was measured facing down).
+  clicked at once, the rebuff then waits for the next pause. A camera left turned by the fight scan ->
+  `ForgetBlossomHeading`: the next walk step clicks straight up and learns the heading. Pinned by `JasoDetectorTests` (drawn Jasos: found, nearest
+  first, own spot, a red-brown post, a fan without the skirt, under the UI, too small for its depth; candidates: far small,
+  fan only, a flower dot, the own spot as partial) and `BlossomPilotTests` (`NoTab_*`, `NoJasoInView_TheCameraLooksAside_*`, `LookAside_*`,
+  `AJasoSeenWhileTurningBack_*`, `AJasoClickedMidTurn_*`, `NoLookAside_BeforeTheWalkKnowsItsHeading`, `Stuck_GoesBackToTheNearestWaypoint_*`, `StillForStuckTurnAfterMs_*`, `Moving_NoStuckTurn`,
+  `Blocked_BeforeTheHeadingIsKnown_*`, `InAFight_*`, `SwordCursor_*`, `FarPartialJaso_*`, `AJasoNextToTheCharacter_*`,
+  `SideOnJaso_*`, `AJasoAtTheHorizon_*`, `LearntSword_*`) and `SettingsMigrationTests.V28_*`.
+  Probe: `--jaso <dir>` (full / partial figures + click points, `<frame>.jaso.png`: green full, yellow partial). **Click
+  snapshots** (user, 2026-11-01 15:55: "Yes, add snapshots" - live 0.25.7 15:49-15:50, three clicks around the character
+  targeted nothing): every click on a Jaso saves `debug\jaso-clicks\<time>_jaso_click_<x>_<y>.jpg`
+  (`DebugArtifacts.SaveMarkedJpeg` = overlays + crosshair through `KillScreenshots.Save`, JPEG q90, newest
+  `JasoClickShotsKept` 300 kept): every figure seen (green full, yellow partial), the one clicked in blue. `MarkJasoClickShot`
+  renames it `_hit` when the fight starts within `JasoClickWaitMs`, `_miss` when the wait runs out, the next click comes first,
+  or Jasos are put aside after 3 misses; the log's click line names the file. Pinned by `BlossomPilotTests.EveryJasoClick_*` /
+  `AClickThatTargetsNothing_IsMarkedMiss`. **Not seen live:** the 7 s wait, a plain click on another player.
+* **Camera tilt** (user, 2026-11-01: "also try to move the screen up instead of facing down", then "also upon teleporting it
+  look down, look up by dragging right click up", "upon arrival tilt up a little bit" - the teleport leaves the camera almost
+  straight down; `Blossom.CameraTiltPx` **60**, 0 = off, clamp 0-400, UI "Camera tilt (px)"): **once per arrival**, the
+  pillar turn's first tick (before its first tap; `BeginBlossomTurn` clears `_blossomCameraTilted`): **one right-drag up**
+  of `CameraTiltPx` from (0.5 w, 0.60 h) (`QueueBlossomTilt` / `TickBlossomCameraTilt`, `TiltCamera`, 300 ms, 400 ms settle).
+  Nowhere else - not on a Start inside, not after a zoom-out: from the same arrival view the tilt is the same each time,
+  while extra drags would add up (the Laby gate tilt did, run 34). History: v0.25.0 dragged down to the camera's limit
+  before the pillar turn (straight down at the grass, 11:35), 0.25.1/0.25.2 tests dragged down to the limit and then 60 px
+  up - the user: "becuase you tilt it down!". The limit + 60 px view showed the field far ahead (Jasos at y 160-430). The
+  pillar turn gave up (10 s cap) on every live arrival of 2026-11-01. Pinned by `BlossomPilotTests.CameraTilt_*` (the
+  harness sets 0). **Not seen live:** the arrival view + 60 px, the homing click scale (1.8 px per unit was measured
+  facing down).
 * **Fight / loot:** the skill key **held** through the fight (`Blossom.HoldSkill`, on; check box "Hold skill (Blossom)"; user,
   2026-10-30: "spam or hold attack skill, currently it skills then normal attacks" - one tap casts once, then normal attacks;
   with Ctrl + skill the key is let go for a Ctrl tap every `Lod.SkillEveryMs`, as LOD's hold), off = tapped every
@@ -1216,7 +1342,7 @@ teleport in again (LOD's rule); still in town after the teleport = "destination 
 
 Key `DungeonSettings` defaults. The settings panel's **Dungeon** section (2026-10-21) edits Skill key,
 Autohunt key, Target key, Font size % and the switches Tab + skill at the last waypoint, Autohunt off
-for the run, Ctrl + skill key too, Click the stage 5 gate, Auto reconnect, Hold skill (LOD), Walk up to the boss (LOD), Walk to the boss spot (LOD), TAB target: Default, Autohunt off in town, Run skill on in town (and the Run key field, default W), Regular War off before Laby; everything else only via `settings.json`.
+for the run, Ctrl + skill key too, Click the stage 5 gate, Auto reconnect, Hold skill (LOD), Walk up to the boss (LOD), Walk to the boss spot (LOD), TAB target: Default, Autohunt off in town, Run skill on in town (and the Run key field, default W), Regular War + Smart Farm off in town; everything else only via `settings.json`.
 `tests/WuxAuto.UiShot -- <png> --settings --bottom` renders that panel (`--mini` renders the Mini window instead, `--kill-alert` fills the last-kill line, `--kill-sound` shows a picked kill sound + the Default button); it restores `settings.json`
 afterwards (it ticks check boxes for the picture and the window saves on close — that once switched
 Dry run on in the real settings).
@@ -1263,9 +1389,10 @@ Input: `InputMode.ForegroundSendInput` (default) requires the bound HWND to be f
 otherwise the action is suppressed + logged and retried. `BackgroundMessages` posts to the HWND —
 works for some clicks, but **long key holds (the 5 s `A` sweep) only work in foreground mode**, and
 the sweep is skipped in background mode. Ctrl holds (`CtrlClick`, `CtrlKeyTap`, `CtrlWheel` for the
-zoom) all go through `WindowInput.WithCtrl`, which sends the foreground Ctrl key-up even when F10
-unbinds the window mid-hold (UI thread) — `KeyUp` refuses an unbound window, and an injected Ctrl
-left down sticks for every program.
+zoom) all go through `WindowInput.WithCtrl`. `KeyUp` lets go of every key this `WindowInput` sent
+down with SendInput even when F10 unbinds the window mid-hold (UI thread) or Dry run is ticked
+meanwhile (`_keysDown`; since 2026-11-01 - before, only `WithCtrl`'s Ctrl did, and `KeyUp` refused an
+unbound window): an injected key left down sticks for every program.
 
 ---
 

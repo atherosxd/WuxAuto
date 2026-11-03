@@ -93,6 +93,8 @@ public sealed class KeyboardMouseControls(AppSettings settings, IGameInput input
     public bool ZoomOut(int x, int y, int notches) => input.CtrlWheel(x, y, -notches);
     public bool ScrollList(int x, int y, int notches) => input.Wheel(x, y, notches);
 
+    public long HoverCursor(int x, int y) => input.CursorAt(x, y);
+
     /// <summary>The key a turn holds: left = <see cref="DungeonSettings.RotateLeftKey"/>, right = <see cref="InputSettings.RotateKey"/>.</summary>
     private string TurnKey(TurnDirection direction) =>
         direction == TurnDirection.Left ? settings.Dungeon.RotateLeftKey : settings.Input.RotateKey;

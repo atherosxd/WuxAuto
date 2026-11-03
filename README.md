@@ -130,7 +130,7 @@ The Wuxen2 flow this drives:
 | Game settings | once per Start, in town: `Escape` opens the game's SETTINGS → `VISUAL` tab → **Font size** is kept within `Sequence ▸ FontSizePercent` … `FontSizeMaxPercent` (110 … 120 %) → the list is scrolled down to **TAB target**, which is set to `Default` with its left arrow (`Sequence ▸ TabTargetDefault`, the "TAB target: Default" check box) → **SAVE** once if either changed → `Escape`. Only buttons read by OCR are clicked; anything unexpected closes the window and the run carries on (`fontsize_unread` / `tabtarget_unread` snapshots) |
 | Autohunt off in town | in town, before every teleport (also after a restart, a closed stage 5, the LOD timer or a re-login): the autohunt key is tapped and the combat log on the left is read — a new **Auto hunt ended** line = it was on and is off now; **Auto hunt started** = it was off, so the key is tapped again. No line within 2 s → one more tap (two unread taps leave it as it was), then a warning + `autohunt_unread` snapshot and the run carries on. `Sequence ▸ AutohuntOffInTown`, the "Autohunt off in town" check box |
 | Run skill on in town | in town, before every teleport: the Run skill must be on. Its icon (`runskill.png`) is found on the skill bar; an active skill has a gold ring round it. No ring → the icon is clicked (up to 3 times, checked after each). Icon not found → the **Run key** (default `W`, the slot you put Run in) is tapped once per Start — it is a toggle, so it is never pressed blindly twice. |
-| Regular War off (Laby) | Auto Laby only, in town, once per Start, after the Run skill: `S` opens the autohunt settings (at most 2 presses), the AUTO BUFF dialog is closed if it covers the list, a ticked "Regular War" box is clicked until it reads empty (at most 2 clicks), `S` closes the window. Can't read it → warning, `regularwar_unread` snapshot, carries on to the teleport. Not yet seen live |
+| Regular War + Smart Farm off | Every mode, in town, once per Start, **before the autohunt check**: `S` opens the autohunt settings (at most 2 presses), the AUTO BUFF dialog is closed if it covers the list, a ticked "Regular War" or "Smart Farm" box is clicked until it reads empty (at most 2 clicks; after a click the box gets 2.5 s to change before the next one), `S` closes the window. With Regular War on the autohunt may take the character to a war; with Smart Farm on, `J` in town starts a journey back to a hunting ground. Can't read it → warning, `regularwar_unread` snapshot, carries on. Not on the phone. Not yet seen live |
 | Inventory | taps `Input ▸ Inventory key` (default `I`) |
 | Teleport scroll | **right click** the `teleportscroll.png` match - in this client a left click only picks the item up and a double click does nothing |
 | Destination list | OCR of `Sequence ▸ Regions ▸ Teleport list` for `Destination text` (default `Labyrinth`, which matches `[The Labyrinth (Adept)]` on page 2), paged with `rightchevron.png` when it is not on the visible page |
@@ -287,17 +287,39 @@ Blossom Garden needs no key.
 6. Rebuff when **Rebuff every** (Auto War) is due - after a loot or at a waypoint, never mid-fight.
 
 **Tab no longer targets in Blossom Garden** (2026-11-01). With **Click Jasos (no Tab)** on (Settings > Auto Blossom, on by
-default) the pilot looks for the Jaso Practitioner itself: a dark magenta fan over an orange-red skirt, about 3-14 % of the
-screen tall, not under the screen's panels and not at your own feet. The nearest one gets a plain left click. If the target
-bar then shows "[S]Jaso Practitioner" the fight starts; three clicks that target nothing and it leaves Jasos alone for 5 s.
-On the walk, after 4 s without seeing one it stands and turns the camera right in 6 steps, looking after each; in a fight it
-turns the camera one step every 3 s, remembers the next Jaso it sees and clicks her right after the kill. After any camera
-turn the next walk step learns the direction again. A Jaso seen only from behind (just the fan) is not found yet.
+default) the pilot looks for the Jaso Practitioner itself: a dark magenta fan over a red-orange dress, not under the
+screen's panels (the combat log on the left is not one of them: there it is open field, and a Jaso behind it is
+found). Attacking or turned away (her fan glows green), her red dress alone is enough on a standing figure; the
+pilot tells it apart from wooden pillars, reeds and tulips by its redder colour, and from your own wings by their navy. A
+Jaso right beside your character is found too; your own character is told apart by its HP bar (red over blue, under its
+feet), so it is never clicked even when the camera is pulled in close and it is drawn big; with the bar out of sight, the
+middle of the screen down to the bottom counts as your character. Next to the character a Jaso is about as tall as it, so
+a small red figure there - its pet, a flower - is left alone, and a figure cut off by the edge of the screen is never
+clicked. The click goes on her dress (her
+body), not the middle of her outline. It looks for her on about every captured frame, so a Jaso that comes into view
+is clicked within about a tenth of a second.
+After the click it waits up to 7 s, without walking on or turning the camera, while the character runs to her (from afar
+the target bar shows 3-6 s after the click). When the target bar shows "[S]Jaso Practitioner" the fight starts; three
+clicks that target nothing and it leaves Jasos alone for 5 s. On the walk, after 6 s looking ahead without seeing one, the
+camera looks left or right (at random) for 6 s while the character keeps walking the route and clicking any Jaso that comes
+into view, then turns back. Each turn is three short holds of `A` (left) or `D` (right) with a look after each: a Jaso
+seen mid-turn stops the turn right there and is clicked. While looking aside the walk measures its direction again; back
+ahead, it takes the direction it had before. (`Blossom.ScanEveryMs`, `LookAsideMs` and `ScanSideMs` in settings.json: 6000, 6000 and
+700 ms.) Stuck, it steps round and heads back to the nearest waypoint, then on along the route; still not moving after
+10 s, it turns the camera round (`A` or `D` held 1.4 s) and walks on the way it faces, still looking for Jasos
+(`Blossom.StuckTurnAfterMs` / `StuckTurnMs`).
+In a fight it turns the camera one step every 3 s, remembers the next Jaso it sees and clicks her right after the kill;
+after that turn the walk learns the direction again. One far off at the horizon is left alone - the
+game ignores a click that far - until the walk brings her closer. Inside her green AOE dome her colours change and she is
+not always found. (`Blossom.UseSwordCursor` in settings.json turns on an extra check that hovers the pointer and clicks
+only where the game's cursor becomes a sword; it is off, because the cursor read from outside the game was unreliable.)
+Every click on a Jaso is saved as a picture in the **Debug snapshots** folder, under `jaso-clicks`: every figure it saw
+boxed (green: her whole look, yellow: partly), the one it clicked in blue, and a cross on the click point. Once it knows,
+the file's name ends in `_hit` (the target bar showed her) or `_miss` (nothing was targeted). The newest 300 are kept.
 
-**Camera tilt** (Settings > Auto Blossom, default 60 px, 0 = off): when the walk starts, and again after each zoom-out, the
-camera is right-dragged down as far as it goes (facing down) and then up by that many pixels, so it looks ahead and shows
-Jasos further away. Starting from the same limit every time, the tilt never adds up. The pillar turn uses the view facing
-down, as its picture was taken that way.
+**Camera tilt** (Settings > Auto Blossom, default 60 px, 0 = off): right after arriving (the teleport leaves the camera
+looking almost straight down), before the turn to the pillars, the camera is right-dragged up by that many pixels once, so
+it looks ahead and shows Jasos further away. It happens only on arrival, so it never adds up.
 
 **Record your own route** (Settings > Auto Blossom): bind the game, stand at the arrival spot in Blossom Garden lined up on
 the pillars, press **Record route** and walk the road by hand. A waypoint is saved every 120 units, and your own `A` / `D`
@@ -342,7 +364,7 @@ but it also only ever talks to the bound window.
 | `Sequence ▸ KillChime` ("Kill chime") / `KillNotification` ("Kill notification") | On (default): a chime / a Windows notification when a Labyrinth boss dies and when an LOD kill's loot step ends (see *Kill alert* below). |
 | `Sequence ▸ KillSound` ("Sound: … Choose... / Default") | Empty (default) = the built-in chime (or `templates\chime.wav` if there is one). **Choose...** picks an MP3, WAV or OGG; it is copied into `%LOCALAPPDATA%\WuxAuto\sounds` (an OGG as a WAV) and this holds the copy's path. |
 | `Sequence ▸ RunSkillCheck` ("Run skill on in town") / `RunSkillKey` ("Run key") | On (default): in town, before every teleport, the Run skill icon (`runskill.png`, `RunSkillTemplate`) is looked for on the skill bar (`Regions ▸ Hotbar`) at `RunSkillMatchScore` (0.88) or better and the gold ring round it measured (`RunSkillRingMin`: 0.25 of the ring = on). No ring → the icon is clicked, up to 3 times. Icon not found → `RunSkillKey` (default `W`) once per Start. Off = never look. |
-| `Sequence ▸ RegularWarOffForLaby` ("Regular War off before Laby") | On (default): Auto Laby, in town before the first teleport of a Start, `S` (`AutohuntSettingsKey`) opens the autohunt settings; a ticked "Regular War" box is clicked until it reads empty (at most 2 clicks), then `S` closes the window - with Regular War on, the autohunt may take the character to a war in the middle of a boss fight. Unreadable: a warning and a `regularwar_unread` snapshot, and the run carries on. Not in LOD (no autohunt there). |
+| `Sequence ▸ RegularWarOffForLaby` ("Regular War + Smart Farm off in town") | On (default): every mode, in town once per Start, before the autohunt check, `S` (`AutohuntSettingsKey`) opens the autohunt settings; a ticked "Regular War" or "Smart Farm" box is clicked until it reads empty (at most 2 clicks, 2.5 s apart), then `S` closes the window - with Regular War on, the autohunt may take the character to a war in the middle of a boss fight; with Smart Farm on, `J` in town starts a journey back to a hunting ground. Unreadable: a warning and a `regularwar_unread` snapshot, and the run carries on. The setting keeps its old name. |
 
 ### Regions
 

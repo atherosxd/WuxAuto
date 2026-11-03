@@ -233,6 +233,7 @@ public sealed partial class AutomationPilot
     private int _huntOffPresses;              // AutohuntOff: taps of the autohunt key this visit (<= 3)
     private long _huntOffPressedAt;
     private List<string> _huntOffBaseline = [];   // autohunt log lines before the last tap
+    private bool _autohuntOffDue;                 // this town visit, after Regular War / Smart Farm off
     private bool _huntCheckConfirmed;             // EnsureAutohuntAsync's last "true" read the wanted state (not given up, not a dry run)
     private string? _homeTown;
     private int _fontStep;
@@ -367,7 +368,7 @@ public sealed partial class AutomationPilot
         PilotPhase.ReturnToTown => "autohunt off, returning to town",
         PilotPhase.Reconnect => "disconnected - logging back in",
         PilotPhase.RegularWarOn => "turning the auto war on",
-        PilotPhase.RegularWarOff => "making sure Regular War is off in the autohunt settings",
+        PilotPhase.RegularWarOff => "making sure Regular War and Smart Farm are off in the autohunt settings",
         PilotPhase.WarRemember => "remembering the cave and monster",
         PilotPhase.WarWait => "waiting for the Bohai war",
         PilotPhase.WarJoin => "joining the war",
@@ -1215,21 +1216,24 @@ public sealed partial class AutomationPilot
             bool townCheck = TownIn(title) != null && !_returning;
             _runSkillDue = townCheck && _settings.Sequence.RunSkillCheck;
             _runSkillClicks = 0;
-            // Auto Laby, once per Start (user, 2026-10-29): Regular War off, or the autohunt may take the
-            // character to a war mid-boss. LOD has no autohunt.
-            _regularWarOffDue = townCheck && !IsLod && !IsBlossom && !_regularWarOffChecked && _settings.Sequence.RegularWarOffForLaby;
+            // Once per Start, every mode, before the autohunt check (user, 2026-10-29: Regular War off, or the autohunt may
+            // take the character to a war mid-boss; 2026-11-02: "so before trying to turn off auto hunt check if regular war
+            // and smart farm is off first" - with Smart Farm on, 'J' in town starts a journey back to a hunting ground).
+            // Not on the phone: there the key is a menu tap that is not known to open these settings.
+            _regularWarOffDue = townCheck && !_regularWarOffChecked && _settings.Sequence.RegularWarOffForLaby
+                                && Profile != PlatformProfile.Phone;
             // Not on the phone yet: its combat-log read of the autohunt lines is not verified there, and a misread tap of
             // HUNT in town starts a Smart Farm journey.
-            if (townCheck && _settings.Sequence.AutohuntOffInTown && Profile != PlatformProfile.Phone
-                && _controls.Has(GameAction.ToggleAutohunt))
+            _autohuntOffDue = townCheck && _settings.Sequence.AutohuntOffInTown && Profile != PlatformProfile.Phone
+                              && _controls.Has(GameAction.ToggleAutohunt);
+            if (_regularWarOffDue)
             {
-                _huntOffPresses = 0;
-                _huntOffBaseline = [];
-                Advance(PilotPhase.AutohuntOff, 120);
+                BeginRegularWarOff();
+                Advance(PilotPhase.RegularWarOff, 120);
                 return;
             }
 
-            Advance(AfterTownChecks(), 120);
+            Advance(AfterHuntOptions(), 120);
             return;
         }
 
@@ -1305,9 +1309,20 @@ public sealed partial class AutomationPilot
         Advance(PilotPhase.SelectBoss, 200);
     }
 
+    /// <summary>In town, after Regular War / Smart Farm off: the autohunt check when due, else <see cref="AfterTownChecks"/>.</summary>
+    private PilotPhase AfterHuntOptions()
+    {
+        if (!_autohuntOffDue)
+            return AfterTownChecks();
+
+        _autohuntOffDue = false;
+        ResetAutohuntCheck();
+        return PilotPhase.AutohuntOff;
+    }
+
     /// <summary>
-    /// In town: the Run skill (every run), then once per Start Regular War off (Auto Laby), the game's font
-    /// size (user: 110 - 120 %) and TAB target (Default; Auto Blossom: its own option); else the teleport.
+    /// In town, after the autohunt check: the Run skill (every run), then once per Start the game's font size (user:
+    /// 110 - 120 %) and TAB target (Default; Auto Blossom: its own option); else the teleport.
     /// </summary>
     private PilotPhase AfterTownChecks()
     {
@@ -1315,12 +1330,6 @@ public sealed partial class AutomationPilot
         {
             _runSkillDue = false;
             return PilotPhase.RunSkill;
-        }
-
-        if (_regularWarOffDue)
-        {
-            BeginRegularWarOff();
-            return PilotPhase.RegularWarOff;
         }
 
         if (!SettingsVisitDue)
@@ -1388,7 +1397,15 @@ public sealed partial class AutomationPilot
         _huntOffPresses = 0;
         _huntOffPressedAt = 0;
         _huntOffBaseline = [];
+        _huntOffLinesSeen = string.Empty;
+        _huntOffLinesChangedAt = 0;
     }
+
+    private const int AutohuntLineWaitMs = 4500;     // no autohunt line this long after a tap -> the key was eaten
+    private const int AutohuntQuietMs = 1200;        // a new line: the combat log unchanged this long before deciding
+    private const int AutohuntDecideMaxMs = 7000;    // ... but no longer than this after the tap
+    private string _huntOffLinesSeen = string.Empty;
+    private long _huntOffLinesChangedAt;
 
     /// <summary>
     /// Makes the autohunt <paramref name="wantOn"/> (on / off), confirmed in the combat log - J is a
@@ -1458,6 +1475,24 @@ public sealed partial class AutomationPilot
         }
 
         bool? on = AutohuntLog.NewState(_huntOffBaseline, lines, seq.AutohuntStartedText, seq.AutohuntEndedText, out string? line, seq.AutohuntStoppedText);
+
+        // A new line: decide only once the log has settled (live 2026-11-01 22:31: each line showed ~2.5-3 s after its tap,
+        // and a decision on the first new line took press 1's late "started" for press 2's answer - a third press left the
+        // autohunt on, and its Smart Farm journey pulled the character back to town from Blossom Garden).
+        string seen = string.Join("\n", lines);
+        if (seen != _huntOffLinesSeen)
+        {
+            _huntOffLinesSeen = seen;
+            _huntOffLinesChangedAt = now;
+        }
+
+        if (on != null && now - _huntOffLinesChangedAt < AutohuntQuietMs && now - _huntOffPressedAt < AutohuntDecideMaxMs)
+        {
+            _detail = $"'{key}' x{_huntOffPresses}: waiting for the combat log to settle";
+            _waitUntil = now + 300;
+            return false;
+        }
+
         if (on == wantOn)
         {
             Log?.Invoke(LogLevel.Success, $"Autohunt is {want} {where} ('{line}' after '{key}' x{_huntOffPresses}).");
@@ -1479,7 +1514,8 @@ public sealed partial class AutomationPilot
             return true;
         }
 
-        if (now - _huntOffPressedAt < 2000)
+        // The line shows ~2.5-3 s after the tap (live 22:31): a second tap after 2 s took a slow line for an eaten key.
+        if (now - _huntOffPressedAt < AutohuntLineWaitMs)
         {
             _detail = $"waiting for an autohunt line in the combat log ('{key}' x{_huntOffPresses})";
             _waitUntil = now + 400;

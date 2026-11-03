@@ -85,4 +85,10 @@ public interface IGameControls
 
     /// <summary>Scrolls the list under the point (negative notches = down).</summary>
     bool ScrollList(int x, int y, int notches);
+
+    /// <summary>
+    /// The pointer over the point, without a click: which cursor the game shows there (the sword over a monster), as a
+    /// number to compare with another. 0 = cannot tell (the phone has no pointer).
+    /// </summary>
+    long HoverCursor(int x, int y) => 0;
 }

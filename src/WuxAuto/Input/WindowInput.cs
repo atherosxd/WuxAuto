@@ -13,10 +13,10 @@ namespace WuxAuto.Input;
 /// </summary>
 public sealed class WindowInput : IGameInput
 {
-    private const int VkLeftCtrl = 0xA2;
-
     private readonly AppSettings _settings;
     private readonly Dictionary<string, (int VirtualKey, int ScanCode)> _keyCache = new(StringComparer.OrdinalIgnoreCase);
+    // Keys sent down with SendInput and not let go yet: KeyUp releases them whatever changed meanwhile (see KeyUp).
+    private readonly Dictionary<string, (int VirtualKey, int ScanCode)> _keysDown = new(StringComparer.OrdinalIgnoreCase);
     private long _lastSuppressionLog;
 
     public WindowInput(AppSettings settings)
@@ -89,11 +89,28 @@ public sealed class WindowInput : IGameInput
         }
 
         SendKeyboard(key.Value.VirtualKey, key.Value.ScanCode, down: true);
+        lock (_keysDown)
+            _keysDown[keyName] = key.Value;
         return true;
     }
 
+    /// <summary>
+    /// Lets go of a key. One this instance pressed with SendInput is always let go, even when F10 unbinds the window (UI
+    /// thread) or Dry run is ticked during the hold: foreground input is global, and a key left down sticks for every
+    /// program (the Blossom walk scan holds A / D 0.7 s). False when the window is not bound.
+    /// </summary>
     public bool KeyUp(string keyName)
     {
+        bool wasDown;
+        (int VirtualKey, int ScanCode) held;
+        lock (_keysDown)
+            wasDown = _keysDown.Remove(keyName, out held);
+        if (wasDown)
+        {
+            SendKeyboard(held.VirtualKey, held.ScanCode, down: false);
+            return IsBound;
+        }
+
         if (!IsBound)
             return false;
 
@@ -151,16 +168,14 @@ public sealed class WindowInput : IGameInput
     public bool CtrlWheel(int clientX, int clientY, int notches) => WithCtrl(() => Wheel(clientX, clientY, notches));
 
     /// <summary>
-    /// Runs <paramref name="action"/> with the left Ctrl key down and always lets go of it. Foreground
-    /// input is global, so the release goes out even when F10 unbinds the window (UI thread) or Dry run
-    /// is ticked meanwhile - a Ctrl left down would stick for every program.
+    /// Runs <paramref name="action"/> with the left Ctrl key down and always lets go of it - KeyUp releases a
+    /// key sent down even when F10 unbinds the window (UI thread) or Dry run is ticked meanwhile.
     /// </summary>
     private bool WithCtrl(Func<bool> action)
     {
         if (!KeyDown("LeftCtrl"))
             return false;
 
-        bool global = !IsDryRun && _settings.Input.Mode != InputMode.BackgroundMessages;
         try
         {
             Thread.Sleep(40);
@@ -169,10 +184,7 @@ public sealed class WindowInput : IGameInput
         finally
         {
             Thread.Sleep(40);
-            if (global)
-                SendKeyboard(VkLeftCtrl, (int)NativeMethods.MapVirtualKey(VkLeftCtrl, NativeMethods.MAPVK_VK_TO_VSC), down: false);
-            else
-                KeyUp("LeftCtrl");
+            KeyUp("LeftCtrl");
         }
     }
 
@@ -326,6 +338,90 @@ public sealed class WindowInput : IGameInput
             NativeMethods.SetCursorPos(saved.Value.X, saved.Value.Y);
 
         return true;
+    }
+
+    /// <summary>
+    /// The pointer over the point (no click), then the cursor the game shows there: its own arrow over the ground, another
+    /// one - the sword - over a monster (user, 2026-11-01). Returned as a fingerprint of the cursor's picture, not its
+    /// handle: live the game's arrow came back under three handles (0x4970599, 0x14D4184F, 0x76F1529), and an arrow under a
+    /// new handle read as the sword - clicks beside the Jaso ("it tried to click the monster but on the side"). 0 when it
+    /// cannot tell: not bound, a dry run, background input, the game behind.
+    /// </summary>
+    public long CursorAt(int clientX, int clientY)
+    {
+        if (!TryPrepare($"hover {clientX},{clientY}") || IsDryRun || _settings.Input.Mode == InputMode.BackgroundMessages)
+            return 0;
+
+        if (!TryClientToScreen(clientX, clientY, out int sx, out int sy))
+            return 0;
+
+        // A small move onto the point, so the game sees the pointer arrive even when it already was there, then a frame or
+        // two for the game to pick its cursor (19-70 fps live).
+        MoveAbsolute(sx + 2, sy);
+        Thread.Sleep(15);
+        MoveAbsolute(sx, sy);
+        Thread.Sleep(HoverSettleMs);
+        var info = new NativeMethods.CURSORINFO { cbSize = Marshal.SizeOf<NativeMethods.CURSORINFO>() };
+        if (!NativeMethods.GetCursorInfo(ref info) || (info.flags & NativeMethods.CURSOR_SHOWING) == 0)
+            return 0;
+
+        // Windows' own arrow or busy cursor is not the game's yet: live (2026-11-01 14:26) the plain arrow showed for a moment
+        // after the game came to the front, and differing from the game's arrow it passed for the sword.
+        if (SystemCursors.Contains(info.hCursor))
+            return 0;
+
+        return CursorPicture(info.hCursor);
+    }
+
+    private static readonly HashSet<IntPtr> SystemCursors =
+    [
+        NativeMethods.LoadCursor(IntPtr.Zero, NativeMethods.IDC_ARROW),
+        NativeMethods.LoadCursor(IntPtr.Zero, NativeMethods.IDC_WAIT),
+        NativeMethods.LoadCursor(IntPtr.Zero, NativeMethods.IDC_APPSTARTING),
+    ];
+
+    private const int HoverSettleMs = 90;
+
+    /// <summary>
+    /// A fingerprint (FNV-1a) of the cursor's colour and mask bitmaps and its hot spot: the same picture gives the same
+    /// number whatever handle it comes under. The handle itself when the bitmaps cannot be read.
+    /// </summary>
+    private static long CursorPicture(IntPtr cursor)
+    {
+        if (cursor == IntPtr.Zero)
+            return 0;
+        if (!NativeMethods.GetIconInfo(cursor, out var icon))
+            return cursor.ToInt64();
+
+        try
+        {
+            ulong hash = 14695981039346656037UL;
+            hash = Mix(hash, icon.hbmColor);
+            hash = Mix(hash, icon.hbmMask);
+            hash = (hash ^ (ulong)(icon.xHotspot * 65536 + icon.yHotspot)) * 1099511628211UL;
+            return hash == 0 ? 1 : unchecked((long)hash);
+        }
+        finally
+        {
+            if (icon.hbmColor != IntPtr.Zero)
+                NativeMethods.DeleteObject(icon.hbmColor);
+            if (icon.hbmMask != IntPtr.Zero)
+                NativeMethods.DeleteObject(icon.hbmMask);
+        }
+
+        static ulong Mix(ulong hash, IntPtr bitmap)
+        {
+            if (bitmap == IntPtr.Zero || NativeMethods.GetObject(bitmap, Marshal.SizeOf<NativeMethods.BITMAP>(), out var bm) == 0)
+                return hash;
+            int size = bm.bmWidthBytes * bm.bmHeight;
+            if (size <= 0 || size > 1 << 20)
+                return hash;
+            var bytes = new byte[size];
+            int read = NativeMethods.GetBitmapBits(bitmap, size, bytes);
+            for (int i = 0; i < read; i++)
+                hash = (hash ^ bytes[i]) * 1099511628211UL;
+            return hash;
+        }
     }
 
     private bool TryPrepare(string action)
